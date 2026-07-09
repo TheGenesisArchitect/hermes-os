@@ -1,0 +1,21 @@
+{
+  "name": "@hermes/scout",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "probe": "tsx src/probe.ts"
+  },
+  "dependencies": {
+    "@hermes/core": "workspace:*",
+    "@hermes/db": "workspace:*",
+    "dotenv": "^16.4.5",
+    "drizzle-orm": "^0.44.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3"
+  }
+}

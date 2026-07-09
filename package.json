@@ -1,0 +1,17 @@
+{
+  "name": "hermes-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hermes OS — open-source financial copilot, DeFi dashboard, and agentic quant harness",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "scout": "pnpm --filter @hermes/scout dev",
+    "db:push": "pnpm --filter @hermes/db push",
+    "db:studio": "pnpm --filter @hermes/db studio",
+    "typecheck": "pnpm -r exec tsc --noEmit"
+  }
+}
