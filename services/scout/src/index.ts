@@ -72,7 +72,14 @@ async function tick(): Promise<void> {
     .from(tokens)
     .where(inArray(tokens.mint, candidates.map((c) => c.mint)));
   const knownSet = new Set(known.map((k) => k.mint));
-  const fresh = candidates.filter((c) => !knownSet.has(c.mint));
+  // one mint can surface via multiple pools in the same poll — keep the most liquid
+  const byMint = new Map<string, TokenCandidate>();
+  for (const c of candidates) {
+    if (knownSet.has(c.mint)) continue;
+    const existing = byMint.get(c.mint);
+    if (!existing || (c.liquidityUsd ?? 0) > (existing.liquidityUsd ?? 0)) byMint.set(c.mint, c);
+  }
+  const fresh = [...byMint.values()];
 
   if (fresh.length > 0) {
     console.log(`\n[${new Date().toISOString()}] ${fresh.length} new candidate(s) (of ${candidates.length} pools above $${cfg.SCOUT_MIN_LIQUIDITY_USD.toLocaleString()} liq)`);
