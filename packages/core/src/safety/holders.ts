@@ -1,9 +1,10 @@
 import { getMintInfo, getTokenAccountOwners, getTokenLargestAccounts } from "../rpc.js";
 import type { SafetyCheckResult } from "../types.js";
+import type { RugcheckReport } from "./rugcheckReport.js";
 
 /**
- * Owners whose balances are pool liquidity, not a person's bag.
- * Excluded from concentration math so a healthy LP vault doesn't fail the check.
+ * Owners whose balances are pool liquidity, not a person's bag — used only by
+ * the RPC fallback path when RugCheck has no report yet.
  */
 const KNOWN_POOL_AUTHORITIES = new Set([
   "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1", // Raydium AMM v4 authority
@@ -11,16 +12,76 @@ const KNOWN_POOL_AUTHORITIES = new Set([
   "5unTfT2kssBuNvHPY6LbJfJpLqEcdMxGYLWHwShaeTLi", // Meteora DLMM event authority
 ]);
 
+interface Thresholds {
+  top10MaxPct: number;
+  singleMaxPct: number;
+  poolAddress?: string;
+}
+
+function verdictFrom(
+  holders: Array<{ owner: string; pct: number; label?: string }>,
+  opts: Thresholds,
+  source: string,
+  extra: Record<string, unknown>,
+): SafetyCheckResult {
+  const top10Pct = holders.slice(0, 10).reduce((sum, h) => sum + h.pct, 0);
+  const largest = holders[0];
+  const passed =
+    top10Pct <= opts.top10MaxPct && (largest === undefined || largest.pct <= opts.singleMaxPct);
+  return {
+    checkName: "holder_concentration",
+    passed,
+    evidence: {
+      source,
+      top10Pct: Number(top10Pct.toFixed(2)),
+      largestHolderPct: largest ? Number(largest.pct.toFixed(2)) : 0,
+      largestHolderOwner: largest?.owner ?? null,
+      thresholds: { top10MaxPct: opts.top10MaxPct, singleMaxPct: opts.singleMaxPct },
+      holdersSampled: holders.slice(0, 10).map((h) => ({
+        owner: h.owner,
+        pct: Number(h.pct.toFixed(2)),
+        ...(h.label ? { label: h.label } : {}),
+      })),
+      ...extra,
+    },
+  };
+}
+
 /**
- * Check 3: holder concentration — after excluding known pool vaults,
- * top-10 holders must control < SAFETY_TOP10_MAX_PCT of supply and no
- * single wallet > SAFETY_SINGLE_HOLDER_MAX_PCT.
+ * Check: holder concentration — top-10 holders < top10MaxPct of supply, no
+ * single wallet > singleMaxPct. Prefers RugCheck's topHolders (its
+ * knownAccounts labels let us exclude AMM pool vaults reliably); falls back
+ * to raw RPC largest-accounts when the token is too new for RugCheck.
  */
 export async function checkHolderConcentration(
   rpcUrl: string,
   mint: string,
-  opts: { top10MaxPct: number; singleMaxPct: number; poolAddress?: string },
+  opts: Thresholds,
+  report?: RugcheckReport | null,
 ): Promise<SafetyCheckResult> {
+  if (report?.topHolders && report.topHolders.length > 0) {
+    const known = report.knownAccounts ?? {};
+    const isPoolAccount = (h: { address: string; owner: string }) => {
+      const label = known[h.address]?.type ?? known[h.owner]?.type;
+      return label === "AMM" || label === "LOCKER" || h.owner === opts.poolAddress;
+    };
+    const holders = report.topHolders
+      .filter((h) => !isPoolAccount(h))
+      .map((h) => ({
+        owner: h.owner,
+        pct: h.pct,
+        label: known[h.address]?.name ?? known[h.owner]?.name,
+      }));
+    const excluded = report.topHolders.length - holders.length;
+    const insiders = report.topHolders.filter((h) => h.insider).length;
+    return verdictFrom(holders, opts, "rugcheck", {
+      excludedPoolAccounts: excluded,
+      insiderFlagged: insiders,
+      totalHolders: report.totalHolders ?? null,
+    });
+  }
+
+  // RPC fallback — brand-new token, RugCheck hasn't indexed it yet
   const [mintInfo, largest] = await Promise.all([
     getMintInfo(rpcUrl, mint),
     getTokenLargestAccounts(rpcUrl, mint),
@@ -29,15 +90,13 @@ export async function checkHolderConcentration(
     return {
       checkName: "holder_concentration",
       passed: false,
-      evidence: { error: "no mint info or zero supply" },
+      evidence: { error: "no mint info or zero supply", retryable: true },
     };
   }
-
   const owners = await getTokenAccountOwners(
     rpcUrl,
     largest.map((a) => a.address),
   );
-
   const supply = Number(mintInfo.supply);
   const holders = largest
     .map((a) => ({
@@ -51,25 +110,7 @@ export async function checkHolderConcentration(
         h.owner !== opts.poolAddress &&
         h.tokenAccount !== opts.poolAddress,
     );
-
-  const top10Pct = holders.slice(0, 10).reduce((sum, h) => sum + h.pct, 0);
-  const maxSingle = holders[0];
-  const passed =
-    top10Pct <= opts.top10MaxPct && (maxSingle === undefined || maxSingle.pct <= opts.singleMaxPct);
-
-  return {
-    checkName: "holder_concentration",
-    passed,
-    evidence: {
-      top10Pct: Number(top10Pct.toFixed(2)),
-      largestHolderPct: maxSingle ? Number(maxSingle.pct.toFixed(2)) : 0,
-      largestHolderOwner: maxSingle?.owner ?? null,
-      thresholds: { top10MaxPct: opts.top10MaxPct, singleMaxPct: opts.singleMaxPct },
-      excludedPoolAccounts: largest.length - holders.length,
-      holdersSampled: holders.slice(0, 10).map((h) => ({
-        owner: h.owner,
-        pct: Number(h.pct.toFixed(2)),
-      })),
-    },
-  };
+  return verdictFrom(holders, opts, "rpc", {
+    excludedPoolAccounts: largest.length - holders.length,
+  });
 }

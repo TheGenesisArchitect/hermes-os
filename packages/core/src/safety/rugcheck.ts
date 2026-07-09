@@ -1,45 +1,33 @@
 import type { SafetyCheckResult } from "../types.js";
-
-interface RugcheckRisk {
-  name: string;
-  level: string; // "danger" | "warn" | "info" (rugcheck.xyz vocabulary)
-  description?: string;
-  score?: number;
-}
-
-interface RugcheckSummary {
-  score?: number;
-  score_normalised?: number;
-  risks?: RugcheckRisk[];
-}
+import type { RugcheckReport } from "./rugcheckReport.js";
 
 /**
- * Check 2: RugCheck report summary — fail on any "danger"-level risk
- * (unlocked LP, mutable metadata + authority combos, known scam patterns).
- * LP burn/lock status is part of what RugCheck evaluates.
+ * Check: RugCheck risk report — fail if the token is marked rugged or has any
+ * "danger"-level risk (unlocked LP, mutable metadata combos, known scam
+ * patterns). LP lock percentage is recorded as evidence.
  */
-export async function checkRugcheck(mint: string): Promise<SafetyCheckResult> {
-  const res = await fetch(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`, {
-    headers: { accept: "application/json" },
-  });
-  if (res.status === 404 || res.status === 400) {
-    // Too new for RugCheck to have indexed — treat as not-yet-passed, retryable
+export function checkRugcheck(report: RugcheckReport | null): SafetyCheckResult {
+  if (!report) {
     return {
       checkName: "rugcheck",
       passed: false,
-      evidence: { error: `rugcheck has no report yet (HTTP ${res.status})`, retryable: true },
+      evidence: { error: "rugcheck has no report yet (token too new)", retryable: true },
     };
   }
-  if (!res.ok) throw new Error(`rugcheck HTTP ${res.status}`);
-  const summary = (await res.json()) as RugcheckSummary;
-  const risks = summary.risks ?? [];
+  const risks = report.risks ?? [];
   const dangers = risks.filter((r) => r.level?.toLowerCase() === "danger");
+  const lpLockedPct = report.markets?.[0]?.lp?.lpLockedPct ?? null;
+  const passed = dangers.length === 0 && report.rugged !== true;
   return {
     checkName: "rugcheck",
-    passed: dangers.length === 0,
+    passed,
     evidence: {
-      score: summary.score ?? null,
-      scoreNormalised: summary.score_normalised ?? null,
+      rugged: report.rugged ?? false,
+      score: report.score ?? null,
+      scoreNormalised: report.score_normalised ?? null,
+      lpLockedPct,
+      totalHolders: report.totalHolders ?? null,
+      graphInsidersDetected: report.graphInsidersDetected ?? null,
       dangerCount: dangers.length,
       risks: risks.map((r) => ({ name: r.name, level: r.level, description: r.description })),
     },

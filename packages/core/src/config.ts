@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const envSchema = z.object({
-  DATABASE_URL: z.string().default("postgres://hermes:hermes@localhost:5432/hermes"),
+  DATABASE_URL: z.string().default("postgres://hermes:hermes@localhost:5433/hermes"),
   HELIUS_API_KEY: z.string().optional().default(""),
   SOLANA_RPC_URL: z.string().default("https://solana-rpc.publicnode.com"),
   BIRDEYE_API_KEY: z.string().optional().default(""),

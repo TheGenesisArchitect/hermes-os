@@ -4,6 +4,6 @@ export default defineConfig({
   dialect: "postgresql",
   schema: "./src/schema.ts",
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? "postgres://hermes:hermes@localhost:5432/hermes",
+    url: process.env.DATABASE_URL ?? "postgres://hermes:hermes@localhost:5433/hermes",
   },
 });

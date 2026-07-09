@@ -4,6 +4,7 @@ import { checkHolderConcentration } from "./holders.js";
 import { checkHoneypot } from "./honeypot.js";
 import { checkMintAuthority } from "./mintAuthority.js";
 import { checkRugcheck } from "./rugcheck.js";
+import { fetchRugcheckReport, type RugcheckReport } from "./rugcheckReport.js";
 
 /**
  * Run the full safety chain. Checks run sequentially cheapest-first so an
@@ -37,19 +38,32 @@ export async function runSafetyPipeline(
   );
   if (!mintOk) return { mint: candidate.mint, passed: false, checks };
 
+  // One RugCheck report feeds both the risk check and holder concentration.
+  let report: RugcheckReport | null = null;
+  try {
+    report = await fetchRugcheckReport(candidate.mint);
+  } catch {
+    report = null; // transient rugcheck failure — checks fall back / mark retryable
+  }
+
+  const rugOk = await run(async () => checkRugcheck(report), "rugcheck");
+  if (!rugOk) return { mint: candidate.mint, passed: false, checks };
+
   const holdersOk = await run(
     () =>
-      checkHolderConcentration(cfg.rpcUrl, candidate.mint, {
-        top10MaxPct: cfg.SAFETY_TOP10_MAX_PCT,
-        singleMaxPct: cfg.SAFETY_SINGLE_HOLDER_MAX_PCT,
-        poolAddress: candidate.poolAddress,
-      }),
+      checkHolderConcentration(
+        cfg.rpcUrl,
+        candidate.mint,
+        {
+          top10MaxPct: cfg.SAFETY_TOP10_MAX_PCT,
+          singleMaxPct: cfg.SAFETY_SINGLE_HOLDER_MAX_PCT,
+          poolAddress: candidate.poolAddress,
+        },
+        report,
+      ),
     "holder_concentration",
   );
   if (!holdersOk) return { mint: candidate.mint, passed: false, checks };
-
-  const rugOk = await run(() => checkRugcheck(candidate.mint), "rugcheck");
-  if (!rugOk) return { mint: candidate.mint, passed: false, checks };
 
   const honeypotOk = await run(
     () =>

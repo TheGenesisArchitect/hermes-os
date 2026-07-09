@@ -8,11 +8,14 @@ services:
       POSTGRES_PASSWORD: hermes
       POSTGRES_DB: hermes
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
+      - hermes-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hermes"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+volumes:
+  hermes-pgdata:
