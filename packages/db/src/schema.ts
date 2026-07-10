@@ -68,6 +68,9 @@ export const positions = pgTable("positions", {
   lane: text("lane").notNull().default("paper"), // paper | live
   status: text("status").notNull().default("open"), // open | closed
   sizeUsd: numeric("size_usd").notNull(),
+  qtyTokens: numeric("qty_tokens").notNull().default("0"),
+  qtyRemaining: numeric("qty_remaining").notNull().default("0"),
+  peakPriceUsd: numeric("peak_price_usd"),
   entryPriceUsd: numeric("entry_price_usd").notNull(),
   exitPriceUsd: numeric("exit_price_usd"),
   realizedPnlUsd: numeric("realized_pnl_usd"),

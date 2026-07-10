@@ -1,5 +1,13 @@
 import "dotenv/config";
-import { loadConfig, runSafetyPipeline, type TokenCandidate } from "@hermes/core";
+import {
+  computeScore,
+  fetchTokenMarket,
+  loadConfig,
+  runSafetyPipeline,
+  scoreNarrative,
+  type ScoreBreakdown,
+  type TokenCandidate,
+} from "@hermes/core";
 import { auditLog, db, safetyChecks, signals, tokens } from "@hermes/db";
 import { inArray } from "drizzle-orm";
 import { fetchNewPools } from "./ingest/geckoterminal.js";
@@ -8,6 +16,26 @@ const cfg = loadConfig();
 
 function short(mint: string): string {
   return `${mint.slice(0, 4)}…${mint.slice(-4)}`;
+}
+
+async function scoreCandidate(candidate: TokenCandidate): Promise<ScoreBreakdown | null> {
+  try {
+    const market = await fetchTokenMarket(candidate.mint);
+    if (!market) return null;
+    const narrative = await scoreNarrative(cfg.ANTHROPIC_API_KEY, {
+      name: candidate.name,
+      symbol: candidate.symbol,
+      dex: candidate.dex,
+      liquidityUsd: candidate.liquidityUsd,
+    }).catch((err) => {
+      console.error(`   narrative scoring failed: ${err instanceof Error ? err.message : err}`);
+      return null;
+    });
+    return computeScore(market, narrative);
+  } catch (err) {
+    console.error(`   scoring failed: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
 }
 
 async function processCandidate(candidate: TokenCandidate): Promise<void> {
@@ -51,13 +79,16 @@ async function processCandidate(candidate: TokenCandidate): Promise<void> {
   const label = `${candidate.symbol ?? "?"} ${short(candidate.mint)} [${candidate.dex}] liq $${Math.round(candidate.liquidityUsd ?? 0).toLocaleString()}`;
 
   if (verdict.passed) {
+    const breakdown = await scoreCandidate(candidate);
     await db.insert(signals).values({
       mint: candidate.mint,
-      // M1 placeholder score = count of passed checks; real scoring lands in M2
-      score: String(verdict.checks.filter((c) => c.passed).length),
-      reasons: { checks: summary, liquidityUsd: candidate.liquidityUsd },
+      score: String(breakdown?.score ?? 0),
+      reasons: { checks: summary, scoring: breakdown ?? "market data unavailable" },
     });
-    console.log(`🚨 SIGNAL  ${label}\n          ${summary}`);
+    const scoreLabel = breakdown
+      ? `score ${breakdown.score} (mom ${breakdown.components.momentum} / buy ${breakdown.components.buyPressure} / liq ${breakdown.components.liquidity} / narr ${breakdown.components.narrative})`
+      : "score 0 (no market data yet)";
+    console.log(`🚨 SIGNAL  ${label}\n          ${summary}\n          ${scoreLabel}`);
   } else {
     console.log(`   reject  ${label}\n          ${summary}`);
   }

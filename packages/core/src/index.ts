@@ -6,3 +6,6 @@ export { checkRugcheck } from "./safety/rugcheck.js";
 export { checkHolderConcentration } from "./safety/holders.js";
 export { checkHoneypot } from "./safety/honeypot.js";
 export * as rpc from "./rpc.js";
+export { fetchTokenMarket, type TokenMarket } from "./market/dexscreener.js";
+export { computeScore, type ScoreBreakdown } from "./scoring/score.js";
+export { scoreNarrative, type NarrativeScore } from "./scoring/narrative.js";
