@@ -1,4 +1,7 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+import { resolve } from "node:path";
+// repo-root .env — services run with cwd at their own package dir
+loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
 import {
   computeScore,
   fetchTokenMarket,

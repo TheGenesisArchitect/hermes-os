@@ -1,4 +1,6 @@
-import "dotenv/config";
+import { config as loadEnv } from "dotenv";
+import { resolve } from "node:path";
+loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
 import { loadConfig, runSafetyPipeline } from "@hermes/core";
 
 /**
