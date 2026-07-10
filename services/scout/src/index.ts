@@ -125,7 +125,7 @@ async function tick(): Promise<void> {
 }
 
 console.log(`SCOUT online — polling GeckoTerminal every ${cfg.SCOUT_POLL_MS / 1000}s, min liquidity $${cfg.SCOUT_MIN_LIQUIDITY_USD.toLocaleString()}`);
-console.log(`RPC: ${cfg.HELIUS_API_KEY ? "Helius" : "public mainnet-beta (set HELIUS_API_KEY for headroom)"}\n`);
+console.log(`RPC: ${cfg.HELIUS_API_KEY ? "Helius" : `${cfg.rpcUrl} (set HELIUS_API_KEY for headroom)`}\n`);
 
 // simple resilient loop — one failed tick never kills the daemon
 // eslint-disable-next-line no-constant-condition

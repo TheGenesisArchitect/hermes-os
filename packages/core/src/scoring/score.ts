@@ -28,7 +28,10 @@ export function computeScore(
   // For young pairs the h24 window is mostly empty, so compare m5 (annualized
   // to an hour) against h1, and h1 against the age-adjusted average.
   const ageMin = market.pairAgeMinutes ?? 60;
-  const h1Baseline = market.volUsd.h24 / Math.max(ageMin / 60, 1) || 1;
+  // baseline = average hourly volume over the h24 window, which only covers
+  // min(age, 24h) of actual trading — never divide by more than 24
+  const coveredHours = clamp(ageMin / 60, 1, 24);
+  const h1Baseline = market.volUsd.h24 / coveredHours || 1;
   const h1Ratio = market.volUsd.h1 / Math.max(h1Baseline, 1);
   const m5Ratio = (market.volUsd.m5 * 12) / Math.max(market.volUsd.h1, 1);
   // log-scale: ratio 1 → ~0, ratio 8+ → full marks; recent burst (m5) weighted in
