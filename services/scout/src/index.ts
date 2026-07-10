@@ -14,12 +14,18 @@ import {
 import { auditLog, db, safetyChecks, signals, tokens } from "@hermes/db";
 import { inArray } from "drizzle-orm";
 import { fetchNewPools } from "./ingest/geckoterminal.js";
+import { HeliusStream, type StreamCandidate } from "./ingest/heliusStream.js";
 
 const cfg = loadConfig();
 
 function short(mint: string): string {
   return `${mint.slice(0, 4)}…${mint.slice(-4)}`;
 }
+
+// Mints seen via the push stream, awaiting enough liquidity to enter the
+// pipeline. Retried each tick; dropped after STREAM_QUEUE_TTL_MS.
+const STREAM_QUEUE_TTL_MS = 15 * 60_000;
+const streamQueue = new Map<string, StreamCandidate>();
 
 async function scoreCandidate(candidate: TokenCandidate): Promise<ScoreBreakdown | null> {
   try {
@@ -97,26 +103,76 @@ async function processCandidate(candidate: TokenCandidate): Promise<void> {
   }
 }
 
-async function tick(): Promise<void> {
-  const candidates = await fetchNewPools(cfg.SCOUT_MIN_LIQUIDITY_USD);
-  if (candidates.length === 0) return;
-
+/** Filter a set of mints down to those not already in the tokens table. */
+async function unknownMints(mints: string[]): Promise<Set<string>> {
+  if (mints.length === 0) return new Set();
   const known = await db
     .select({ mint: tokens.mint })
     .from(tokens)
-    .where(inArray(tokens.mint, candidates.map((c) => c.mint)));
+    .where(inArray(tokens.mint, mints));
   const knownSet = new Set(known.map((k) => k.mint));
+  return new Set(mints.filter((m) => !knownSet.has(m)));
+}
+
+/** Enrich stream-detected mints via DexScreener; process those that now clear the liquidity gate. */
+async function drainStreamQueue(): Promise<void> {
+  if (streamQueue.size === 0) return;
+  const now = Date.now();
+  const unknown = await unknownMints([...streamQueue.keys()]);
+  let processed = 0;
+
+  for (const [mint, entry] of [...streamQueue.entries()]) {
+    if (now - entry.detectedAt > STREAM_QUEUE_TTL_MS) {
+      streamQueue.delete(mint);
+      continue;
+    }
+    if (!unknown.has(mint)) {
+      streamQueue.delete(mint); // already processed via poll or a prior tick
+      continue;
+    }
+    const market = await fetchTokenMarket(mint).catch(() => null);
+    if (!market || market.liquidityUsd < cfg.SCOUT_MIN_LIQUIDITY_USD) continue; // not ready yet — retry next tick
+
+    streamQueue.delete(mint);
+    const ageSec = Math.round((now - entry.detectedAt) / 1000);
+    console.log(
+      `\n[${new Date().toISOString()}] ⚡ stream candidate ${short(mint)} [${entry.dex}] liq $${Math.round(market.liquidityUsd).toLocaleString()} (${ageSec}s after creation)`,
+    );
+    try {
+      await processCandidate({
+        mint,
+        chain: "solana",
+        dex: entry.dex,
+        poolAddress: market.pairAddress,
+        liquidityUsd: market.liquidityUsd,
+        fdvUsd: market.fdvUsd,
+      });
+      processed++;
+    } catch (err) {
+      console.error(`   error   ${short(mint)}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  if (processed > 0) console.log(`   (${streamQueue.size} still maturing in stream queue)`);
+}
+
+async function tick(): Promise<void> {
+  await drainStreamQueue();
+
+  const candidates = await fetchNewPools(cfg.SCOUT_MIN_LIQUIDITY_USD);
+  if (candidates.length === 0) return;
+
+  const unknown = await unknownMints(candidates.map((c) => c.mint));
   // one mint can surface via multiple pools in the same poll — keep the most liquid
   const byMint = new Map<string, TokenCandidate>();
   for (const c of candidates) {
-    if (knownSet.has(c.mint)) continue;
+    if (!unknown.has(c.mint)) continue;
     const existing = byMint.get(c.mint);
     if (!existing || (c.liquidityUsd ?? 0) > (existing.liquidityUsd ?? 0)) byMint.set(c.mint, c);
   }
   const fresh = [...byMint.values()];
 
   if (fresh.length > 0) {
-    console.log(`\n[${new Date().toISOString()}] ${fresh.length} new candidate(s) (of ${candidates.length} pools above $${cfg.SCOUT_MIN_LIQUIDITY_USD.toLocaleString()} liq)`);
+    console.log(`\n[${new Date().toISOString()}] ${fresh.length} new poll candidate(s) (of ${candidates.length} pools above $${cfg.SCOUT_MIN_LIQUIDITY_USD.toLocaleString()} liq)`);
   }
   for (const candidate of fresh) {
     try {
@@ -128,7 +184,22 @@ async function tick(): Promise<void> {
 }
 
 console.log(`SCOUT online — polling GeckoTerminal every ${cfg.SCOUT_POLL_MS / 1000}s, min liquidity $${cfg.SCOUT_MIN_LIQUIDITY_USD.toLocaleString()}`);
-console.log(`RPC: ${cfg.HELIUS_API_KEY ? "Helius" : `${cfg.rpcUrl} (set HELIUS_API_KEY for headroom)`}\n`);
+console.log(`RPC: ${cfg.HELIUS_API_KEY ? "Helius" : `${cfg.rpcUrl} (set HELIUS_API_KEY for headroom)`}`);
+
+// Push ingest requires a Helius key (WebSocket logsSubscribe). Without one we
+// fall back to poll-only.
+if (cfg.HELIUS_API_KEY) {
+  const stream = new HeliusStream(cfg.HELIUS_API_KEY, cfg.rpcUrl, (c) => {
+    if (!streamQueue.has(c.mint)) {
+      streamQueue.set(c.mint, c);
+      console.log(`   ⚡ pool created ${short(c.mint)} [${c.dex}] — queued for enrichment`);
+    }
+  });
+  stream.start();
+} else {
+  console.log("(no Helius key — poll-only mode; set HELIUS_API_KEY for real-time push ingest)");
+}
+console.log("");
 
 // simple resilient loop — one failed tick never kills the daemon
 // eslint-disable-next-line no-constant-condition
