@@ -1,6 +1,13 @@
 import "dotenv/config";
 import { loadConfig } from "@hermes/core";
+import { config, db } from "@hermes/db";
+import { eq } from "drizzle-orm";
 import { managePositions, openNewPositions, snapshotEquity } from "./paper.js";
+
+async function killSwitchEngaged(): Promise<boolean> {
+  const [row] = await db.select().from(config).where(eq(config.key, "kill_switch"));
+  return (row?.value as { enabled?: boolean } | undefined)?.enabled === true;
+}
 
 const cfg = loadConfig();
 
@@ -15,11 +22,17 @@ if (cfg.LIVE_TRADING_ENABLED) {
 }
 
 let lastSnapshot = 0;
+let wasHalted = false;
 
 // eslint-disable-next-line no-constant-condition
 while (true) {
   try {
-    await openNewPositions(cfg);
+    const halted = await killSwitchEngaged();
+    if (halted !== wasHalted) {
+      console.log(halted ? "⛔ kill switch ENGAGED — new entries halted" : "▶️  kill switch released — entries resumed");
+      wasHalted = halted;
+    }
+    if (!halted) await openNewPositions(cfg);
     await managePositions(cfg);
     if (Date.now() - lastSnapshot >= cfg.PNL_SNAPSHOT_MS) {
       await snapshotEquity(cfg);
