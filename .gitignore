@@ -13,3 +13,4 @@ dist/
 # local data
 pgdata/
 *.log
+.gstack/
