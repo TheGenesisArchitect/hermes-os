@@ -534,11 +534,12 @@ export function decideExit(
     const mark = price / entry;
     const original = n(position.qtyTokens);
     const soldFrac = original > 0 ? Math.max(0, 1 - n(position.qtyRemaining) / original) : 0;
-    // Farm-venue detection — the escalator DNA (99/101 dust rugs on meteora-
-    // damm-v2, atomic cliff at peak). Farm venues get the NO-RUNNER ladder:
-    // 40% @TP0 → 75% @TP1 → 100% out @TP2. Nothing is ever held into the cliff;
-    // real-moonshot venues keep the uncapped runner untouched.
-    const farm = cfg.FARM_VENUES.has((market.dexId ?? "").toLowerCase());
+    // Farm-tape detection — the escalator DNA (99/101 dust rugs on meteora-
+    // damm-v2, atomic cliff at peak). Static venue list ∪ ADAPTIVE sets (venues/
+    // tickers whose 24h rug share crossed the threshold). Farm tape gets the
+    // NO-RUNNER ladder: 40% @TP0 → 75% @TP1 → 100% out @TP2 — nothing is ever
+    // held into the cliff; real-moonshot venues keep the uncapped runner.
+    const farm = isFarmTape(cfg, market);
     const tp1Cum = farm ? cfg.FARM_TP1_CUM_SELL : cfg.TP1_CUM_SELL;
     const tp2Cum = farm ? cfg.FARM_TP2_CUM_SELL : cfg.TP2_CUM_SELL;
     let targetSold = 0;
@@ -811,6 +812,64 @@ const dustCounts = new Map<number, number>();
 // a real correlated die-off and the per-position death counters resume.
 let dustOutageSince: number | null = null;
 
+// AUTO-FARM state — the adaptive farm list, self-maintained from the recorder's
+// last-24h labeled outcomes. Venues/tickers whose rug share crosses the config
+// threshold get the no-runner ladder without a code change; they drop off when
+// they clean up. Refreshed every FARM_AUTO_REFRESH_MS inside managePositions.
+const autoFarm = { venues: new Set<string>(), symbols: new Set<string>(), refreshedAt: 0 };
+
+async function refreshAutoFarm(cfg: HermesConfig): Promise<void> {
+  if (Date.now() - autoFarm.refreshedAt < cfg.FARM_AUTO_REFRESH_MS) return;
+  autoFarm.refreshedAt = Date.now();
+  try {
+    const rows = await db.execute(sql`
+      SELECT lower(t.dex) AS k, 'venue' AS kind,
+        count(*)::int n, count(*) FILTER (WHERE co.label='rug')::int rugs
+      FROM candidate_outcomes co JOIN tokens t ON t.mint = co.mint
+      WHERE co.label IN ('winner','dud','rug') AND co.updated_at >= now() - interval '24 hours'
+        AND t.dex IS NOT NULL
+      GROUP BY 1
+      UNION ALL
+      SELECT lower(t.symbol), 'symbol', count(*)::int, count(*) FILTER (WHERE co.label='rug')::int
+      FROM candidate_outcomes co JOIN tokens t ON t.mint = co.mint
+      WHERE co.label IN ('winner','dud','rug') AND co.updated_at >= now() - interval '24 hours'
+        AND t.symbol IS NOT NULL
+      GROUP BY 1, 2
+    `);
+    const venues = new Set<string>();
+    const symbols = new Set<string>();
+    for (const r of rows as unknown as Array<Record<string, unknown>>) {
+      const n = Number(r.n) || 0;
+      const rugs = Number(r.rugs) || 0;
+      if (n < cfg.FARM_AUTO_MIN_N || rugs / n < cfg.FARM_AUTO_RUG_RATE) continue;
+      if (r.kind === "venue") venues.add(String(r.k));
+      else symbols.add(String(r.k));
+    }
+    const changed =
+      venues.size !== autoFarm.venues.size ||
+      symbols.size !== autoFarm.symbols.size ||
+      [...venues].some((v) => !autoFarm.venues.has(v)) ||
+      [...symbols].some((s) => !autoFarm.symbols.has(s));
+    autoFarm.venues = venues;
+    autoFarm.symbols = symbols;
+    if (changed) {
+      await audit("auto_farm_update", { venues: [...venues], symbols: [...symbols] });
+      console.log(
+        `🎰 AUTO-FARM refreshed — venues: [${[...venues].join(", ") || "none"}] · tickers: [${[...symbols].join(", ") || "none"}] (≥${Math.round(cfg.FARM_AUTO_RUG_RATE * 100)}% rug share, n≥${cfg.FARM_AUTO_MIN_N}, 24h window)`,
+      );
+    }
+  } catch (err) {
+    console.error(`auto-farm refresh failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/** Farm classification for a position's live market read: static venue list ∪ adaptive sets. */
+function isFarmTape(cfg: HermesConfig, market: TokenMarket): boolean {
+  const dex = (market.dexId ?? "").toLowerCase();
+  const sym = (market.symbol ?? "").toLowerCase();
+  return cfg.FARM_VENUES.has(dex) || autoFarm.venues.has(dex) || (sym !== "" && autoFarm.symbols.has(sym));
+}
+
 export type MarkVerdict =
   | { kind: "ok" } // trustworthy read — process normally
   | { kind: "dust"; why: string } // pool itself is near-empty — hold, but a PERSISTENT dust state is a death
@@ -942,6 +1001,7 @@ async function writeOffAtZero(position: Position, reason: string): Promise<void>
 
 /** Mark open positions to market and execute the exit rules. */
 export async function managePositions(cfg: HermesConfig): Promise<void> {
+  await refreshAutoFarm(cfg); // keep the adaptive farm list current (no-op inside refresh window)
   const open = await db.select().from(positions).where(eq(positions.status, "open"));
   if (open.length === 0) return;
 

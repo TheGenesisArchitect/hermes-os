@@ -162,6 +162,21 @@ const envSchema = z.object({
     .transform((s) => new Set(s.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean))),
   FARM_TP1_CUM_SELL: z.coerce.number().default(0.75), // farm ladder: 40% @TP0 → 75% @TP1
   FARM_TP2_CUM_SELL: z.coerce.number().default(1.0), // → 100% out by TP2; nothing rides into the cliff
+  // AUTO-FARM — the adaptive layer. The static FARM_VENUES list is a snapshot;
+  // the operation can hop venues or rotate new tickers tomorrow. So the farm
+  // set also SELF-MAINTAINS from the recorder's own outcomes: any venue or
+  // ticker whose last-24h rug share crosses AUTO_RUG_RATE (with ≥ AUTO_MIN_N
+  // labeled outcomes) gets the no-runner ladder automatically, and drops off
+  // when it cleans up. NOTE: a trajectory-signature detector (ramp linearity +
+  // pinned buy-share) was calibrated and FAILED validation (flagged 28
+  // non-rugs, 0 rugs) — outcome-rate adaptation is the honest, working layer.
+  // 0.5 calibrated against the ~45% base rug rate: catches the full known farm
+  // family (W26 58%, USOH 56%, NTFS 51%, USWR 60%, GDWR 62%, CASHCAT 62% + the
+  // bags-fm venue at 72%) while dbc/pumpswap/orca (35-43%, moonshot territory)
+  // stay clean. Recorder-wide rates run diluted vs our position-level outcomes.
+  FARM_AUTO_RUG_RATE: z.coerce.number().default(0.5), // ≥50% of labeled outcomes are rugs
+  FARM_AUTO_MIN_N: z.coerce.number().default(20), // sample floor — no small-n paranoia
+  FARM_AUTO_REFRESH_MS: z.coerce.number().default(300_000), // recompute every 5min
   // BASKET HARVEST — portfolio-level profit capture. Waiting for each position to
   // hit its own target lets rugs pick the book off one by one; harvesting the
   // whole green book at once banks the collective gain BEFORE a rug round-trips
