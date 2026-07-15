@@ -402,6 +402,16 @@ const envSchema = z.object({
   // 1.26x mill relaunch does not. Quality gets the capital, mills get scraps.
   CONVICTION_MULT_MIN: z.coerce.number().default(2.5),
   CONVICTION_SIZE_BOOST: z.coerce.number().default(1.4),
+  // PRIME VENUES — the measured healthy ponds (recorder pond map 2026-07-15:
+  // fluxbeam 15/15 winners, 0 rugs, 14 hit 3x+). Armed candidates from these
+  // venues jump the entry queue ahead of raw trigger-multiple ordering, and
+  // they earn the conviction size boost regardless of trigger multiple.
+  // Comma-separated canonical venue strings; re-derive from the pond map as
+  // the dataset grows.
+  PRIME_VENUES: z
+    .string()
+    .default("fluxbeam")
+    .transform((s) => new Set(s.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean))),
   // SLOT DISPLACEMENT — never let deadweight block a confirmed banger. When the
   // book is full and a FULL-CONVICTION candidate is armed (buys ≥ quality floor),
   // evict the weakest open position: never established (peak below MAX_PEAK_MULT,
@@ -492,6 +502,15 @@ const envSchema = z.object({
   LIVE_MAX_POSITION_USD: z.coerce.number().default(25),
   LIVE_MAX_CONCURRENT: z.coerce.number().default(2),
   LIVE_DAILY_LOSS_CAP_USD: z.coerce.number().default(50),
+  // LIVE LANE HARD RULE (pre-committed while paper-only, per advisor): an
+  // INCONCLUSIVE honeypot probe (Jupiter unreachable / token unroutable) is a
+  // paper-only soft flag — with real capital, unverifiable sellability is a
+  // HARD block. The live lane must refuse any entry whose honeypot check did
+  // not affirmatively verify a sell route. Default true; do not relax.
+  LIVE_REQUIRE_HONEYPOT_VERIFIED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
 });
 
 export type HermesConfig = z.infer<typeof envSchema> & { rpcUrl: string };

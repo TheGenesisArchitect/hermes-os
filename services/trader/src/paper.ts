@@ -458,6 +458,17 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
 
   if (armed.length === 0) return;
 
+  // PRIME PONDS jump the queue: a fluxbeam-class confirm (measured 15/15
+  // winners, 0 rugs) takes a slot before any raw trigger-multiple ordering —
+  // the rarest healthy flow must never wait behind mill relaunches.
+  if (cfg.PRIME_VENUES.size > 0) {
+    armed.sort((a, b) => {
+      const ap = cfg.PRIME_VENUES.has((a.token.dex ?? "").toLowerCase()) ? 1 : 0;
+      const bp = cfg.PRIME_VENUES.has((b.token.dex ?? "").toLowerCase()) ? 1 : 0;
+      return bp - ap; // stable: preserves triggerMultiple order within each group
+    });
+  }
+
   // SHARED-CAPACITY book with reserved minimums. Each opportunity class is
   // guaranteed a floor of slots so the abundant small movers can't crowd out a
   // rare monster (the 0-of-4 failure), but every lane shares the surplus above the
@@ -550,8 +561,11 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // multiple (ARGENTINU armed at 4.94x → ran 11.4x) earns a bigger bet than
     // a 1.26x mill relaunch. Quality gets the capital, mills get scraps.
     const tm = triggerMultiple === null ? null : Number(triggerMultiple);
+    const primeVenue = cfg.PRIME_VENUES.has((token.dex ?? "").toLowerCase());
     const convictionMult =
-      tm !== null && Number.isFinite(tm) && tm >= cfg.CONVICTION_MULT_MIN ? cfg.CONVICTION_SIZE_BOOST : 1;
+      primeVenue || (tm !== null && Number.isFinite(tm) && tm >= cfg.CONVICTION_MULT_MIN)
+        ? cfg.CONVICTION_SIZE_BOOST
+        : 1;
     const qualityMult = buyShareMult * rugMult * convictionMult;
 
     // Consume ONLY on a real fill. A false return (lane reserved / market null /

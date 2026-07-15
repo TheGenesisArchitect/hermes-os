@@ -40,18 +40,33 @@ function convexityFit(liq: number): number {
 }
 
 /**
- * Source edge (0-15): the venues that actually produced 1c's movers, kept
- * first-class instead of blocked. Dynamic bonding curves (McGwegor's 327x
- * source — thinnest, most convex) rank highest; graduated pump.fun (proven
- * demand threshold) and bags-fm (11 of 16 movers) next; unknown venues get a
- * small non-zero baseline so a new source is explored, never auto-buried.
+ * Source edge (0-15) — REFRESHED 2026-07-15 from the recorder pond map
+ * (candidate_outcomes, every safety-passed candidate watched regardless of
+ * whether we traded it; n in comments):
+ *
+ *   venue            watched  win%  rug%  avgPeak  3x+
+ *   fluxbeam              15  100%    0%    3.95x   14   ← the prime pond
+ *   meteora-damm-v2     4227   20%   44%    1.62x   94   ← the volume engine
+ *   pumpswap             713   15%   29%    1.65x   43
+ *   pump-amm             203   15%   39%    1.66x   11
+ *   meteora-dbc          362   13%   50%    2.21x   16   ← convex but ruggy
+ *   bags-fm               95    1%   79%    1.35x    0   ← blocked at entry
+ *   orca/moonshot/clmm   276    0%    —     1.00x    0   ← dead ponds
+ *
+ * The 1c-era map ranked bags-fm at 11 ("11 of 16 movers") — that read was 16
+ * correlated draws from one epoch; 95 labeled outcomes later it is the single
+ * worst pond we have measured. Unknown venues keep a non-zero baseline so a
+ * new source is explored, never auto-buried (that exploration is exactly how
+ * fluxbeam surfaced).
  */
 function sourceEdge(dex: string | undefined): number {
   const d = (dex ?? "").toLowerCase();
-  if (d.includes("dbc") || d.includes("bonding")) return 15; // bonding curve — thin, convex
-  if (d === "pumpswap" || d.includes("pump")) return 12; // graduated pump.fun — proven demand
-  if (d.includes("bags")) return 11; // 11 of 16 movers came from here
-  if (d.includes("meteora") || d.includes("raydium") || d.includes("orca")) return 8;
+  if (d.includes("fluxbeam")) return 15; // 15/15 winners, 14 hit 3x+ — prime
+  if (d === "pumpswap" || d.includes("pump")) return 11; // graduated pump.fun — proven demand
+  if (d.includes("dbc") || d.includes("bonding")) return 10; // convex ceiling, but 50% rug — rug model prices it
+  if (d.includes("meteora")) return 8; // damm-v2 volume engine — post-fix +$21/82% win traded
+  if (d.includes("bags")) return 2; // 1% win / 79% rug — entry-blocked anyway
+  if (d.includes("raydium") || d.includes("orca") || d.includes("moonshot")) return 4; // 0 winners in 276 watched
   return 5; // unknown venue — explore, don't bury
 }
 
