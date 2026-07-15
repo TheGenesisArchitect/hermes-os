@@ -59,6 +59,7 @@ console.log(
 let lastSnapshot = 0;
 let lastOpen = 0;
 let wasHalted = false;
+let wasSessionOpen = true; // logs the OFF-HOURS/PRIME transition once per flip
 
 // The management loop runs on the FAST cadence — that's where gains are kept.
 // Scanning for new entries is throttled to the slower cadence; being late to
@@ -80,7 +81,21 @@ while (true) {
       }
       wasHalted = halted;
     }
-    if (!halted && Date.now() - lastOpen >= cfg.TRADER_POLL_MS) {
+    // Off-hours entry pause — "survive until optimal hours" in its strongest
+    // form: the off-hours tape is dominated by farm waves built to pass the
+    // confirm gate (81% rug rate measured with every armor live), so outside
+    // PRIME_HOURS_UTC the trader opens nothing. Exits/management never pause;
+    // the recorder keeps labeling so the flywheel still learns the dead tape.
+    const sessionOpen = cfg.OFF_HOURS_ENTRIES || cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours());
+    if (sessionOpen !== wasSessionOpen) {
+      console.log(
+        sessionOpen
+          ? "🌅 PRIME window open — entries live at full size"
+          : "🌙 OFF-HOURS — entries paused (farm-wave tape); managing exits only, recorder keeps learning",
+      );
+      wasSessionOpen = sessionOpen;
+    }
+    if (!halted && sessionOpen && Date.now() - lastOpen >= cfg.TRADER_POLL_MS) {
       // Default: the recorder is the scout — enter only on confirmed demand.
       // Blind t=0 entry stays available as a flagged fallback.
       if (cfg.CONFIRM_ENTRY_ENABLED) await openConfirmedPositions(cfg);

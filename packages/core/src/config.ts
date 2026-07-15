@@ -348,6 +348,17 @@ const envSchema = z.object({
     .default("18,19,20,21,22,23")
     .transform((s) => new Set(s.split(",").map((x) => Number.parseInt(x.trim(), 10)).filter((n) => Number.isFinite(n)))),
   OFF_HOURS_SIZE_MULT: z.coerce.number().default(0.5),
+  // Off-hours ENTRY pause — the stronger form of "survive until optimal hours".
+  // Post-fix measurement (2026-07-15 03:40-04:30Z): 81% of off-hours confirmed
+  // entries were farm-wave rugs; net −$93/50min AT HALF SIZE with every armor
+  // live. The waves are built to pass a microstructure gate, so off-hours entry
+  // EV is structurally negative — sizing only slows the bleed. false = trader
+  // opens NO new positions outside PRIME_HOURS_UTC (management/exits continue,
+  // recorder keeps labeling so the data flywheel never stops learning).
+  OFF_HOURS_ENTRIES: z
+    .string()
+    .default("false")
+    .transform((v) => v !== "false"),
   // Book-wide dust is an ANOMALY for this many minutes, then a DIE-OFF: meme-wave
   // entries cluster in time so their rugs cluster too; an eternal anomaly-hold
   // deadlocks slots on corpses (the frozen-book incident). Past the cap the
