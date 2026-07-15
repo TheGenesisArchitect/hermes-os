@@ -72,7 +72,7 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
     <div className="w-full">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
         <span>
-          {open.length} live position{open.length === 1 ? "" : "s"} (entry-relative) · bar height = how high it rose · dashed = TP levels · gold = locked floor · click to close
+          {open.length} live · {closed.length} closed (20m, ghosted) · bar height = how high it rose · notch = exit fill · dashed = TP levels · gold = locked floor · click a live bar to close
         </span>
         <span className="flex items-center gap-3 tabular">
           <span style={{ color: "var(--status-good)" }}>▲ {view.counts.rising}</span>
@@ -122,6 +122,42 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
           </div>
 
           <div className="flex items-end gap-[3px]" style={{ height: TRACK_H }}>
+            {/* GHOST TAPE — the last-20m closed trades as dimmed bars, so the
+                terminal shows the flow even when the live book is 1-2 positions
+                (median hold ~90s: the action lives in the recent past, and text
+                chips alone made the matrix read as empty). Bar rises to PEAK;
+                the colored notch is the exit fill — gap above the notch = what
+                the token did after we left (the giveback/runner story at a glance). */}
+            {closed.map((t) => {
+              const exitUp = (t.exit?.pnl ?? 0) >= 0;
+              return (
+                <div
+                  key={`c${t.id}`}
+                  className="relative flex h-full shrink-0 flex-col justify-end"
+                  style={{ width: 30 }}
+                  title={`${t.symbol ?? "?"} — ${t.exit?.reason ?? "closed"} · exit ${t.curMult.toFixed(2)}× / peak ${t.peakMult.toFixed(2)}× · held ${fmtSec(t.ageSec)} · ${exitUp ? "+" : ""}$${(t.exit?.pnl ?? 0).toFixed(2)}`}
+                >
+                  <div
+                    className="relative w-full rounded-t-[2px]"
+                    style={{
+                      height: `${pct(t.peakMult)}%`,
+                      minHeight: 2,
+                      background: `linear-gradient(to top, ${heat(1)}, ${heat(t.peakMult)})`,
+                      opacity: 0.35,
+                    }}
+                  />
+                  <div className="absolute left-0 right-0" style={{ bottom: `${pct(t.curMult)}%` }}>
+                    <div
+                      className="h-[2px] w-full"
+                      style={{ background: exitUp ? "var(--status-good)" : "var(--status-critical)", opacity: 0.9 }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            {closed.length > 0 && open.length > 0 && (
+              <div className="h-full w-[1px] shrink-0" style={{ background: "var(--border)" }} />
+            )}
             {open.map((t) => {
               const isClosing = closing.has(t.id);
               const hi = hovered === t.id;
@@ -178,8 +214,20 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
             })}
           </div>
 
-          {/* per-bar footers: ticker + age (zone-tinted) */}
+          {/* per-bar footers: ghosts get ticker + P&L; live bars get ticker + age (zone-tinted) */}
           <div className="mt-1 flex gap-[3px]">
+            {closed.map((t) => {
+              const exitUp = (t.exit?.pnl ?? 0) >= 0;
+              return (
+                <div key={`cf${t.id}`} className="shrink-0 overflow-hidden text-center" style={{ width: 30, opacity: 0.75 }}>
+                  <div className="truncate text-[9px]" style={{ color: "var(--text-muted)" }}>{t.symbol ?? "?"}</div>
+                  <div className="text-[8px] tabular" style={{ color: exitUp ? "var(--status-good)" : "var(--status-critical)" }}>
+                    {exitUp ? "+" : ""}{(t.exit?.pnl ?? 0).toFixed(2)}
+                  </div>
+                </div>
+              );
+            })}
+            {closed.length > 0 && open.length > 0 && <div className="w-[1px] shrink-0" />}
             {open.map((t) => (
               <div key={t.id} className="shrink-0 overflow-hidden text-center" style={{ width: 40 }}>
                 <div className="truncate text-[9px]" style={{ color: hovered === t.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
