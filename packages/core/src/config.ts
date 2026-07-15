@@ -347,7 +347,13 @@ const envSchema = z.object({
   CONFIRM_MIN_TICKS: z.coerce.number().default(2), // need a trajectory, not one snap
   CONFIRM_MIN_MULT: z.coerce.number().default(1.25), // green and established vs ref
   CONFIRM_MAX_DD_PCT: z.coerce.number().default(10), // near the highs, not rolling over
-  CONFIRM_MIN_BUYSHARE: z.coerce.number().default(0.6), // demand still winning (floor only — buy-share is INVERTED as a positive signal, rugs run higher)
+  // Buy-share VETO floor. Was 0.60 — that arm-time veto cost 6.5% of all
+  // microstructure-qualified winners (62 of 959, incl. MOOBULL 33x whose heavy
+  // two-way bot tape sat 0.45-0.52 its whole run) while only 31% of duds fell
+  // below it. Per the shrink-don't-veto doctrine the 0.45-0.60 band now ARMS and
+  // the trader's CONFIRM_QUALITY_SIZE_MULT (×0.6 under 0.8 buys) prices the risk;
+  // below 0.45 the tape is genuinely sell-dominated — still a veto.
+  CONFIRM_MIN_BUYSHARE: z.coerce.number().default(0.45),
   // Volume acceleration = vol_m5 / vol_h1, the fraction of the trailing hour's
   // volume packed into the last 5 minutes — a genuine demand BURST. This is the
   // one clean positive edge in the separation study: winner median 0.234 vs rug

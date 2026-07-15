@@ -112,6 +112,14 @@ export function laneHasRoom(cfg: HermesConfig, lane: keyof LaneBook, open: LaneB
   return cfg.PAPER_MAX_CONCURRENT - total - reservedElsewhere > 0;
 }
 
+// Divergence forensics per mint: the last disputed (jup, dex) pair we refused to
+// enter on. A Jupiter datapi read that stays FROZEN across attempts while the
+// DexScreener price keeps moving is a stale/wrong-pool index entry, not a fresher
+// truth — the recorded skips show byte-identical jup values across minutes while
+// dex climbed (SOLenoids 124x→212x→243x divergence as it ran to 3.6x unentered).
+const divergenceSeen = new Map<string, { jup: number; dex: number; at: number }>();
+const DIVERGENCE_SEEN_TTL_MS = 15 * 60_000;
+
 async function openFromSignal(
   cfg: HermesConfig,
   signal: SignalRow,
@@ -150,18 +158,47 @@ async function openFromSignal(
       jpEntry < market.priceUsd / cfg.MARK_FEED_DIVERGENCE;
     if (diverges) {
       const ratio = Math.max(jpEntry, market.priceUsd) / Math.min(jpEntry, market.priceUsd);
-      await audit("entry_feed_divergence_skip", {
-        mint: signal.mint,
-        jup: jpEntry,
-        dex: market.priceUsd,
-        ratio: Number(ratio.toFixed(2)),
-      });
-      console.log(
-        `⛔ SKIP   ${token.symbol ?? "?"} ${short(signal.mint)} — feed divergence ${ratio.toFixed(1)}× (dex $${market.priceUsd} vs jup $${jpEntry}); price disputed, deferring`,
-      );
-      return false;
+      const now = Date.now();
+      // Prune stale forensics so the map never grows unbounded.
+      for (const [m, v] of divergenceSeen) if (now - v.at > DIVERGENCE_SEEN_TTL_MS) divergenceSeen.delete(m);
+      const prev = divergenceSeen.get(signal.mint);
+      // Frozen-Jupiter discriminator: a SECOND divergent attempt ≥15s later where
+      // Jupiter is unchanged (±2%) but DexScreener moved (>3%) means Jupiter is a
+      // stale index read — a genuinely fresher Jupiter tracking a real dump would
+      // itself be MOVING (Mbappe), and a stale-high DexScreener would be the frozen
+      // one. Only this signature trusts DexScreener and enters; everything else
+      // still defers exactly as before.
+      const jupFrozen = prev !== undefined && now - prev.at >= 15_000 && prev.jup > 0 && Math.abs(jpEntry - prev.jup) / prev.jup < 0.02;
+      const dexMoved = prev !== undefined && prev.dex > 0 && Math.abs(market.priceUsd - prev.dex) / prev.dex > 0.03;
+      divergenceSeen.set(signal.mint, { jup: jpEntry, dex: market.priceUsd, at: now });
+      if (jupFrozen && dexMoved) {
+        await audit("entry_jupiter_stale_override", {
+          mint: signal.mint,
+          jup: jpEntry,
+          dex: market.priceUsd,
+          ratio: Number(ratio.toFixed(2)),
+          sinceFirstSkipSec: Number(((now - prev.at) / 1000).toFixed(0)),
+        });
+        console.log(
+          `🔓 UNSKIP ${token.symbol ?? "?"} ${short(signal.mint)} — Jupiter frozen at $${jpEntry} while dex moved $${prev.dex}→$${market.priceUsd}; stale index, entering on DexScreener`,
+        );
+        // Fall through on the DexScreener price — do NOT adopt the frozen read.
+      } else {
+        await audit("entry_feed_divergence_skip", {
+          mint: signal.mint,
+          jup: jpEntry,
+          dex: market.priceUsd,
+          ratio: Number(ratio.toFixed(2)),
+        });
+        console.log(
+          `⛔ SKIP   ${token.symbol ?? "?"} ${short(signal.mint)} — feed divergence ${ratio.toFixed(1)}× (dex $${market.priceUsd} vs jup $${jpEntry}); price disputed, deferring`,
+        );
+        return false;
+      }
+    } else {
+      divergenceSeen.delete(signal.mint);
+      market.priceUsd = jpEntry;
     }
-    market.priceUsd = jpEntry;
   }
 
   // Entry defense: refuse the cohorts that only bleed. A blocked venue or a
