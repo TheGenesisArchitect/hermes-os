@@ -641,8 +641,16 @@ export function decideExit(
   // Armed once it's shown real green — by % OR by an absolute dollar gain, so a
   // small bet locks its base hit ("never close red once up $1") without waiting
   // for a +15% move. The ratcheting trail still rides real runners uncapped.
+  // INVARIANT: arming is only legal once the peak is ABOVE the lock floor —
+  // otherwise the floor stop (entry × PROFIT_LOCK_FLOOR_MULT) sits above the
+  // live price and executes on the next tick, harvesting every position at
+  // ~breakeven. Exactly that happened at prime sizes: $0.10 on a $14 position
+  // arms at +0.7%, floor at +2% > price → deterministic 11-16s penny exits
+  // (positions 1019-1024, all peak 1.01x). The dollar floor was calibrated on
+  // $1.75 probes where $0.10 = +5.7% and the inversion couldn't occur.
   const armed =
-    peakMult >= cfg.PROFIT_LOCK_ARM_MULT || peakProfitUsd >= cfg.PROFIT_FLOOR_USD;
+    (peakMult >= cfg.PROFIT_LOCK_ARM_MULT || peakProfitUsd >= cfg.PROFIT_FLOOR_USD) &&
+    peakMult > cfg.PROFIT_LOCK_FLOOR_MULT;
 
   if (armed) {
     // The stop is now a ratchet that only moves UP — the higher of a locked
