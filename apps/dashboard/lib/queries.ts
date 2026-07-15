@@ -458,6 +458,172 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
   return out;
 }
 
+// ── TIMING GRID ────────────────────────────────────────────────────────────
+// The live time×multiple field: every trade a trajectory on a 0→maxSec seconds
+// floor (polled ~6.5s) against a 1.0× baseline, TP rails, and DNA time-zones
+// (danger <150s where rugs peak, runner >300s where real winners live). This is
+// the exit doctrine made watchable — floor set fast on the downside, ceiling open
+// on the upside.
+export interface TimingTradePoint {
+  t: number; // seconds since entry
+  mm: number; // mark multiple
+}
+export interface TimingTrade {
+  id: number;
+  symbol: string | null;
+  isFarm: boolean;
+  points: TimingTradePoint[];
+  curMult: number;
+  peakMult: number;
+  ageSec: number;
+  state: "rising" | "stalling" | "falling";
+  status: "open" | "closed";
+  exit: { t: number; mm: number; reason: string; pnl: number } | null;
+}
+export interface TimingGridView {
+  trades: TimingTrade[];
+  maxSec: number;
+  pollSec: number;
+  tpLevels: { mult: number; label: string }[];
+  zones: { fromSec: number; toSec: number; label: string; tone: "danger" | "develop" | "runner" }[];
+  counts: { rising: number; stalling: number; falling: number };
+}
+
+const TIMING_POLL_SEC = 6.5; // measured median gap between position_ticks
+const TIMING_CLOSED_WINDOW_MIN = 20; // recently-closed trades linger then fade off the grid
+
+function timingState(points: TimingTradePoint[]): "rising" | "stalling" | "falling" {
+  if (points.length < 2) return "rising";
+  const cur = points[points.length - 1]!.mm;
+  const peak = Math.max(...points.map((p) => p.mm));
+  const ddPct = peak > 0 ? ((peak - cur) / peak) * 100 : 0;
+  if (ddPct <= 1.5) return "rising"; // at/near a fresh high
+  if (ddPct >= 8) return "falling"; // rolled decisively off the peak
+  return "stalling"; // drifting below the high but not broken
+}
+
+export async function getTimingGrid(): Promise<TimingGridView> {
+  const closedSince = new Date(Date.now() - TIMING_CLOSED_WINDOW_MIN * 60 * 1000);
+  const [open, closed] = await Promise.all([
+    db
+      .select({
+        id: positions.id,
+        symbol: tokens.symbol,
+        dex: tokens.dex,
+        entryPriceUsd: positions.entryPriceUsd,
+        openedAt: positions.openedAt,
+      })
+      .from(positions)
+      .innerJoin(tokens, eq(tokens.mint, positions.mint))
+      .where(eq(positions.status, "open")),
+    db
+      .select({
+        id: positions.id,
+        symbol: tokens.symbol,
+        dex: tokens.dex,
+        entryPriceUsd: positions.entryPriceUsd,
+        exitPriceUsd: positions.exitPriceUsd,
+        exitReason: positions.exitReason,
+        realizedPnlUsd: positions.realizedPnlUsd,
+        openedAt: positions.openedAt,
+        closedAt: positions.closedAt,
+      })
+      .from(positions)
+      .innerJoin(tokens, eq(tokens.mint, positions.mint))
+      .where(and(eq(positions.status, "closed"), gte(positions.closedAt, closedSince))),
+  ]);
+
+  const ids = [...open.map((p) => p.id), ...closed.map((p) => p.id)];
+  const tickRows = ids.length
+    ? await db
+        .select({
+          positionId: positionTicks.positionId,
+          ageMinutes: positionTicks.ageMinutes,
+          markMultiple: positionTicks.markMultiple,
+        })
+        .from(positionTicks)
+        .where(inArray(positionTicks.positionId, ids))
+        .orderBy(asc(positionTicks.snappedAt))
+    : [];
+  const byPos = new Map<number, TimingTradePoint[]>();
+  for (const r of tickRows) {
+    const mm = num(r.markMultiple);
+    if (!(mm > 0)) continue; // skip garbage/empty-pool reads — never plot a fake dip
+    const arr = byPos.get(r.positionId) ?? [];
+    arr.push({ t: Math.max(0, num(r.ageMinutes) * 60), mm });
+    byPos.set(r.positionId, arr);
+  }
+
+  const trades: TimingTrade[] = [];
+  const isFarm = (dex: string | null) => (dex ?? "").toLowerCase() === "meteora-damm-v2";
+
+  for (const p of open) {
+    const points = byPos.get(p.id) ?? [];
+    if (!points.length) continue;
+    const peakMult = Math.max(...points.map((x) => x.mm));
+    const last = points[points.length - 1]!;
+    trades.push({
+      id: p.id,
+      symbol: p.symbol,
+      isFarm: isFarm(p.dex),
+      points,
+      curMult: last.mm,
+      peakMult,
+      ageSec: last.t,
+      state: timingState(points),
+      status: "open",
+      exit: null,
+    });
+  }
+  for (const p of closed) {
+    const points = byPos.get(p.id) ?? [];
+    const entry = num(p.entryPriceUsd);
+    const exitT = p.closedAt ? Math.max(0, (p.closedAt.getTime() - p.openedAt.getTime()) / 1000) : 0;
+    const exitMm = entry > 0 && p.exitPriceUsd !== null ? num(p.exitPriceUsd) / entry : (points[points.length - 1]?.mm ?? 1);
+    const peakMult = points.length ? Math.max(...points.map((x) => x.mm)) : Math.max(1, exitMm);
+    trades.push({
+      id: p.id,
+      symbol: p.symbol,
+      isFarm: isFarm(p.dex),
+      points,
+      curMult: exitMm,
+      peakMult,
+      ageSec: exitT,
+      state: "falling",
+      status: "closed",
+      exit: { t: exitT, mm: exitMm, reason: p.exitReason ?? "closed", pnl: num(p.realizedPnlUsd) },
+    });
+  }
+
+  const maxAge = trades.reduce((m, t) => Math.max(m, t.ageSec), 0);
+  // Fixed 1000s moonshot horizon by default; expand (bounded) if a live runner has
+  // outlasted it so nothing clips off the right edge.
+  const maxSec = Math.min(2400, Math.max(1000, Math.ceil(maxAge / 100) * 100));
+  const openTrades = trades.filter((t) => t.status === "open");
+  const counts = {
+    rising: openTrades.filter((t) => t.state === "rising").length,
+    stalling: openTrades.filter((t) => t.state === "stalling").length,
+    falling: openTrades.filter((t) => t.state === "falling").length,
+  };
+
+  return {
+    trades,
+    maxSec,
+    pollSec: TIMING_POLL_SEC,
+    tpLevels: [
+      { mult: 1.15, label: "TP0" },
+      { mult: 1.3, label: "TP1" },
+      { mult: 1.7, label: "TP2" },
+    ],
+    zones: [
+      { fromSec: 0, toSec: 150, label: "danger", tone: "danger" },
+      { fromSec: 150, toSec: 300, label: "develop", tone: "develop" },
+      { fromSec: 300, toSec: 100000, label: "runner", tone: "runner" },
+    ],
+    counts,
+  };
+}
+
 export interface RetroTrade {
   id: number;
   mint: string;

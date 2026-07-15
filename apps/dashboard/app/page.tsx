@@ -9,6 +9,7 @@ import { IntelTerminal } from "@/components/IntelTerminal";
 import { KillSwitch } from "@/components/KillSwitch";
 import { ManagementBoard } from "@/components/ManagementBoard";
 import { RecorderBoard } from "@/components/RecorderBoard";
+import { TimingGrid } from "@/components/TimingGrid";
 import { MintLink, ScoreBadge, StatTile, fmtTs, fmtTsFull, timeAgo, usd } from "@/components/ui";
 import {
   getAccountingLedger,
@@ -22,6 +23,7 @@ import {
   getKpiStrip,
   getNews,
   getManagedPositions,
+  getTimingGrid,
   getRecentSignals,
   getRecentTrades,
   getRecorderOutcomes,
@@ -52,6 +54,7 @@ export default async function Overview() {
     edgeSeries,
     forecast,
     news,
+    timingGrid,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -70,6 +73,7 @@ export default async function Overview() {
     getEdgeSeries(),
     getForecast(),
     getNews(),
+    getTimingGrid(),
   ]);
 
   const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
@@ -148,6 +152,17 @@ export default async function Overview() {
           Equity — paper lane (start {usd(cfg.PAPER_BANKROLL_USD, 0)})
         </h2>
         <EquityChart data={chartData} bankroll={cfg.PAPER_BANKROLL_USD} />
+      </section>
+
+      {/* Timing grid — the live time×multiple field. Every trade a trajectory on
+          the seconds floor, colored by rising/stalling/falling, against the TP
+          rails and the DNA time-zones. The exit doctrine made watchable: floor
+          set fast on the downside, ceiling left open on the upside. */}
+      <section className="card p-4">
+        <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+          Timing scale — entries & exits on the seconds grid
+        </h2>
+        <TimingGrid view={timingGrid} />
       </section>
 
       {/* Intel Terminal — Bloomberg-style KPIs + edge trend in an on-demand drawer;
