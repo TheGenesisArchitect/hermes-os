@@ -612,7 +612,7 @@ export function decideExit(
     // tickers whose 24h rug share crossed the threshold). Farm tape gets the
     // NO-RUNNER ladder: 40% @TP0 → 75% @TP1 → 100% out @TP2 — nothing is ever
     // held into the cliff; real-moonshot venues keep the uncapped runner.
-    const farm = isFarmTape(cfg, market);
+    const farm = isFarmDump(cfg, market);
     const tp0Cum = farm ? cfg.FARM_TP0_CUM_SELL : cfg.TP0_CUM_SELL;
     const tp1Cum = farm ? cfg.FARM_TP1_CUM_SELL : cfg.TP1_CUM_SELL;
     const tp2Cum = farm ? cfg.FARM_TP2_CUM_SELL : cfg.TP2_CUM_SELL;
@@ -979,6 +979,24 @@ function isFarmTape(cfg: HermesConfig, market: TokenMarket): boolean {
   const dex = canonicalVenue(market);
   const sym = (market.symbol ?? "").toLowerCase();
   return cfg.FARM_VENUES.has(dex) || autoFarm.venues.has(dex) || (sym !== "" && autoFarm.symbols.has(sym));
+}
+
+/**
+ * The NO-RUNNER dump ladder (100% out at the first TP level) is reserved for
+ * tape the system has MEASURED as serial-rug bait: the adaptive farm TICKERS
+ * (the uswr/w26/vorf relaunch mills) and adaptive rug-rate venues. The static
+ * FARM_VENUES blanket deliberately does NOT qualify here: damm-v2 carries ~92%
+ * of flow, and in a favorable regime it hosts real runners — blanket-dumping
+ * the venue capped ENGLAND (ran 4.19x) and sadcat (3.79x) at +13% while the
+ * ticker list alone would have correctly dumped USOH and W26 (both rugged to
+ * $0 minutes after our TP0). Static-venue farm tape with a CLEAN ticker keeps
+ * the organic ladder: bank 40% at TP0, runner rides the post-bank leash.
+ * isFarmTape (venue-wide) still governs book slots — this only picks the ladder.
+ */
+function isFarmDump(cfg: HermesConfig, market: TokenMarket): boolean {
+  const dex = canonicalVenue(market);
+  const sym = (market.symbol ?? "").toLowerCase();
+  return autoFarm.venues.has(dex) || (sym !== "" && autoFarm.symbols.has(sym));
 }
 
 export type MarkVerdict =

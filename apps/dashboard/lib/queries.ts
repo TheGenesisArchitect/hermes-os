@@ -647,11 +647,19 @@ export async function getTimingGrid(): Promise<TimingGridView> {
     trades,
     maxSec,
     pollSec: TIMING_POLL_SEC,
-    tpLevels: [
-      { mult: 1.15, label: "TP0" },
-      { mult: 1.3, label: "TP1" },
-      { mult: 1.7, label: "TP2" },
-    ],
+    // The rails the trader ACTUALLY trades: base config resolved through the
+    // live runtime overrides (manual pins > auto policy > base). Hardcoded
+    // values here once showed TP0 1.15x while the effective pin was 1.10x —
+    // the board must never disagree with the ladder that fires.
+    tpLevels: await (async () => {
+      const [row] = await db.select().from(config).where(eq(config.key, "runtime_overrides"));
+      const eff = resolveOverrides(cfg, row?.value ?? null).effective;
+      return [
+        { mult: eff.TP0_MULT, label: "TP0" },
+        { mult: eff.TP1_MULT, label: "TP1" },
+        { mult: eff.TP2_MULT, label: "TP2" },
+      ];
+    })(),
     zones: [
       { fromSec: 0, toSec: 150, label: "danger", tone: "danger" },
       { fromSec: 150, toSec: 300, label: "develop", tone: "develop" },

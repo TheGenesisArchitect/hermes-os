@@ -358,8 +358,12 @@ const envSchema = z.object({
   // two-way bot tape sat 0.45-0.52 its whole run) while only 31% of duds fell
   // below it. Per the shrink-don't-veto doctrine the 0.45-0.60 band now ARMS and
   // the trader's CONFIRM_QUALITY_SIZE_MULT (×0.6 under 0.8 buys) prices the risk;
-  // below 0.45 the tape is genuinely sell-dominated — still a veto.
-  CONFIRM_MIN_BUYSHARE: z.coerce.number().default(0.45),
+  // below the floor the tape is genuinely sell-dominated — still a veto.
+  // 0.45→0.40 (2026-07-15): PITBULL ran 1.73x holding 0% dd but its buy-share
+  // sat 0.38-0.46 the whole window — the same two-way bot tape as MOOBULL.
+  // Calibration: winners/duds both pass ~99% at 0.45, so the band between 0.40
+  // and 0.45 costs <1% in dud admits; quality-sizing prices the risk.
+  CONFIRM_MIN_BUYSHARE: z.coerce.number().default(0.4),
   // Volume acceleration = vol_m5 / vol_h1, the fraction of the trailing hour's
   // volume packed into the last 5 minutes — a genuine demand BURST. This is the
   // one clean positive edge in the separation study: winner median 0.234 vs rug
