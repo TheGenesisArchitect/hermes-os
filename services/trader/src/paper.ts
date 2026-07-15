@@ -554,6 +554,12 @@ function trailWidthPct(
   peakMult: number,
   drawdownPct: number,
   call: ManagementCall | null,
+  // BANK-FIRST-THEN-LEASH: once a TP tranche has banked, the remainder is house
+  // money and earns room to breathe. The 5-6.8% tight trail lives INSIDE the 5s
+  // wick noise of fresh tokens (11 prime-window entries exited in 9-90s at
+  // ~breakeven, then ran 1.3-2.3x without us — ETC banked $0.09 and peaked 2.27x
+  // nine seconds after our exit). An UNPAID position keeps the tight leash.
+  banked = false,
 ): number {
   let w =
     peakMult >= PARABOLIC_MULT
@@ -561,6 +567,7 @@ function trailWidthPct(
       : peakMult >= RUNNER_MULT
         ? cfg.TRAIL_MID_PCT
         : cfg.TRAIL_TIGHT_PCT; // 1–2.5x spike zone — bank it
+  if (banked) w = Math.max(w, cfg.POST_BANK_TRAIL_PCT);
   if (call?.action === "RIDE" && peakMult >= RIDE_MIN_MULT && drawdownPct < SNUG_DD) {
     w += cfg.TRAIL_RIDE_BONUS_PCT; // earned: a real runner still printing highs
   } else if (
@@ -569,7 +576,9 @@ function trailWidthPct(
     call?.regime === "STALL" ||
     call?.action === "TRIM"
   ) {
-    w = Math.min(w, cfg.TRAIL_TIGHT_PCT); // rolling over — lock it, ignore nostalgic RIDE
+    // Rolling over — lock it. A PAID runner clamps only to its post-bank leash
+    // (never back to the wick-noise width); an unpaid one snugs fully tight.
+    w = Math.min(w, banked ? cfg.POST_BANK_TRAIL_PCT : cfg.TRAIL_TIGHT_PCT);
   }
   return w;
 }
@@ -657,7 +666,11 @@ export function decideExit(
       return { reason: "stale_take", fraction: 1 };
     }
     const drawdownPct = peak > 0 ? Math.max(0, ((peak - price) / peak) * 100) : 0;
-    const trailPct = trailWidthPct(cfg, peakMult, drawdownPct, call);
+    // House-money check: any banked TP tranche means the position already paid.
+    const originalQty = n(position.qtyTokens);
+    const bankedRunner =
+      originalQty > 0 && 1 - n(position.qtyRemaining) / originalQty > 1e-6;
+    const trailPct = trailWidthPct(cfg, peakMult, drawdownPct, call, bankedRunner);
     const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, peak * (1 - trailPct / 100));
     if (price <= stop) return { reason: "profit_trail", fraction: 1 };
   } else {

@@ -223,6 +223,12 @@ const envSchema = z.object({
   TRAIL_MID_PCT: z.coerce.number().default(10), // 2.5x .. 6x — proven runner, a little room
   TRAIL_WIDE_PCT: z.coerce.number().default(18), // >= 6x — parabolic, don't get shaken out
   TRAIL_RIDE_BONUS_PCT: z.coerce.number().default(6), // classifier RIDE widens slightly (was 15 — the giveback source)
+  // BANK-FIRST-THEN-LEASH: once any TP tranche has banked, the runner is house
+  // money — its trail floors here instead of the tight wick-noise width, and a
+  // rollover snug clamps to this (not to TRAIL_TIGHT). Unpaid positions are
+  // untouched. Rationale: the 5-6.8% tight trail fires inside normal 5s wick
+  // noise, exiting 9-90s after entry at breakeven while the token runs 1.3-2.3x.
+  POST_BANK_TRAIL_PCT: z.coerce.number().default(12),
   HARD_STOP_PCT: z.coerce.number().default(5), // pre-ignition: a confirmed entry that reverses 5% failed — cut it cheap (~-$0.9 not -$17)
   MAX_HOLD_HOURS: z.coerce.number().default(6),
   // Flat-position time-box — capital rotation. A position that never established
