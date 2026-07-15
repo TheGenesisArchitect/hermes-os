@@ -896,8 +896,28 @@ async function refreshAutoFarm(cfg: HermesConfig): Promise<void> {
 }
 
 /** Farm classification for a position's live market read: static venue list ∪ adaptive sets. */
-function isFarmTape(cfg: HermesConfig, market: TokenMarket): boolean {
+/**
+ * Resolve the live market to the SAME canonical venue string the venue list and
+ * DB `tokens.dex` are written in, so entry-side (tokens.dex join) and exit-side
+ * (live DexScreener feed) agree. This closes the leak that silently disabled the
+ * farm no-runner ladder in production: the DexScreener feed reports damm-v2 as
+ * dexId "meteora" + label "DYN2", while the venue list + GeckoTerminal-ingested
+ * `tokens.dex` say "meteora-damm-v2" — so `FARM_VENUES.has(market.dexId)` was
+ * always false and EVERY farm rug got the runner ladder, donating 20% to the
+ * atomic cliff (measured: −$372 across one overnight). Non-mutating — `dexId`
+ * stays raw for score.ts sourceEdge. The label is the ONLY discriminator between
+ * the atomic-cliff farm (DYN2) and DAMM-v1 launches like bags-fm (DYN, a real
+ * source we must NOT farm-flag), so match on dexId+label, never bare dexId.
+ */
+function canonicalVenue(market: TokenMarket): string {
   const dex = (market.dexId ?? "").toLowerCase();
+  const labels = (market.labels ?? []).map((l) => l.toLowerCase());
+  if (dex === "meteora" && labels.includes("dyn2")) return "meteora-damm-v2";
+  return dex;
+}
+
+function isFarmTape(cfg: HermesConfig, market: TokenMarket): boolean {
+  const dex = canonicalVenue(market);
   const sym = (market.symbol ?? "").toLowerCase();
   return cfg.FARM_VENUES.has(dex) || autoFarm.venues.has(dex) || (sym !== "" && autoFarm.symbols.has(sym));
 }

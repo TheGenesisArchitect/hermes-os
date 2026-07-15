@@ -8,6 +8,7 @@ interface DsTxnWindow {
 interface DsPair {
   chainId: string;
   dexId: string;
+  labels?: string[];
   pairAddress: string;
   baseToken?: { address: string; name?: string; symbol?: string };
   priceUsd?: string;
@@ -25,6 +26,12 @@ export interface TokenMarket {
   fdvUsd: number;
   pairAddress: string;
   dexId: string;
+  // DexScreener labels distinguish sub-venues that SHARE a dexId. Meteora reports
+  // every pool as dexId "meteora"; only the label separates DAMM v2 ("DYN2" — the
+  // atomic-cliff farm) from DAMM v1 ("DYN" — bags-fm launches, a real source).
+  // Without this the exit-side farm ladder can't tell the killer apart from a
+  // legit venue and mis-classifies every one of them. (See canonicalVenue.)
+  labels: string[];
   // Identity from the pool's base token — the only place stream-sourced (PumpPortal
   // graduation) tokens can recover their symbol/name, since the migration event
   // carries neither. Without this they show as "?" everywhere downstream.
@@ -45,6 +52,7 @@ function pairToMarket(best: DsPair): TokenMarket {
     fdvUsd: best.fdv ?? 0,
     pairAddress: best.pairAddress,
     dexId: best.dexId,
+    labels: best.labels ?? [],
     symbol: best.baseToken?.symbol?.trim() || null,
     name: best.baseToken?.name?.trim() || null,
     pairAgeMinutes: best.pairCreatedAt ? (Date.now() - best.pairCreatedAt) / 60_000 : null,
