@@ -2033,7 +2033,20 @@ export interface ControlTerminalView {
   regime: RegimeState | null;
   updatedAt: number | null;
   groups: { group: OverrideGroup; label: string; knobs: ControlKnobView[] }[];
-  effectiveNote: { offHoursMult: number; primeNow: boolean };
+  // The REAL money that hits the next trade, so the book never lies again. Base
+  // is the size knob; the off-hours throttle applies now if we're off-prime;
+  // per-candidate risk (speculative→clean) and quality then modulate, so the
+  // actual bet lands in [perTradeLo, perTradeHi].
+  sizing: {
+    base: number;
+    offHoursMult: number;
+    primeNow: boolean;
+    sessionAdjusted: number; // base × (primeNow ? 1 : offHoursMult)
+    perTradeLo: number; // × most-shrunk risk/quality
+    perTradeHi: number; // × clean/full
+    riskFloor: number; // the speculative multiplier
+    autoMode: "off" | "advisory" | "live";
+  };
 }
 
 const GROUP_LABELS: Record<OverrideGroup, string> = {
@@ -2060,14 +2073,27 @@ export async function getControlTerminal(): Promise<ControlTerminalView> {
     knobs: knobViews.filter((k) => k.group === group),
   }));
 
+  const base = resolved.PAPER_POSITION_USD.value;
+  const offHoursMult = resolved.OFF_HOURS_SIZE_MULT.value;
+  const primeNow = cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours());
+  const sessionAdjusted = base * (primeNow ? 1 : offHoursMult);
+  const riskFloor = cfg.RISK_SIZE_SPECULATIVE; // most-shrunk speculative candidate
+  const qualityFloor = cfg.CONFIRM_QUALITY_SIZE_MULT; // fading-demand confirm
+
   return {
     autoMode,
     regime,
     updatedAt: raw?.updatedAt ?? null,
     groups,
-    effectiveNote: {
-      offHoursMult: cfg.OFF_HOURS_SIZE_MULT,
-      primeNow: cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours()),
+    sizing: {
+      base,
+      offHoursMult,
+      primeNow,
+      sessionAdjusted: Number(sessionAdjusted.toFixed(2)),
+      perTradeLo: Number((sessionAdjusted * riskFloor * qualityFloor).toFixed(2)),
+      perTradeHi: Number(sessionAdjusted.toFixed(2)),
+      riskFloor,
+      autoMode,
     },
   };
 }

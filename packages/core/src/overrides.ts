@@ -24,6 +24,7 @@ import type { HermesConfig } from "./config.js";
 
 export type OverrideKey =
   | "PAPER_POSITION_USD"
+  | "OFF_HOURS_SIZE_MULT"
   | "TP0_MULT"
   | "TP1_MULT"
   | "TP2_MULT"
@@ -51,7 +52,8 @@ export interface OverrideKnob {
 // The exposed knobs, in dashboard display order. Bands are deliberately generous
 // enough to tune but tight enough to be safe (no $5,000 size, no 90% stop).
 export const OVERRIDE_KNOBS: OverrideKnob[] = [
-  { key: "PAPER_POSITION_USD", label: "Position size", hint: "base $/entry (session × risk × quality still apply on top)", group: "size", unit: "$", min: 0.5, max: 200, step: 0.5 },
+  { key: "PAPER_POSITION_USD", label: "Position size", hint: "base $/entry — off-hours throttle & per-candidate risk/quality apply on top", group: "size", unit: "$", min: 0.5, max: 200, step: 0.5 },
+  { key: "OFF_HOURS_SIZE_MULT", label: "Off-hours throttle", hint: "× base size outside prime (18–23 UTC). 1.0 = full size off-hours (removes the probe cap)", group: "size", unit: "x", min: 0, max: 1, step: 0.05 },
   { key: "FARM_MAX_SLOTS", label: "Farm book cap", hint: "max concurrent farm-tape positions — dry powder waits for the organic pond", group: "size", unit: "slots", min: 0, max: 24, step: 1 },
   { key: "TP0_MULT", label: "TP0", hint: "first tranche — bank into the blow-off", group: "tp", unit: "x", min: 1.02, max: 3, step: 0.01 },
   { key: "TP1_MULT", label: "TP1", hint: "bank the bulk", group: "tp", unit: "x", min: 1.05, max: 5, step: 0.01 },
