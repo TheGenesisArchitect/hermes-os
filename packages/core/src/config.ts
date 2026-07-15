@@ -390,6 +390,18 @@ const envSchema = z.object({
   // buyShare < MIN_BUYSHARE at the freshest armed read → size × SIZE_MULT.
   CONFIRM_QUALITY_MIN_BUYSHARE: z.coerce.number().default(0.8),
   CONFIRM_QUALITY_SIZE_MULT: z.coerce.number().default(0.6),
+  // RUG-MODEL SIZING (fitted logistic, core rugModel.ts, held-out AUC 0.70 —
+  // quintile rug rates 7.9%→44.3%). Thresholds = the top two held-out quintile
+  // boundaries. Shrink, never veto: even the dirtiest quintile is 56% not-rug.
+  RUG_PROB_CAUTION: z.coerce.number().default(0.39), // held-out Q4 boundary → ×RUG_SIZE_CAUTION
+  RUG_PROB_HIGH: z.coerce.number().default(0.45), // held-out Q5 boundary → ×RUG_SIZE_HIGH
+  RUG_SIZE_CAUTION: z.coerce.number().default(0.6),
+  RUG_SIZE_HIGH: z.coerce.number().default(0.35),
+  // CONVICTION SIZING — a candidate that confirmed at ≥ this market-proven
+  // multiple (ARGENTINU armed at 4.94x, ran 11.4x) earns a boosted bet; a
+  // 1.26x mill relaunch does not. Quality gets the capital, mills get scraps.
+  CONVICTION_MULT_MIN: z.coerce.number().default(2.5),
+  CONVICTION_SIZE_BOOST: z.coerce.number().default(1.4),
   // SLOT DISPLACEMENT — never let deadweight block a confirmed banger. When the
   // book is full and a FULL-CONVICTION candidate is armed (buys ≥ quality floor),
   // evict the weakest open position: never established (peak below MAX_PEAK_MULT,

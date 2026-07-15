@@ -1,4 +1,5 @@
 import {
+  canonicalVenue,
   classify,
   convexSlippagePct,
   DEFAULT_CLASSIFIER,
@@ -126,9 +127,14 @@ async function openFromSignal(
   token: TokenRow,
   note = "",
   book?: LaneBook,
-  // Confirm-quality multiplier: 1 = full conviction; <1 = the confirm tick showed
-  // fading demand, so the bet shrinks (sizing, never a veto — see config).
+  // Combined confirm-quality multiplier (buy-share × rug-model × conviction):
+  // 1 = full conviction; <1 shrinks the bet; >1 boosts a proven mover (sizing,
+  // never a veto — see config).
   qualityMult = 1,
+  // Market-proven multiple at the confirm (recorder ref-relative). Persisted so
+  // exit-zone selection knows the token already proved e.g. 4.9x — an entry-
+  // relative 1.2x on such a token is a RUNNER, not a spike (ARGENTINU lesson).
+  triggerMult: number | null = null,
 ): Promise<boolean> {
   const market = await fetchTokenMarket(signal.mint).catch(() => null);
   if (!market) {
@@ -203,7 +209,10 @@ async function openFromSignal(
 
   // Entry defense: refuse the cohorts that only bleed. A blocked venue or a
   // pool too deep to convex-move is capital we simply don't put at risk.
-  const dex = (market.dexId || token.dex || "").toLowerCase();
+  // tokens.dex (ingest canonical) FIRST, live feed resolved through
+  // canonicalVenue as fallback — raw dexId reads "meteora" for bags-fm/damm-v2
+  // and would silently never match the blocklist (the dex-string leak).
+  const dex = (token.dex || canonicalVenue(market) || "").toLowerCase();
   if (cfg.ENTRY_BLOCK_DEXES.has(dex)) {
     await audit("entry_filtered", { mint: signal.mint, reason: `blocked venue ${dex}` });
     await db.update(signals).set({ status: "dismissed" }).where(eq(signals.id, signal.id));
@@ -326,6 +335,7 @@ async function openFromSignal(
       mint: signal.mint,
       lane: "paper",
       tier: lane,
+      triggerMult: triggerMult !== null && Number.isFinite(triggerMult) ? String(triggerMult) : null,
       sizeUsd: String(sizeUsd),
       qualityMult: String(qualityMult),
       qtyTokens: String(qty),
@@ -429,6 +439,8 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       mint: candidateOutcomes.mint,
       updatedAt: candidateOutcomes.updatedAt,
       triggerBuyShare: candidateOutcomes.triggerBuyShare,
+      rugProb: candidateOutcomes.rugProb,
+      triggerMultiple: candidateOutcomes.triggerMultiple,
     })
     .from(candidateOutcomes)
     .innerJoin(signals, eq(signals.id, candidateOutcomes.signalId))
@@ -505,7 +517,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     return;
   }
 
-  for (const { signal, token, mint, triggerBuyShare } of armed) {
+  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple } of armed) {
     if (total() >= cfg.PAPER_MAX_CONCURRENT) break; // global cap hit — leave the rest armed
 
     const [held] = await db.select({ id: positions.id }).from(positions).where(eq(positions.mint, mint)).limit(1);
@@ -518,16 +530,35 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // ~30% of total EV for +5.5pp win rate; sizing keeps the EV and cuts the
     // variance. Missing read (pre-migration rows) = full size.
     const bs = triggerBuyShare === null ? null : Number(triggerBuyShare);
-    const qualityMult =
+    const buyShareMult =
       bs !== null && Number.isFinite(bs) && bs < cfg.CONFIRM_QUALITY_MIN_BUYSHARE
         ? cfg.CONFIRM_QUALITY_SIZE_MULT
         : 1;
+    // RUG-MODEL sizing (fitted, held-out AUC 0.70): the dirty quintiles rug
+    // ~5.6x more often than the clean one — shrink them, never veto (even the
+    // dirtiest quintile is 56% not-rug). Missing score = neutral.
+    const rp = rugProb === null ? null : Number(rugProb);
+    const rugMult =
+      rp !== null && Number.isFinite(rp)
+        ? rp >= cfg.RUG_PROB_HIGH
+          ? cfg.RUG_SIZE_HIGH
+          : rp >= cfg.RUG_PROB_CAUTION
+            ? cfg.RUG_SIZE_CAUTION
+            : 1
+        : 1;
+    // CONVICTION sizing: a candidate that confirmed at ≥2.5x market-proven
+    // multiple (ARGENTINU armed at 4.94x → ran 11.4x) earns a bigger bet than
+    // a 1.26x mill relaunch. Quality gets the capital, mills get scraps.
+    const tm = triggerMultiple === null ? null : Number(triggerMultiple);
+    const convictionMult =
+      tm !== null && Number.isFinite(tm) && tm >= cfg.CONVICTION_MULT_MIN ? cfg.CONVICTION_SIZE_BOOST : 1;
+    const qualityMult = buyShareMult * rugMult * convictionMult;
 
     // Consume ONLY on a real fill. A false return (lane reserved / market null /
     // venue / liquidity / slippage) leaves the candidate armed to re-attempt next
     // cycle — a transient miss or a momentarily-reserved lane never permanently
     // burns a token that then runs 3–24x.
-    if (await openFromSignal(cfg, signal, token, "confirmed", book, qualityMult)) {
+    if (await openFromSignal(cfg, signal, token, "confirmed", book, qualityMult, tm)) {
       await db.update(candidateOutcomes).set({ entered: true, armed: false, updatedAt: new Date() }).where(eq(candidateOutcomes.mint, mint));
     }
   }
@@ -678,7 +709,15 @@ export function decideExit(
     const originalQty = n(position.qtyTokens);
     const bankedRunner =
       originalQty > 0 && 1 - n(position.qtyRemaining) / originalQty > 1e-6;
-    const trailPct = trailWidthPct(cfg, peakMult, drawdownPct, call, bankedRunner);
+    // MARKET-PROVEN zone selection: the trail zones exist to give proven
+    // runners room, but entry-relative peakMult is blind to what the token
+    // proved BEFORE we entered. ARGENTINU armed at 4.94x market-proven; from
+    // our fill it read 1.1-2.3x, so it stayed in the tight spike-zone trail
+    // the whole ride to 11.4x and banked +15%. Zone selection (and the RIDE
+    // gate inside trailWidthPct) now uses entryRel × triggerMult; the stop
+    // PRICE math stays on the real entry-relative peak.
+    const provenMult = peakMult * Math.max(1, n(position.triggerMult) || 1);
+    const trailPct = trailWidthPct(cfg, provenMult, drawdownPct, call, bankedRunner);
     const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, peak * (1 - trailPct / 100));
     if (price <= stop) return { reason: "profit_trail", fraction: 1 };
   } else {
@@ -965,27 +1004,11 @@ async function refreshAutoFarm(cfg: HermesConfig): Promise<void> {
   }
 }
 
-/** Farm classification for a position's live market read: static venue list ∪ adaptive sets. */
-/**
- * Resolve the live market to the SAME canonical venue string the venue list and
- * DB `tokens.dex` are written in, so entry-side (tokens.dex join) and exit-side
- * (live DexScreener feed) agree. This closes the leak that silently disabled the
- * farm no-runner ladder in production: the DexScreener feed reports damm-v2 as
- * dexId "meteora" + label "DYN2", while the venue list + GeckoTerminal-ingested
- * `tokens.dex` say "meteora-damm-v2" — so `FARM_VENUES.has(market.dexId)` was
- * always false and EVERY farm rug got the runner ladder, donating 20% to the
- * atomic cliff (measured: −$372 across one overnight). Non-mutating — `dexId`
- * stays raw for score.ts sourceEdge. The label is the ONLY discriminator between
- * the atomic-cliff farm (DYN2) and DAMM-v1 launches like bags-fm (DYN, a real
- * source we must NOT farm-flag), so match on dexId+label, never bare dexId.
- */
-function canonicalVenue(market: TokenMarket): string {
-  const dex = (market.dexId ?? "").toLowerCase();
-  const labels = (market.labels ?? []).map((l) => l.toLowerCase());
-  if (dex === "meteora" && labels.includes("dyn2")) return "meteora-damm-v2";
-  return dex;
-}
+// canonicalVenue now lives in @hermes/core (market/venue.ts) so the recorder's
+// rug model and the trader resolve venues identically — see its doc for the
+// dex-string-leak history (meteora+DYN2 → meteora-damm-v2).
 
+/** Farm classification for a position's live market read: static venue list ∪ adaptive sets. */
 function isFarmTape(cfg: HermesConfig, market: TokenMarket): boolean {
   const dex = canonicalVenue(market);
   const sym = (market.symbol ?? "").toLowerCase();

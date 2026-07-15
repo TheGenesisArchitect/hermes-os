@@ -67,6 +67,12 @@ export const positions = pgTable("positions", {
     .references(() => tokens.mint),
   lane: text("lane").notNull().default("paper"), // paper | live
   tier: text("tier").notNull().default("base"), // capacity lane: moonshot | core | base — assigned at entry from the convexity fingerprint
+  // Recorder trigger multiple at entry (market-PROVEN multiple vs ref). Trail
+  // zones use entryRelativeMult × this so a token entered after proving 4.9x
+  // gets the runner leash immediately instead of the tight spike-zone trail
+  // (the ARGENTINU lesson: entered at 4.94x proven, peaked 11.4x, banked +15%
+  // because entry-relative zones never left "tight").
+  triggerMult: numeric("trigger_mult"),
   status: text("status").notNull().default("open"), // open | closed
   sizeUsd: numeric("size_usd").notNull(),
   // Confirm-quality sizing: 1 = full-conviction confirm, <1 = size reduced because
@@ -244,6 +250,9 @@ export const candidateOutcomes = pgTable("candidate_outcomes", {
   // minutes-old read. The hard-stop class confirms with fading buy-share (med 0.765
   // vs 0.925 for green exits); quality sizing shrinks that bet instead of vetoing.
   triggerBuyShare: numeric("trigger_buy_share"),
+  // Fitted rug-model probability at the freshest armed tick (core rugModel.ts,
+  // AUC 0.70 held-out). Trader sizes by it — shrink, never veto.
+  rugProb: numeric("rug_prob"),
   triggerConsumed: boolean("trigger_consumed").notNull().default(false), // vestigial: entry is now gated by `armed`, not one-shot consumption
   // LIVE confirmation state — the fix for missed lightning. The recorder
   // re-evaluates the entry gate on EVERY poll and sets this true while the

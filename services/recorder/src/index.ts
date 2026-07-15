@@ -3,12 +3,14 @@ import { resolve } from "node:path";
 // repo-root .env — services run with cwd at their own package dir
 loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
 import {
+  canonicalVenue,
   classify,
   entryTriggerConfigFrom,
   evaluateEntryTrigger,
   fetchTokenMarket,
   fetchTokenMarkets,
   loadConfig,
+  scoreRugProb,
   tickFrom,
   type Tick,
 } from "@hermes/core";
@@ -274,6 +276,21 @@ async function observe(
       .limit(1);
     const armed = trig.triggered && !held && !o.entered;
 
+    // Fitted rug probability at the freshest armed read (core rugModel.ts,
+    // held-out AUC 0.70). The trader sizes by this — shrink, never veto.
+    const rugProb = armed
+      ? scoreRugProb({
+          venue: canonicalVenue(market),
+          liquidityUsd: market.liquidityUsd,
+          fdvUsd: market.fdvUsd,
+          volM5: market.volUsd.m5,
+          volH1: market.volUsd.h1,
+          markMultiple: trig.markMultiple,
+          drawdownPct: trig.drawdownPct,
+          watchMinutes: watchMin,
+        })
+      : null;
+
     // First time it arms: stamp the trigger context (for news/analytics) and
     // announce. Re-arms after a disarm keep the original triggeredAt as the
     // "first confirmed demand" mark.
@@ -285,7 +302,7 @@ async function observe(
         // Freshest demand read while armed — the trader sizes off THIS (quality
         // sizing), so it must reflect the tick it will actually enter into, not
         // the first-arm snapshot from minutes ago.
-        ...(armed ? { triggerBuyShare: String(trig.buyShare) } : {}),
+        ...(armed ? { triggerBuyShare: String(trig.buyShare), rugProb: String(rugProb) } : {}),
         ...(firstArm
           ? {
               triggeredAt: new Date(),
@@ -309,10 +326,11 @@ async function observe(
           drawdownPct: trig.drawdownPct,
           buyShare: trig.buyShare,
           continuationScore: call.continuationScore,
+          rugProb,
           reason: trig.reason,
         },
       });
-      console.log(`⚡ ARMED ${short(o.mint)} — ${trig.reason}`);
+      console.log(`⚡ ARMED ${short(o.mint)} — ${trig.reason} · rug ${rugProb === null ? "n/a" : (rugProb * 100).toFixed(0) + "%"}`);
     }
   }
 

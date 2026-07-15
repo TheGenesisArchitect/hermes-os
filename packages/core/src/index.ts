@@ -54,6 +54,15 @@ export {
   type ForecastResult,
   type ForecastBucket,
 } from "./forecast.js";
+export {
+  scoreRugProb,
+  rugFeatureVector,
+  RUG_WEIGHTS,
+  RUG_BIAS,
+  RUG_FEATURE_NAMES,
+  type RugModelInput,
+} from "./management/rugModel.js";
+export { canonicalVenue } from "./market/venue.js";
 export { ollamaJson, ollamaUp, OLLAMA_MODEL } from "./llm/ollama.js";
 export {
   synthesizeMover,
