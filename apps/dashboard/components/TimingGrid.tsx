@@ -1,173 +1,212 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { setManagementIntent } from "@/app/actions";
 import type { TimingGridView, TimingTrade } from "@/lib/queries";
 
-// The live timing field: time (seconds since entry) on the floor, multiple on the
-// wall. Every trade is a trajectory colored by what it's doing RIGHT NOW — rising
-// (green), stalling (amber), falling (red). TP rails and the DNA time-zones
-// (danger <150s where rugs peak, runner >300s where winners live) turn it from a
-// chart into the exit doctrine you can watch: floor set fast, ceiling left open.
+// The vertical Trade Matrix: one heat-bar per open trade, height = how high it has
+// risen (mark multiple), filled with the progress-distribution palette (neutral at
+// 1.0×, deepening green up / red down). A gold LOCK line rides up under the peak —
+// the protected floor a close-now can't drop below — so "price gets locked in the
+// higher it rises" is literal. TP rails cross behind; each bar is click-to-close.
 
-const W = 1000;
-const H = 300;
-const PAD = { top: 16, right: 70, bottom: 30, left: 46 };
-const PLOT_W = W - PAD.left - PAD.right;
-const PLOT_H = H - PAD.top - PAD.bottom;
+const NEUTRAL: [number, number, number] = [38, 38, 36];
+const GAIN: [number, number, number] = [22, 190, 80];
+const LOSS: [number, number, number] = [214, 62, 62];
+function mix(a: [number, number, number], b: [number, number, number], t: number): string {
+  const g = Math.pow(Math.max(0, Math.min(1, t)), 0.7);
+  return `rgb(${a.map((x, i) => Math.round(x + (b[i] - x) * g)).join(",")})`;
+}
+function heat(mm: number): string {
+  return mm >= 1 ? mix(NEUTRAL, GAIN, (mm - 1) / 2) : mix(NEUTRAL, LOSS, (1 - mm) / 0.6);
+}
 
-const STATE_COLOR: Record<TimingTrade["state"], string> = {
+const STATE_TONE: Record<TimingTrade["state"], string> = {
   rising: "var(--status-good)",
   stalling: "var(--status-warning)",
   falling: "var(--status-critical)",
 };
-const ZONE_TINT: Record<string, string> = {
-  danger: "var(--status-critical)",
-  develop: "var(--status-warning)",
-  runner: "var(--status-good)",
-};
-
+const zoneTone = (sec: number) =>
+  sec < 150 ? "var(--status-critical)" : sec < 300 ? "var(--status-warning)" : "var(--status-good)";
 const fmtSec = (s: number) => (s >= 60 ? `${Math.round(s / 60)}m` : `${Math.round(s)}s`);
+
+const TRACK_H = 208; // px — the shared 1.0×→yMax wall
 
 export function TimingGrid({ view }: { view: TimingGridView }) {
   const [hovered, setHovered] = useState<number | null>(null);
+  const [closing, setClosing] = useState<Set<number>>(new Set());
+  const [, startTransition] = useTransition();
 
-  const open = view.trades.filter((t) => t.status === "open");
+  const open = view.trades
+    .filter((t) => t.status === "open")
+    .sort((a, b) => b.curMult - a.curMult);
+  const closed = view.trades
+    .filter((t) => t.status === "closed")
+    .sort((a, b) => b.ageSec - a.ageSec)
+    .slice(0, 12);
+
   if (view.trades.length === 0) {
     return (
-      <div
-        className="flex h-56 items-center justify-center text-sm"
-        style={{ color: "var(--text-muted)" }}
-      >
-        No open or recently-closed trades — the timing field fills as the trader takes positions.
+      <div className="flex h-52 items-center justify-center text-sm" style={{ color: "var(--text-muted)" }}>
+        No open or recently-closed trades — the matrix fills as the trader takes positions.
       </div>
     );
   }
 
-  const yMax = Math.max(1.8, ...view.trades.map((t) => t.peakMult)) * 1.04;
-  const yMin = 1.0;
-  const x = (t: number) => PAD.left + Math.min(1, t / view.maxSec) * PLOT_W;
-  const y = (mm: number) =>
-    PAD.top + (1 - (Math.max(yMin, Math.min(yMax, mm)) - yMin) / (yMax - yMin)) * PLOT_H;
+  const yMax = Math.max(1.8, ...view.trades.map((t) => t.peakMult)) * 1.05;
+  const pct = (mult: number) => Math.max(0, Math.min(1, (mult - 1) / (yMax - 1))) * 100;
 
-  // Major x gridlines anchored to the cohort peak-times, plus the horizon.
-  const xTicks = [0, 150, 300, 600, 1000].filter((s) => s <= view.maxSec);
-  if (!xTicks.includes(view.maxSec)) xTicks.push(view.maxSec);
+  const closePosition = (id: number) => {
+    setClosing((s) => new Set(s).add(id));
+    startTransition(() => {
+      void setManagementIntent(id, "cut");
+    });
+  };
 
-  const path = (pts: { t: number; mm: number }[]) =>
-    pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.t).toFixed(1)},${y(p.mm).toFixed(1)}`).join(" ");
-
-  const hoveredTrade = hovered != null ? view.trades.find((t) => t.id === hovered) ?? null : null;
+  const railMults = [...view.tpLevels.map((t) => t.mult)].filter((m) => m < yMax);
 
   return (
     <div className="w-full">
-      <div className="mb-1 flex items-center justify-between text-xs" style={{ color: "var(--text-muted)" }}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
         <span>
-          Timing grid — {open.length} live · polled every {view.pollSec}s · 1.0× floor, seconds across
+          Trade matrix — {open.length} live · bar height = how high it rose · gold line = locked floor · click a bar to close
         </span>
-        <span className="flex gap-3 tabular">
-          <span style={{ color: "var(--status-good)" }}>▲ {view.counts.rising} rising</span>
-          <span style={{ color: "var(--status-warning)" }}>▬ {view.counts.stalling} stalling</span>
-          <span style={{ color: "var(--status-critical)" }}>▼ {view.counts.falling} falling</span>
+        <span className="flex items-center gap-3 tabular">
+          <span style={{ color: "var(--status-good)" }}>▲ {view.counts.rising}</span>
+          <span style={{ color: "var(--status-warning)" }}>▬ {view.counts.stalling}</span>
+          <span style={{ color: "var(--status-critical)" }}>▼ {view.counts.falling}</span>
+          <span className="flex items-center gap-1">
+            <span>0.4×</span>
+            <span className="inline-block h-2 w-16 rounded-sm" style={{ background: `linear-gradient(90deg, ${heat(0.4)}, ${heat(1)}, ${heat(2)}, ${heat(3)})` }} />
+            <span>3×</span>
+          </span>
         </span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ height: "auto", display: "block" }}>
-        {/* DNA time-zone bands */}
-        {view.zones.map((z) => {
-          const x0 = x(z.fromSec);
-          const x1 = x(Math.min(z.toSec, view.maxSec));
-          return (
-            <g key={z.label}>
-              <rect x={x0} y={PAD.top} width={Math.max(0, x1 - x0)} height={PLOT_H} fill={ZONE_TINT[z.tone]} opacity={0.05} />
-              <text x={(x0 + x1) / 2} y={PAD.top + 12} textAnchor="middle" fontSize={10} fill={ZONE_TINT[z.tone]} opacity={0.65} style={{ textTransform: "uppercase", letterSpacing: 1 }}>
-                {z.label}
-              </text>
-            </g>
-          );
-        })}
 
-        {/* x gridlines + labels */}
-        {xTicks.map((s) => (
-          <g key={`x${s}`}>
-            <line x1={x(s)} y1={PAD.top} x2={x(s)} y2={PAD.top + PLOT_H} stroke="var(--gridline)" strokeWidth={1} />
-            <text x={x(s)} y={H - 10} textAnchor="middle" fontSize={11} fill="var(--text-muted)" className="tabular">
-              {s === 0 ? "0" : fmtSec(s)}
-            </text>
-          </g>
-        ))}
+      <div className="flex gap-2">
+        {/* shared Y axis */}
+        <div className="relative shrink-0" style={{ width: 34, height: TRACK_H }}>
+          {[{ m: yMax, l: `${yMax.toFixed(1)}×` }, ...view.tpLevels.map((t) => ({ m: t.mult, l: t.label })), { m: 1, l: "1.0×" }].map((r, i) => (
+            <div key={i} className="absolute right-0 -translate-y-1/2 text-[9px] tabular" style={{ bottom: `${pct(r.m)}%`, color: "var(--text-muted)" }}>
+              {r.l}
+            </div>
+          ))}
+        </div>
 
-        {/* entry baseline 1.0× */}
-        <line x1={PAD.left} y1={y(1)} x2={PAD.left + PLOT_W} y2={y(1)} stroke="var(--baseline)" strokeWidth={1.5} />
-        <text x={PAD.left - 6} y={y(1) + 3} textAnchor="end" fontSize={11} fill="var(--text-muted)" className="tabular">1.0×</text>
+        {/* bar field */}
+        <div className="relative flex-1 overflow-x-auto">
+          {/* TP rails behind the bars */}
+          <div className="pointer-events-none absolute inset-0" style={{ height: TRACK_H }}>
+            {railMults.map((m) => (
+              <div key={m} className="absolute w-full border-t border-dashed" style={{ bottom: `${pct(m)}%`, borderColor: "var(--gridline)" }} />
+            ))}
+            <div className="absolute w-full" style={{ bottom: 0, borderTop: "1.5px solid var(--baseline)" }} />
+          </div>
 
-        {/* TP rails */}
-        {view.tpLevels.filter((tp) => tp.mult <= yMax).map((tp) => (
-          <g key={tp.label}>
-            <line x1={PAD.left} y1={y(tp.mult)} x2={PAD.left + PLOT_W} y2={y(tp.mult)} stroke="var(--series-1)" strokeWidth={1} strokeDasharray="4 4" opacity={0.55} />
-            <text x={PAD.left - 6} y={y(tp.mult) + 3} textAnchor="end" fontSize={10} fill="var(--text-muted)" className="tabular">{tp.mult}×</text>
-            <text x={PAD.left + PLOT_W + 4} y={y(tp.mult) + 3} textAnchor="start" fontSize={10} fill="var(--series-1)" opacity={0.7}>{tp.label}</text>
-          </g>
-        ))}
+          <div className="flex items-end gap-[3px]" style={{ height: TRACK_H }}>
+            {open.map((t) => {
+              const isClosing = closing.has(t.id);
+              const hi = hovered === t.id;
+              const dim = hovered != null && !hi;
+              return (
+                <div
+                  key={t.id}
+                  className="group relative flex h-full shrink-0 cursor-pointer flex-col justify-end"
+                  style={{ width: 40, opacity: dim ? 0.4 : 1 }}
+                  onMouseEnter={() => setHovered(t.id)}
+                  onMouseLeave={() => setHovered(null)}
+                  onClick={() => !isClosing && closePosition(t.id)}
+                  title={`${t.symbol ?? "?"} — ${t.curMult.toFixed(2)}× (peak ${t.peakMult.toFixed(2)}×) · ${fmtSec(t.ageSec)} · ${t.state}${t.isFarm ? " · farm" : ""} — click to close`}
+                >
+                  {/* current mult label */}
+                  <div className="absolute left-0 right-0 text-center text-[9px] font-semibold tabular" style={{ bottom: `calc(${pct(t.curMult)}% + 2px)`, color: STATE_TONE[t.state] }}>
+                    {t.curMult.toFixed(2)}
+                  </div>
 
-        {/* trajectories */}
-        {view.trades.map((tr) => {
-          if (tr.points.length < 1) return null;
-          const dim = hovered != null && hovered !== tr.id;
-          const isClosed = tr.status === "closed";
-          const color = isClosed
-            ? (tr.exit && tr.exit.pnl > 0 ? "var(--status-good)" : "var(--status-critical)")
-            : STATE_COLOR[tr.state];
-          const last = tr.points[tr.points.length - 1]!;
-          return (
-            <g
-              key={tr.id}
-              opacity={dim ? 0.12 : 1}
-              onMouseEnter={() => setHovered(tr.id)}
-              onMouseLeave={() => setHovered(null)}
-              style={{ cursor: "pointer" }}
-            >
-              {tr.points.length >= 2 && (
-                <path
-                  d={path(tr.points)}
-                  fill="none"
-                  stroke={color}
-                  strokeWidth={hovered === tr.id ? 2.4 : 1.6}
-                  strokeOpacity={isClosed ? 0.4 : 0.9}
-                  strokeLinejoin="round"
-                  strokeLinecap="round"
-                  strokeDasharray={tr.isFarm ? "5 3" : undefined}
-                />
-              )}
-              {isClosed && tr.exit ? (
-                // exit marker — diamond at the close point
-                <path
-                  d={`M${x(tr.exit.t)},${y(tr.exit.mm) - 4} L${x(tr.exit.t) + 4},${y(tr.exit.mm)} L${x(tr.exit.t)},${y(tr.exit.mm) + 4} L${x(tr.exit.t) - 4},${y(tr.exit.mm)} Z`}
-                  fill={color}
-                  opacity={0.85}
-                />
-              ) : (
-                // live leading dot + symbol
-                <>
-                  <circle cx={x(last.t)} cy={y(last.mm)} r={hovered === tr.id ? 4.5 : 3.2} fill={color} stroke="var(--surface-1)" strokeWidth={1.5} />
-                  <text x={x(last.t) + 7} y={y(last.mm) + 3} fontSize={10} fill="var(--text-secondary)" className="tabular">
-                    {tr.symbol ?? "?"}
-                  </text>
-                </>
-              )}
-            </g>
-          );
-        })}
+                  {/* the heat bar: 1.0 → current mult */}
+                  <div
+                    className="relative w-full rounded-t-[2px] transition-all duration-500"
+                    style={{
+                      height: `${pct(t.curMult)}%`,
+                      minHeight: 2,
+                      background: `linear-gradient(to top, ${heat(1)}, ${heat(t.curMult)})`,
+                      boxShadow: hi ? "0 0 0 1px var(--text-secondary)" : undefined,
+                    }}
+                  >
+                    {/* peak cap — the high-water mark (gap above the bar = giveback) */}
+                    {t.peakMult > t.curMult + 0.01 && (
+                      <div className="absolute left-0 right-0 border-t border-dashed" style={{ bottom: `calc((${pct(t.peakMult)}% - ${pct(t.curMult)}%) )`, borderColor: "var(--text-muted)", opacity: 0.7 }} />
+                    )}
+                  </div>
 
-        {/* hover detail */}
-        {hoveredTrade && (
-          <text x={PAD.left + 4} y={PAD.top + PLOT_H - 6} fontSize={11} fill="var(--text-primary)" className="tabular">
-            {hoveredTrade.symbol ?? "?"} · {hoveredTrade.curMult.toFixed(2)}× (peak {hoveredTrade.peakMult.toFixed(2)}×) · {fmtSec(hoveredTrade.ageSec)} ·{" "}
-            {hoveredTrade.status === "closed"
-              ? `${hoveredTrade.exit?.reason ?? "closed"} ${hoveredTrade.exit && hoveredTrade.exit.pnl >= 0 ? "+" : ""}$${hoveredTrade.exit?.pnl.toFixed(2)}`
-              : hoveredTrade.state}
-            {hoveredTrade.isFarm ? " · farm" : ""}
-          </text>
-        )}
-      </svg>
+                  {/* locked-floor line — rides up under the peak */}
+                  {t.armed && t.lockedMult > 1.0 && (
+                    <div className="absolute left-0 right-0" style={{ bottom: `${pct(t.lockedMult)}%` }}>
+                      <div className="h-[2px] w-full" style={{ background: "var(--status-warning)", boxShadow: "0 0 3px var(--status-warning)" }} />
+                    </div>
+                  )}
+
+                  {/* farm tag */}
+                  {t.isFarm && <div className="absolute right-0 top-0 text-[8px]" style={{ color: "var(--text-muted)" }}>◇</div>}
+
+                  {/* close affordance on hover */}
+                  {hi && (
+                    <div className="absolute inset-x-0 top-0 text-center text-[10px] font-bold" style={{ color: "var(--status-critical)" }}>
+                      {isClosing ? "…" : "✕"}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* per-bar footers: ticker + age (zone-tinted) */}
+          <div className="mt-1 flex gap-[3px]">
+            {open.map((t) => (
+              <div key={t.id} className="shrink-0 overflow-hidden text-center" style={{ width: 40 }}>
+                <div className="truncate text-[9px]" style={{ color: hovered === t.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                  {t.symbol ?? "?"}
+                </div>
+                <div className="text-[8px] tabular" style={{ color: zoneTone(t.ageSec) }}>{fmtSec(t.ageSec)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* time-zone legend */}
+      <div className="mt-2 flex items-center gap-3 text-[9px]" style={{ color: "var(--text-muted)" }}>
+        <span>age zone:</span>
+        <span style={{ color: "var(--status-critical)" }}>▮ &lt;150s danger (rugs peak)</span>
+        <span style={{ color: "var(--status-warning)" }}>▮ 150–300s develop</span>
+        <span style={{ color: "var(--status-good)" }}>▮ &gt;300s runner (winners grind)</span>
+      </div>
+
+      {/* recently closed */}
+      {closed.length > 0 && (
+        <div className="mt-3 border-t pt-2" style={{ borderColor: "var(--border)" }}>
+          <div className="mb-1 text-[10px]" style={{ color: "var(--text-muted)" }}>just closed (20m window)</div>
+          <div className="flex flex-wrap gap-1.5">
+            {closed.map((t) => (
+              <span
+                key={t.id}
+                className="rounded px-1.5 py-0.5 text-[10px] tabular"
+                style={{
+                  background: "var(--surface-1)",
+                  border: `1px solid ${t.exit && t.exit.pnl >= 0 ? "var(--status-good)" : "var(--status-critical)"}`,
+                  color: "var(--text-secondary)",
+                }}
+                title={`${t.exit?.reason ?? "closed"} · peak ${t.peakMult.toFixed(2)}× · ${fmtSec(t.ageSec)}`}
+              >
+                {t.symbol ?? "?"} {t.curMult.toFixed(2)}×{" "}
+                <span style={{ color: t.exit && t.exit.pnl >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>
+                  {t.exit && t.exit.pnl >= 0 ? "+" : ""}${t.exit?.pnl.toFixed(2)}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -160,7 +160,7 @@ export default async function Overview() {
           set fast on the downside, ceiling left open on the upside. */}
       <section className="card p-4">
         <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
-          Timing scale — entries & exits on the seconds grid
+          Trade matrix — live positions, price locked in as they rise · click a bar to close
         </h2>
         <TimingGrid view={timingGrid} />
       </section>

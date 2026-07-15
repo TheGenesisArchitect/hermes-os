@@ -16,6 +16,7 @@ import {
 import {
   classify,
   convexSlippagePct,
+  loadConfig,
   resilientFetch,
   runForecast,
   tickFrom,
@@ -470,11 +471,15 @@ export interface TimingTradePoint {
 }
 export interface TimingTrade {
   id: number;
+  mint: string;
   symbol: string | null;
   isFarm: boolean;
+  sizeUsd: number;
   points: TimingTradePoint[];
   curMult: number;
   peakMult: number;
+  lockedMult: number; // the protected floor — what a close-now can't drop below (ratchets up with peak)
+  armed: boolean; // profit-lock engaged (shown green, never close red)
   ageSec: number;
   state: "rising" | "stalling" | "falling";
   status: "open" | "closed";
@@ -503,13 +508,16 @@ function timingState(points: TimingTradePoint[]): "rising" | "stalling" | "falli
 }
 
 export async function getTimingGrid(): Promise<TimingGridView> {
+  const cfg = loadConfig();
   const closedSince = new Date(Date.now() - TIMING_CLOSED_WINDOW_MIN * 60 * 1000);
   const [open, closed] = await Promise.all([
     db
       .select({
         id: positions.id,
+        mint: positions.mint,
         symbol: tokens.symbol,
         dex: tokens.dex,
+        sizeUsd: positions.sizeUsd,
         entryPriceUsd: positions.entryPriceUsd,
         openedAt: positions.openedAt,
       })
@@ -519,8 +527,10 @@ export async function getTimingGrid(): Promise<TimingGridView> {
     db
       .select({
         id: positions.id,
+        mint: positions.mint,
         symbol: tokens.symbol,
         dex: tokens.dex,
+        sizeUsd: positions.sizeUsd,
         entryPriceUsd: positions.entryPriceUsd,
         exitPriceUsd: positions.exitPriceUsd,
         exitReason: positions.exitReason,
@@ -557,18 +567,35 @@ export async function getTimingGrid(): Promise<TimingGridView> {
   const trades: TimingTrade[] = [];
   const isFarm = (dex: string | null) => (dex ?? "").toLowerCase() === "meteora-damm-v2";
 
+  // The protected floor a close-now can't drop below — armed once green (by mult OR
+  // the $ floor), then the ratcheting trail rides up under the peak. Approximates
+  // the trader's effective stop (tight-trail representative) so the lock line on
+  // each bar shows what's banked vs what's still floating.
+  const lockOf = (sizeUsd: number, peakMult: number) => {
+    const armed = peakMult >= cfg.PROFIT_LOCK_ARM_MULT || sizeUsd * (peakMult - 1) >= cfg.PROFIT_FLOOR_USD;
+    const lockedMult = armed
+      ? Math.max(cfg.PROFIT_LOCK_FLOOR_MULT, peakMult * (1 - cfg.TRAIL_TIGHT_PCT / 100))
+      : 1 - cfg.HARD_STOP_PCT / 100;
+    return { armed, lockedMult };
+  };
+
   for (const p of open) {
     const points = byPos.get(p.id) ?? [];
     if (!points.length) continue;
     const peakMult = Math.max(...points.map((x) => x.mm));
     const last = points[points.length - 1]!;
+    const { armed, lockedMult } = lockOf(num(p.sizeUsd), peakMult);
     trades.push({
       id: p.id,
+      mint: p.mint,
       symbol: p.symbol,
       isFarm: isFarm(p.dex),
+      sizeUsd: num(p.sizeUsd),
       points,
       curMult: last.mm,
       peakMult,
+      lockedMult,
+      armed,
       ageSec: last.t,
       state: timingState(points),
       status: "open",
@@ -583,11 +610,15 @@ export async function getTimingGrid(): Promise<TimingGridView> {
     const peakMult = points.length ? Math.max(...points.map((x) => x.mm)) : Math.max(1, exitMm);
     trades.push({
       id: p.id,
+      mint: p.mint,
       symbol: p.symbol,
       isFarm: isFarm(p.dex),
+      sizeUsd: num(p.sizeUsd),
       points,
       curMult: exitMm,
       peakMult,
+      lockedMult: exitMm,
+      armed: false,
       ageSec: exitT,
       state: "falling",
       status: "closed",
