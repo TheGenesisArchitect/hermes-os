@@ -30,7 +30,7 @@ const zoneTone = (sec: number) =>
   sec < 150 ? "var(--status-critical)" : sec < 300 ? "var(--status-warning)" : "var(--status-good)";
 const fmtSec = (s: number) => (s >= 60 ? `${Math.round(s / 60)}m` : `${Math.round(s)}s`);
 
-const TRACK_H = 208; // px — the shared 1.0×→yMax wall
+const TRACK_H = 300; // px — the shared 1.0×→yMax wall
 
 export function TimingGrid({ view }: { view: TimingGridView }) {
   const [hovered, setHovered] = useState<number | null>(null);
@@ -56,6 +56,11 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
   const yMax = Math.max(1.8, ...view.trades.map((t) => t.peakMult)) * 1.05;
   const pct = (mult: number) => Math.max(0, Math.min(1, (mult - 1) / (yMax - 1))) * 100;
 
+  // Minor gridlines — a light lattice between 1.0× and the ceiling so the field
+  // reads as a levels chart even when only a few bars are live.
+  const MINOR = 8;
+  const minorLines = Array.from({ length: MINOR - 1 }, (_, i) => 1 + ((yMax - 1) * (i + 1)) / MINOR);
+
   const closePosition = (id: number) => {
     setClosing((s) => new Set(s).add(id));
     startTransition(() => {
@@ -63,13 +68,11 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
     });
   };
 
-  const railMults = [...view.tpLevels.map((t) => t.mult)].filter((m) => m < yMax);
-
   return (
     <div className="w-full">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
         <span>
-          Trade matrix — {open.length} live · bar height = how high it rose · gold line = locked floor · click a bar to close
+          {open.length} live position{open.length === 1 ? "" : "s"} (entry-relative) · bar height = how high it rose · dashed = TP levels · gold = locked floor · click to close
         </span>
         <span className="flex items-center gap-3 tabular">
           <span style={{ color: "var(--status-good)" }}>▲ {view.counts.rising}</span>
@@ -95,11 +98,26 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
 
         {/* bar field */}
         <div className="relative flex-1 overflow-x-auto">
-          {/* TP rails behind the bars */}
+          {/* level grid — the adjustable TP levels + a light minor lattice, so the
+              field has presence and every bar is read against the trading levels */}
           <div className="pointer-events-none absolute inset-0" style={{ height: TRACK_H }}>
-            {railMults.map((m) => (
-              <div key={m} className="absolute w-full border-t border-dashed" style={{ bottom: `${pct(m)}%`, borderColor: "var(--gridline)" }} />
+            {/* minor lattice */}
+            {minorLines.map((m, i) => (
+              <div key={`min${i}`} className="absolute w-full" style={{ bottom: `${pct(m)}%`, borderTop: "1px solid var(--gridline)", opacity: 0.3 }} />
             ))}
+            {/* TP level rails — labeled, the operator-adjustable take-profit levels */}
+            {view.tpLevels.filter((t) => t.mult < yMax).map((t) => (
+              <div key={t.label} className="absolute w-full" style={{ bottom: `${pct(t.mult)}%` }}>
+                <div className="w-full border-t border-dashed" style={{ borderColor: "var(--series-1)", opacity: 0.55 }} />
+                <span
+                  className="absolute right-0 top-[-7px] rounded-sm px-1 text-[8px] font-medium tabular"
+                  style={{ background: "var(--surface-1)", color: "var(--series-1)", opacity: 0.9 }}
+                >
+                  {t.label} {t.mult.toFixed(2)}×
+                </span>
+              </div>
+            ))}
+            {/* 1.0× baseline */}
             <div className="absolute w-full" style={{ bottom: 0, borderTop: "1.5px solid var(--baseline)" }} />
           </div>
 
