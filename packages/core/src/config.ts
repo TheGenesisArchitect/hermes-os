@@ -214,7 +214,7 @@ const envSchema = z.object({
   // close red" floor the moment a position has been up this many DOLLARS, so the
   // many small green moves get locked in as base hits (they add up over a 24h of
   // volume) — while the ratcheting trail still rides the real runners uncapped.
-  PROFIT_FLOOR_USD: z.coerce.number().default(1.0),
+  PROFIT_FLOOR_USD: z.coerce.number().default(0.1), // arm the "never close red" lock at +$0.10 (was $1 — never armed on ~$1.75 probe size); lock every trade's floor early, trail still rides highs uncapped
   // Trails TIGHTENED (2026-07-14): "we don't have to lose 35% before we cut — cut
   // at 5%." Give back only 5% from the peak in the 1–2.5x spike zone where most
   // tokens live and rug; the leash only widens for a PROVEN multi-x runner so a
