@@ -175,6 +175,14 @@ const envSchema = z.object({
   // bags-fm venue at 72%) while dbc/pumpswap/orca (35-43%, moonshot territory)
   // stay clean. Recorder-wide rates run diluted vs our position-level outcomes.
   FARM_AUTO_RUG_RATE: z.coerce.number().default(0.5), // ≥50% of labeled outcomes are rugs
+  // FARM BOOK CAP — Law 1 of the winning formula: the pond decides. The EV cell
+  // matrix shows meteora-damm-v2 NET-NEGATIVE in every session (prime −$1.33,
+  // off −$1.62/trade) yet it was 92% of our volume — the confirm funnel fills
+  // with the adversary's product because escalators are BUILT to confirm. Cap
+  // farm-tape positions to a minority of the book; the held-open slots wait for
+  // organic-venue confirms (pump-amm/dbc/fluxbeam/pumpswap — the only cells
+  // that ever paid). Dry powder waiting for the real pond IS the edge.
+  FARM_MAX_SLOTS: z.coerce.number().default(8),
   FARM_AUTO_MIN_N: z.coerce.number().default(20), // sample floor — no small-n paranoia
   FARM_AUTO_REFRESH_MS: z.coerce.number().default(300_000), // recompute every 5min
   // BASKET HARVEST — portfolio-level profit capture. Waiting for each position to

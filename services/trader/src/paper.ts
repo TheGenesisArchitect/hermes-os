@@ -185,6 +185,28 @@ async function openFromSignal(
     return false;
   }
 
+  // FARM BOOK CAP (Law 1: the pond decides) — farm-tape positions may occupy at
+  // most FARM_MAX_SLOTS of the book. meteora-damm-v2 has been net-negative in
+  // EVERY session yet filled 92% of our volume; the slots this cap holds open
+  // are reserved for organic-venue confirms, the only cells that ever paid.
+  if (cfg.FARM_MAX_SLOTS > 0 && isFarmTape(cfg, market)) {
+    const [farmOpen] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(positions)
+      .innerJoin(tokens, eq(tokens.mint, positions.mint))
+      .where(
+        and(
+          eq(positions.status, "open"),
+          sql`(lower(coalesce(${tokens.dex},'')) = ANY(${[...cfg.FARM_VENUES]}) OR lower(coalesce(${tokens.dex},'')) = ANY(${[...autoFarm.venues]}) OR lower(coalesce(${tokens.symbol},'')) = ANY(${[...autoFarm.symbols]}))`,
+        ),
+      );
+    if ((farmOpen?.n ?? 0) >= cfg.FARM_MAX_SLOTS) {
+      await audit("entry_farm_cap_defer", { mint: signal.mint, dex: market.dexId, farmOpen: farmOpen?.n ?? 0 });
+      console.log(`⛔ DEFER  ${token.symbol ?? "?"} ${short(signal.mint)} — farm book full (${farmOpen?.n}/${cfg.FARM_MAX_SLOTS}); slots reserved for organic venues`);
+      return false;
+    }
+  }
+
   // CONCENTRATION CAP — never let one deployer's clone wave own the book. The
   // 24/24 W26/USOH die-off proved same-symbol clones rug together; cap open
   // positions per symbol so a wave can take AT MOST MAX_PER_SYMBOL slots.
