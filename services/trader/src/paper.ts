@@ -534,13 +534,20 @@ export function decideExit(
     const mark = price / entry;
     const original = n(position.qtyTokens);
     const soldFrac = original > 0 ? Math.max(0, 1 - n(position.qtyRemaining) / original) : 0;
+    // Farm-venue detection — the escalator DNA (99/101 dust rugs on meteora-
+    // damm-v2, atomic cliff at peak). Farm venues get the NO-RUNNER ladder:
+    // 40% @TP0 → 75% @TP1 → 100% out @TP2. Nothing is ever held into the cliff;
+    // real-moonshot venues keep the uncapped runner untouched.
+    const farm = cfg.FARM_VENUES.has((market.dexId ?? "").toLowerCase());
+    const tp1Cum = farm ? cfg.FARM_TP1_CUM_SELL : cfg.TP1_CUM_SELL;
+    const tp2Cum = farm ? cfg.FARM_TP2_CUM_SELL : cfg.TP2_CUM_SELL;
     let targetSold = 0;
     let tpReason = "";
     if (mark >= cfg.TP2_MULT) {
-      targetSold = cfg.TP2_CUM_SELL;
+      targetSold = tp2Cum;
       tpReason = "take_profit_2";
     } else if (mark >= cfg.TP1_MULT) {
-      targetSold = cfg.TP1_CUM_SELL;
+      targetSold = tp1Cum;
       tpReason = "take_profit_1";
     } else if (mark >= cfg.TP0_MULT) {
       // First tranche into the blow-off top — 62% of confirmed rugs reach 1.15x

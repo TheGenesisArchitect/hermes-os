@@ -146,6 +146,22 @@ const envSchema = z.object({
   TP1_CUM_SELL: z.coerce.number().default(0.5), // cumulative fraction of ORIGINAL size sold once TP1 is hit
   TP2_MULT: z.coerce.number().default(1.7), // +70% — bank most of the rest
   TP2_CUM_SELL: z.coerce.number().default(0.8), // total 80% banked by TP2; the remaining 20% rides uncapped
+  // FARM-VENUE LADDER — the escalator counter-play. DNA study (2026-07-15, 101
+  // dust rugs dissected): 99/101 lived on meteora-damm-v2, pumped a machine-
+  // linear ramp (buy-share pinned ~0.78, liquidity growing in lockstep) with
+  // 84%/68%/30% reaching 1.15/1.3/1.7x, then died ATOMICALLY at the peak (84/84
+  // last-read = 0.99x of peak — no trail can ever catch the cliff). Policy sim
+  // on the real cohort: ladder+runner −$522, all-out@1.3 −$63, all-out@1.5
+  // −$168, graduated 40/75/100% by 1.7 = +$9.51 — POSITIVE on the rugs
+  // themselves. So farm venues get a NO-RUNNER ladder (sell 100% by TP2) and
+  // the escalator becomes our paying machine; real-moonshot venues (pumpswap,
+  // dbc, fluxbeam…) keep the uncapped runner.
+  FARM_VENUES: z
+    .string()
+    .default("meteora-damm-v2")
+    .transform((s) => new Set(s.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean))),
+  FARM_TP1_CUM_SELL: z.coerce.number().default(0.75), // farm ladder: 40% @TP0 → 75% @TP1
+  FARM_TP2_CUM_SELL: z.coerce.number().default(1.0), // → 100% out by TP2; nothing rides into the cliff
   // BASKET HARVEST — portfolio-level profit capture. Waiting for each position to
   // hit its own target lets rugs pick the book off one by one; harvesting the
   // whole green book at once banks the collective gain BEFORE a rug round-trips
@@ -348,16 +364,16 @@ const envSchema = z.object({
     .default("18,19,20,21,22,23")
     .transform((s) => new Set(s.split(",").map((x) => Number.parseInt(x.trim(), 10)).filter((n) => Number.isFinite(n)))),
   OFF_HOURS_SIZE_MULT: z.coerce.number().default(0.5),
-  // Off-hours ENTRY pause — the stronger form of "survive until optimal hours".
-  // Post-fix measurement (2026-07-15 03:40-04:30Z): 81% of off-hours confirmed
-  // entries were farm-wave rugs; net −$93/50min AT HALF SIZE with every armor
-  // live. The waves are built to pass a microstructure gate, so off-hours entry
-  // EV is structurally negative — sizing only slows the bleed. false = trader
-  // opens NO new positions outside PRIME_HOURS_UTC (management/exits continue,
-  // recorder keeps labeling so the data flywheel never stops learning).
+  // Off-hours ENTRY switch. Was paused (2026-07-15 ~04:40Z) when 81% of
+  // off-hours entries were farm-wave rugs bleeding −$93/50min under the
+  // runner-keeping ladder. RE-ENABLED after the DNA study + FARM_VENUES
+  // no-runner ladder: the same 101-rug cohort sims +$9.51 when 100% is out by
+  // TP2 — the escalator pays the aggressive taker and the cliff catches
+  // nothing. Off-hours sizing stays ×OFF_HOURS_SIZE_MULT; flip to false to
+  // stand down from the late tape entirely.
   OFF_HOURS_ENTRIES: z
     .string()
-    .default("false")
+    .default("true")
     .transform((v) => v !== "false"),
   // Book-wide dust is an ANOMALY for this many minutes, then a DIE-OFF: meme-wave
   // entries cluster in time so their rugs cluster too; an eternal anomaly-hold
