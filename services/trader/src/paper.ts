@@ -567,6 +567,7 @@ export function decideExit(
     // NO-RUNNER ladder: 40% @TP0 → 75% @TP1 → 100% out @TP2 — nothing is ever
     // held into the cliff; real-moonshot venues keep the uncapped runner.
     const farm = isFarmTape(cfg, market);
+    const tp0Cum = farm ? cfg.FARM_TP0_CUM_SELL : cfg.TP0_CUM_SELL;
     const tp1Cum = farm ? cfg.FARM_TP1_CUM_SELL : cfg.TP1_CUM_SELL;
     const tp2Cum = farm ? cfg.FARM_TP2_CUM_SELL : cfg.TP2_CUM_SELL;
     let targetSold = 0;
@@ -578,10 +579,10 @@ export function decideExit(
       targetSold = tp1Cum;
       tpReason = "take_profit_1";
     } else if (mark >= cfg.TP0_MULT) {
-      // First tranche into the blow-off top — 62% of confirmed rugs reach 1.15x
-      // before the LP-pull, so banking 40% here converts most of the rug bucket
-      // from full loss to partial while the ~60% runner still rides winners' tail.
-      targetSold = cfg.TP0_CUM_SELL;
+      // First tranche into the blow-off top. Organic tape banks 40% here and rides
+      // the ~60% runner for winners' tail; FARM tape dumps 100% (tp0Cum=1.0) — the
+      // escalator's "runner" is bait that rugs to $0, so first level = full exit.
+      targetSold = tp0Cum;
       tpReason = "take_profit_0";
     }
     // Only sell the INCREMENT needed to reach the target cumulative sold — a level

@@ -160,8 +160,18 @@ const envSchema = z.object({
     .string()
     .default("meteora-damm-v2")
     .transform((s) => new Set(s.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean))),
-  FARM_TP1_CUM_SELL: z.coerce.number().default(0.75), // farm ladder: 40% @TP0 → 75% @TP1
-  FARM_TP2_CUM_SELL: z.coerce.number().default(1.0), // → 100% out by TP2; nothing rides into the cliff
+  // FARM take = DUMP-AND-DONE. The atomic-cliff escalator is a trap that rugs even
+  // the "winners" (CASHCAT was a 2.91x runner and still went to $0), so on farm
+  // tape we sell 100% at the FIRST TP level touched (>=1.15x, ~150s into the ramp)
+  // and never ride. Per-position counterfactual over one overnight: dump-100%-at-
+  // 1.15 nets −$576 across the farm cohort vs −$1,063 for the old 40%-and-ride
+  // (+$487). It caps the fake farm moonshot but NEVER touches real organic runners
+  // — this ladder is gated behind isFarmTape; green-cell venues keep the uncapped
+  // tail. This is the "150 seconds, in and out, don't investigate a loser twice"
+  // doctrine, quantified.
+  FARM_TP0_CUM_SELL: z.coerce.number().default(1.0), // farm: 100% out at the first level (1.15x)
+  FARM_TP1_CUM_SELL: z.coerce.number().default(1.0), // gap-up past 1.15 still dumps 100%
+  FARM_TP2_CUM_SELL: z.coerce.number().default(1.0), // nothing ever rides into the cliff
   // AUTO-FARM — the adaptive layer. The static FARM_VENUES list is a snapshot;
   // the operation can hop venues or rotate new tickers tomorrow. So the farm
   // set also SELF-MAINTAINS from the recorder's own outcomes: any venue or
