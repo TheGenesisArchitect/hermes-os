@@ -98,8 +98,16 @@ while (true) {
     if (!halted && sessionOpen && Date.now() - lastOpen >= cfg.TRADER_POLL_MS) {
       // Default: the recorder is the scout — enter only on confirmed demand.
       // Blind t=0 entry stays available as a flagged fallback.
-      if (cfg.CONFIRM_ENTRY_ENABLED) await openConfirmedPositions(cfg);
-      else await openNewPositions(cfg);
+      // ISOLATED: an entry-scan failure must never wedge the loop. The 06:25Z
+      // incident: a throwing entry query hit the outer catch before lastOpen
+      // advanced, so EVERY 5s tick retried the broken scan and management +
+      // health never ran — a scan bug silently unmanaged the whole book.
+      try {
+        if (cfg.CONFIRM_ENTRY_ENABLED) await openConfirmedPositions(cfg);
+        else await openNewPositions(cfg);
+      } catch (err) {
+        console.error(`entry scan failed (management continues): ${err instanceof Error ? err.message : err}`);
+      }
       lastOpen = Date.now();
     }
     await managePositions(cfg); // every fast tick

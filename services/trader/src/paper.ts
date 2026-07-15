@@ -24,7 +24,7 @@ import {
   signals,
   tokens,
 } from "@hermes/db";
-import { and, asc, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 
 /** How many recent ticks the classifier reads to judge continuation. */
 const TICK_WINDOW = 12;
@@ -190,16 +190,21 @@ async function openFromSignal(
   // EVERY session yet filled 92% of our volume; the slots this cap holds open
   // are reserved for organic-venue confirms, the only cells that ever paid.
   if (cfg.FARM_MAX_SLOTS > 0 && isFarmTape(cfg, market)) {
-    const [farmOpen] = await db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(positions)
-      .innerJoin(tokens, eq(tokens.mint, positions.mint))
-      .where(
-        and(
-          eq(positions.status, "open"),
-          sql`(lower(coalesce(${tokens.dex},'')) = ANY(${[...cfg.FARM_VENUES]}) OR lower(coalesce(${tokens.dex},'')) = ANY(${[...autoFarm.venues]}) OR lower(coalesce(${tokens.symbol},'')) = ANY(${[...autoFarm.symbols]}))`,
-        ),
-      );
+    // Count open farm-tape positions via inArray (raw ANY(${array}) interpolation
+    // expanded to scalar params and threw on every tick — the 06:25Z wedge).
+    const farmVenueList = [...cfg.FARM_VENUES, ...autoFarm.venues];
+    const farmSymbolList = [...autoFarm.symbols];
+    const farmConds = [
+      ...(farmVenueList.length ? [inArray(sql`lower(coalesce(${tokens.dex},''))`, farmVenueList)] : []),
+      ...(farmSymbolList.length ? [inArray(sql`lower(coalesce(${tokens.symbol},''))`, farmSymbolList)] : []),
+    ];
+    const [farmOpen] = farmConds.length
+      ? await db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(positions)
+          .innerJoin(tokens, eq(tokens.mint, positions.mint))
+          .where(and(eq(positions.status, "open"), or(...farmConds)))
+      : [{ n: 0 }];
     if ((farmOpen?.n ?? 0) >= cfg.FARM_MAX_SLOTS) {
       await audit("entry_farm_cap_defer", { mint: signal.mint, dex: market.dexId, farmOpen: farmOpen?.n ?? 0 });
       console.log(`⛔ DEFER  ${token.symbol ?? "?"} ${short(signal.mint)} — farm book full (${farmOpen?.n}/${cfg.FARM_MAX_SLOTS}); slots reserved for organic venues`);
