@@ -378,18 +378,24 @@ const envSchema = z.object({
     .string()
     .default("18,19,20,21,22,23")
     .transform((s) => new Set(s.split(",").map((x) => Number.parseInt(x.trim(), 10)).filter((n) => Number.isFinite(n)))),
-  OFF_HOURS_SIZE_MULT: z.coerce.number().default(0.5),
-  // Off-hours ENTRY switch — OFF after the escalator-scalp experiment FAILED
-  // its pre-registered falsifier (2026-07-15 05:51Z): 26 closes, net −$25.49
-  // (line: −$15), rugs avg −$3.37 (line: −$2.50), breaker tripped. The no-runner
-  // ladder mechanism itself worked (7 full TP2 rides banked), but the farm
-  // pulls EARLIER than its own 24h history when the tape is hot — 50% of
-  // entries rugged pre-TP1 vs the 32% the sim was built on. They adapt
-  // intra-night; a backtest on yesterday's farm can't price today's farm.
-  // Off-hours = no entries. Prime window (PRIME_HOURS_UTC) is the game.
+  // PROBE STAKES — off-hours is a PAID DATA LAB, not a profit strategy. The
+  // ×0.5 scalp experiment failed its falsifier (−$25.49/26 closes: the farm
+  // pulls earlier than its own history when hot), but going fully dark for 12h
+  // buys zero live data on the new mechanisms in exactly the regime we must
+  // learn to beat ("collect through all 12 windows — that's what builds the
+  // winning formula"). At ×0.1 ($1.75/entry) the same window costs ~$5 —
+  // tuition, not bleed — while every close keeps labeling the farm-ladder,
+  // wick-confirm, and quality-tier experiments. Breaker remains the hard floor.
+  OFF_HOURS_SIZE_MULT: z.coerce.number().default(0.1),
+  // Off-hours ENTRY switch — ON at PROBE stakes (see OFF_HOURS_SIZE_MULT). The
+  // ×0.5 scalp experiment failed its falsifier (2026-07-15 05:51Z: −$25.49/26
+  // closes, farm pulls earlier than its own 24h history when hot — they adapt
+  // intra-night). But dark hours = no live data on the new mechanisms in the
+  // hardest regime, so off-hours runs as a paid data lab at ×0.1 instead of
+  // standing down. Profit posture stays reserved for PRIME_HOURS_UTC.
   OFF_HOURS_ENTRIES: z
     .string()
-    .default("false")
+    .default("true")
     .transform((v) => v !== "false"),
   // Book-wide dust is an ANOMALY for this many minutes, then a DIE-OFF: meme-wave
   // entries cluster in time so their rugs cluster too; an eternal anomaly-hold
