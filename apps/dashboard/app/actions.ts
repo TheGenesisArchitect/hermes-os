@@ -1,9 +1,102 @@
 "use server";
 
+import {
+  EMPTY_OVERRIDES,
+  OVERRIDE_KNOBS,
+  clampKnob,
+  type AutoMode,
+  type OverrideKey,
+  type RuntimeOverrides,
+} from "@hermes/core";
 import { auditLog, config, db, managementIntents } from "@hermes/db";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getKillSwitch } from "@/lib/queries";
+
+const OVERRIDES_KEY = "runtime_overrides";
+const VALID_KEYS = new Set<string>(OVERRIDE_KNOBS.map((k) => k.key));
+
+async function readOverrides(): Promise<RuntimeOverrides> {
+  const [row] = await db.select().from(config).where(eq(config.key, OVERRIDES_KEY));
+  const v = (row?.value ?? null) as Partial<RuntimeOverrides> | null;
+  if (!v) return { ...EMPTY_OVERRIDES };
+  return {
+    autoMode: v.autoMode === "live" || v.autoMode === "off" ? v.autoMode : "advisory",
+    manual: v.manual ?? {},
+    auto: v.auto ?? {},
+    regime: v.regime ?? null,
+    updatedAt: v.updatedAt ?? 0,
+  };
+}
+
+async function writeOverrides(next: RuntimeOverrides): Promise<void> {
+  const value = { ...next, updatedAt: Date.now() };
+  await db
+    .insert(config)
+    .values({ key: OVERRIDES_KEY, value })
+    .onConflictDoUpdate({ target: config.key, set: { value, updatedAt: new Date() } });
+}
+
+/**
+ * Pin a knob to a manual value — the operator's real-time override. Manual pins
+ * ALWAYS win over the adaptive policy and the base config. Clamped to the knob's
+ * safe band in core so no value here can be absurd; every change is audit-logged.
+ */
+export async function setManualOverride(key: string, value: number): Promise<void> {
+  if (!VALID_KEYS.has(key) || !Number.isFinite(value)) return;
+  const k = key as OverrideKey;
+  const clamped = clampKnob(k, value);
+  const cur = await readOverrides();
+  cur.manual = { ...cur.manual, [k]: clamped };
+  await writeOverrides(cur);
+  await db.insert(auditLog).values({
+    actor: "user",
+    action: "override_set",
+    details: { knob: k, value: clamped, via: "dashboard" },
+  });
+  revalidatePath("/");
+}
+
+/** Release a manual pin — the knob falls back to auto (if live) or base config. */
+export async function clearManualOverride(key: string): Promise<void> {
+  if (!VALID_KEYS.has(key)) return;
+  const k = key as OverrideKey;
+  const cur = await readOverrides();
+  if (cur.manual[k] == null) return;
+  const { [k]: _dropped, ...rest } = cur.manual;
+  cur.manual = rest;
+  await writeOverrides(cur);
+  await db.insert(auditLog).values({
+    actor: "user",
+    action: "override_cleared",
+    details: { knob: k, via: "dashboard" },
+  });
+  revalidatePath("/");
+}
+
+/** Release every manual pin at once — back to full auto/base control. */
+export async function resetOverrides(): Promise<void> {
+  const cur = await readOverrides();
+  cur.manual = {};
+  await writeOverrides(cur);
+  await db.insert(auditLog).values({ actor: "user", action: "overrides_reset", details: { via: "dashboard" } });
+  revalidatePath("/");
+}
+
+/**
+ * Set the adaptive policy's authority: off (ignore it), advisory (compute + show
+ * but never apply), or live (the policy's recommendations drive the trader where
+ * no manual pin overrides them). Ships in advisory until a clean prime run gives
+ * the policy its favorable-regime pole.
+ */
+export async function setAutoMode(mode: string): Promise<void> {
+  const m: AutoMode = mode === "live" || mode === "off" ? mode : "advisory";
+  const cur = await readOverrides();
+  cur.autoMode = m;
+  await writeOverrides(cur);
+  await db.insert(auditLog).values({ actor: "user", action: "auto_mode_set", details: { mode: m, via: "dashboard" } });
+  revalidatePath("/");
+}
 
 /**
  * The "engage" channel: the user sets RIDE or CUT on an open position from the

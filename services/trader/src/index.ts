@@ -5,6 +5,7 @@ import { loadConfig } from "@hermes/core";
 import { config, db } from "@hermes/db";
 import { eq } from "drizzle-orm";
 import { managePositions, openConfirmedPositions, openNewPositions, snapshotEquity } from "./paper.js";
+import { readEffectiveConfig, refreshAdaptivePolicy } from "./adaptive.js";
 
 async function killSwitchEngaged(): Promise<boolean> {
   const [row] = await db.select().from(config).where(eq(config.key, "kill_switch"));
@@ -58,8 +59,13 @@ console.log(
 
 let lastSnapshot = 0;
 let lastOpen = 0;
+let lastPolicy = 0;
 let wasHalted = false;
 let wasSessionOpen = true; // logs the OFF-HOURS/PRIME transition once per flip
+
+// Recompute the adaptive policy this often. The panel reads it live and the
+// operator sees the regime move; only APPLIED to the trader when autoMode=live.
+const ADAPTIVE_REFRESH_MS = 60_000;
 
 // The management loop runs on the FAST cadence — that's where gains are kept.
 // Scanning for new entries is throttled to the slower cadence; being late to
@@ -95,6 +101,13 @@ while (true) {
       );
       wasSessionOpen = sessionOpen;
     }
+    // Live control terminal: merge the dashboard's runtime overrides (manual
+    // pins + adaptive policy when autoMode=live) over the static startup config.
+    // Own try/catch inside — falls back to base cfg on any DB hiccup, never
+    // throws into the loop. Static-cadence knobs (poll intervals, session
+    // windows) stay on the base cfg; the tunable exit/size knobs use `eff`.
+    const eff = await readEffectiveConfig(cfg);
+
     if (!halted && sessionOpen && Date.now() - lastOpen >= cfg.TRADER_POLL_MS) {
       // Default: the recorder is the scout — enter only on confirmed demand.
       // Blind t=0 entry stays available as a flagged fallback.
@@ -103,17 +116,21 @@ while (true) {
       // advanced, so EVERY 5s tick retried the broken scan and management +
       // health never ran — a scan bug silently unmanaged the whole book.
       try {
-        if (cfg.CONFIRM_ENTRY_ENABLED) await openConfirmedPositions(cfg);
-        else await openNewPositions(cfg);
+        if (cfg.CONFIRM_ENTRY_ENABLED) await openConfirmedPositions(eff);
+        else await openNewPositions(eff);
       } catch (err) {
         console.error(`entry scan failed (management continues): ${err instanceof Error ? err.message : err}`);
       }
       lastOpen = Date.now();
     }
-    await managePositions(cfg); // every fast tick
+    await managePositions(eff); // every fast tick
     if (Date.now() - lastSnapshot >= cfg.PNL_SNAPSHOT_MS) {
-      await snapshotEquity(cfg);
+      await snapshotEquity(eff);
       lastSnapshot = Date.now();
+    }
+    if (Date.now() - lastPolicy >= ADAPTIVE_REFRESH_MS) {
+      await refreshAdaptivePolicy(cfg);
+      lastPolicy = Date.now();
     }
     await writeTraderHealth(halted);
   } catch (err) {

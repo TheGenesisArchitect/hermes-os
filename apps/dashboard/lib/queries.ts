@@ -14,14 +14,20 @@ import {
   tokens,
 } from "@hermes/db";
 import {
+  OVERRIDE_KNOBS,
   classify,
   convexSlippagePct,
   loadConfig,
   resilientFetch,
+  resolveOverrides,
   runForecast,
   tickFrom,
   type ForecastResult,
   type ManagementCall,
+  type OverrideGroup,
+  type OverrideKnob,
+  type RegimeState,
+  type ResolvedKnob,
   type Tick,
 } from "@hermes/core";
 import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
@@ -2004,6 +2010,64 @@ export async function getForecast(): Promise<ForecastView> {
       pctProfitableBaseline: baseline.length ? (100 * baseline.filter((r) => r > 0).length) / baseline.length : 0,
       meanRealizedPct: realized.length ? meanOf(realized) * 100 : null,
       tradeRateAssumed,
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live control terminal — the effective config the trader is running RIGHT NOW,
+// broken out per knob: base default, adaptive recommendation, manual pin, and
+// which channel won. The panel renders one dial per knob plus the regime read.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ControlKnobView extends OverrideKnob {
+  value: number;
+  base: number;
+  auto: number | null;
+  manual: number | null;
+  source: ResolvedKnob["source"];
+}
+
+export interface ControlTerminalView {
+  autoMode: "off" | "advisory" | "live";
+  regime: RegimeState | null;
+  updatedAt: number | null;
+  groups: { group: OverrideGroup; label: string; knobs: ControlKnobView[] }[];
+  effectiveNote: { offHoursMult: number; primeNow: boolean };
+}
+
+const GROUP_LABELS: Record<OverrideGroup, string> = {
+  size: "Size & book",
+  tp: "Take-profit ladder",
+  stop: "Stops & trail",
+};
+
+export async function getControlTerminal(): Promise<ControlTerminalView> {
+  const cfg = loadConfig();
+  const [row] = await db.select().from(config).where(eq(config.key, "runtime_overrides"));
+  const raw = (row?.value ?? null) as { updatedAt?: number } | null;
+  const { resolved, autoMode, regime } = resolveOverrides(cfg, raw);
+
+  const knobViews: ControlKnobView[] = OVERRIDE_KNOBS.map((k) => ({
+    ...k,
+    ...resolved[k.key],
+  }));
+
+  const order: OverrideGroup[] = ["size", "tp", "stop"];
+  const groups = order.map((group) => ({
+    group,
+    label: GROUP_LABELS[group],
+    knobs: knobViews.filter((k) => k.group === group),
+  }));
+
+  return {
+    autoMode,
+    regime,
+    updatedAt: raw?.updatedAt ?? null,
+    groups,
+    effectiveNote: {
+      offHoursMult: cfg.OFF_HOURS_SIZE_MULT,
+      primeNow: cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours()),
     },
   };
 }

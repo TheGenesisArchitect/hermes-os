@@ -1,4 +1,23 @@
 export { loadConfig, type HermesConfig } from "./config.js";
+export {
+  OVERRIDE_KNOBS,
+  EMPTY_OVERRIDES,
+  ADAPTIVE_MIN_N,
+  clampKnob,
+  resolveOverrides,
+  computeAdaptivePolicy,
+  type OverrideKey,
+  type OverrideGroup,
+  type OverrideKnob,
+  type OverrideSource,
+  type AutoMode,
+  type RuntimeOverrides,
+  type ResolvedKnob,
+  type ResolvedOverrides,
+  type RegimeStats,
+  type RegimeState,
+  type AdaptivePolicy,
+} from "./overrides.js";
 export type { TokenCandidate, SafetyCheckResult, SafetyVerdict } from "./types.js";
 export { runSafetyPipeline } from "./safety/pipeline.js";
 export { checkMintAuthority } from "./safety/mintAuthority.js";

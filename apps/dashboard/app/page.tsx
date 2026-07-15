@@ -1,6 +1,7 @@
 import { loadConfig } from "@hermes/core";
 import { AccountingLedger } from "@/components/AccountingLedger";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { ControlTerminal } from "@/components/ControlTerminal";
 import { EquityChart } from "@/components/EquityChart";
 import { FillsTable } from "@/components/FillsTable";
 import { HarvestButton } from "@/components/HarvestButton";
@@ -20,6 +21,7 @@ import {
   getForecast,
   getIntelReport,
   getKillSwitch,
+  getControlTerminal,
   getKpiStrip,
   getNews,
   getManagedPositions,
@@ -55,6 +57,7 @@ export default async function Overview() {
     forecast,
     news,
     timingGrid,
+    controlTerminal,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -74,6 +77,7 @@ export default async function Overview() {
     getForecast(),
     getNews(),
     getTimingGrid(),
+    getControlTerminal(),
   ]);
 
   const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
@@ -163,6 +167,18 @@ export default async function Overview() {
           Trade matrix — live positions, price locked in as they rise · click a bar to close
         </h2>
         <TimingGrid view={timingGrid} />
+      </section>
+
+      {/* Control terminal — the live trading desk. Every tunable exit/size knob
+          the trader is running now, adjustable in real time. The adaptive policy
+          reads the regime and recommends (ghost values); the operator's manual
+          pins always win. Auto ships ADVISORY until a clean prime run gives the
+          policy its favorable pole — see the one-pole caveat in overrides.ts. */}
+      <section className="card p-4">
+        <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+          Control terminal — live TP / stops / size · adaptive policy + manual override
+        </h2>
+        <ControlTerminal view={controlTerminal} />
       </section>
 
       {/* Intel Terminal — Bloomberg-style KPIs + edge trend in an on-demand drawer;
