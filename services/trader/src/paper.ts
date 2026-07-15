@@ -683,7 +683,18 @@ export function decideExit(
     if (price <= stop) return { reason: "profit_trail", fraction: 1 };
   } else {
     // Not yet in profit — the pre-profit hard stop is the only floor.
-    if (price <= entry * (1 - cfg.HARD_STOP_PCT / 100)) return { reason: "hard_stop", fraction: 1 };
+    // VENUE-SPLIT: thin bonding-curve tape (meteora-dbc, or any pool under
+    // THIN_STOP_LIQ_USD) gets the deep stop — its "tight" stop gap-fills tens
+    // of points below the line anyway, and its winners routinely retrace 30-50%
+    // for minutes before igniting (BULLDOG: −50% chop for 2.5m, then 153x).
+    // Deep pools keep the tight stop, where fills actually land near it.
+    // dbc reads "meteoradbc" on the live DexScreener feed and "meteora-dbc" in
+    // GeckoTerminal-ingested rows — accept both (the dex-string leak lesson).
+    const venue = canonicalVenue(market);
+    const thin =
+      venue === "meteoradbc" || venue === "meteora-dbc" || market.liquidityUsd < cfg.THIN_STOP_LIQ_USD;
+    const stopPct = thin ? cfg.HARD_STOP_PCT_THIN : cfg.HARD_STOP_PCT;
+    if (price <= entry * (1 - stopPct / 100)) return { reason: "hard_stop", fraction: 1 };
   }
 
   if (ageHours >= cfg.MAX_HOLD_HOURS) return { reason: "stop_time", fraction: 1 };

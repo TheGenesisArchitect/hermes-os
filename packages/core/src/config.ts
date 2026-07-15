@@ -230,6 +230,17 @@ const envSchema = z.object({
   // noise, exiting 9-90s after entry at breakeven while the token runs 1.3-2.3x.
   POST_BANK_TRAIL_PCT: z.coerce.number().default(12),
   HARD_STOP_PCT: z.coerce.number().default(5), // pre-ignition: a confirmed entry that reverses 5% failed — cut it cheap (~-$0.9 not -$17)
+  // VENUE-SPLIT pre-ignition stop (user-ruled 2026-07-15, the BULLDOG 153x
+  // autopsy): on THIN bonding-curve tape a tight stop is a lie twice over — it
+  // gap-fills far below its line ($10.50 "5% stop" filled at −52%) AND ejects
+  // the monsters during their violent pre-ignition retrace (BULLDOG chopped at
+  // −50% for 2.5 REAL minutes, then ran 153x; 63% of historical hard-stops
+  // recovered past TP0). 45% sits below the ignition-retrace zone but above
+  // rug-to-zero; genuine rugs still exit via dust/no-pair/timebox. Deep pools
+  // keep the tight HARD_STOP_PCT — their fills actually land near the line.
+  HARD_STOP_PCT_THIN: z.coerce.number().default(45),
+  // Thin = bonding-curve venue (meteora-dbc) OR live liquidity under this floor.
+  THIN_STOP_LIQ_USD: z.coerce.number().default(10000),
   MAX_HOLD_HOURS: z.coerce.number().default(6),
   // Flat-position time-box — capital rotation. A position that never established
   // (never cleared FLAT_MULT) after FLAT_MIN minutes is dead weight occupying a
@@ -401,7 +412,7 @@ const envSchema = z.object({
   // sells (same discipline as the crash-confirm hold). A real dump prints the
   // second tick and exits ~5s lower; a wick resets and the position lives to
   // reach the ladder. Atomic rugs are unaffected (the money is gone either way).
-  HARD_STOP_CONFIRM_TICKS: z.coerce.number().default(2),
+  HARD_STOP_CONFIRM_TICKS: z.coerce.number().default(3),
   // STALE-TAKE — sell the remainder INTO LIVE LIQUIDITY when the move stops.
   // A position with no NEW HIGH for STALE_LOCK_TICKS management polls (~3min at
   // 5s) while meaningfully green gets its remainder sold at market. Originally
