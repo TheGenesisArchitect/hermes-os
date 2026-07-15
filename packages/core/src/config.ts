@@ -231,8 +231,19 @@ const envSchema = z.object({
   // position that DID clear FLAT_MULT is owned by the ratcheting trail instead
   // (it either trails out green or is a proven runner), so this never caps a
   // winner — it only sweeps the stuck 1.0x deadweight that clogged the book.
-  TIMEBOX_FLAT_MULT: z.coerce.number().default(1.2), // "established" = peak reached at least this
-  TIMEBOX_FLAT_MIN: z.coerce.number().default(20), // minutes before a still-flat position is recycled
+  // SECONDS-SCALE dud cut (2026-07-15, temporal-DNA study). Rugs/duds peak at 77s
+  // at a nothing 1.06x, then we sat on them 567s under a 20-MINUTE flat timebox —
+  // dead weight clogging slots while the −5% hard stop or the rug slowly arrived.
+  // Cut at 3min instead: the gate is PEAK<FLAT_MULT, so anything that poked even
+  // 1.1x in its first 3min is spared and owned by the trail — this only sweeps the
+  // never-established flatliner. FLAT_MULT 1.2→1.1 protects slow organic climbers
+  // (they show >=10% life early; a real winner isn't still sub-1.1x at 3min).
+  // NOTE: winners take 5–20min to develop (moonshots peak at ~1009s), so this is a
+  // LOSER cut only — never a blanket 300s max hold, which would murder every
+  // moonshot mid-climb. Timing is asymmetric: seconds to cut a dud, minutes to let
+  // a winner breathe. See [[feedback_maximize_dont_minimize]].
+  TIMEBOX_FLAT_MULT: z.coerce.number().default(1.1), // "established" = peak reached at least this
+  TIMEBOX_FLAT_MIN: z.coerce.number().default(3), // minutes before a still-flat (never cleared 1.1x) position is recycled
   // 300s→60s (2026-07-14): the 5-min snapshot froze the Equity KPI between
   // writes and made the curve look pinned at break-even while the book moved.
   // The headline KPI now computes LIVE on the dashboard; snapshots feed the
