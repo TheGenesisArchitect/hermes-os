@@ -1,31 +1,98 @@
 import { loadConfig } from "@hermes/core";
+import { AccountingLedger } from "@/components/AccountingLedger";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { EquityChart } from "@/components/EquityChart";
+import { FillsTable } from "@/components/FillsTable";
+import { HarvestButton } from "@/components/HarvestButton";
+import { IntelReport } from "@/components/IntelReport";
+import { IntelTerminal } from "@/components/IntelTerminal";
 import { KillSwitch } from "@/components/KillSwitch";
-import { MintLink, ScoreBadge, StatTile, timeAgo, usd } from "@/components/ui";
+import { ManagementBoard } from "@/components/ManagementBoard";
+import { RecorderBoard } from "@/components/RecorderBoard";
+import { MintLink, ScoreBadge, StatTile, fmtTs, fmtTsFull, timeAgo, usd } from "@/components/ui";
 import {
+  getAccountingLedger,
+  getEdgeSeparation,
+  getEdgeSeries,
   getEquitySeries,
+  getForecast,
+  getIntelReport,
   getKillSwitch,
-  getOpenPositions,
+  getKpiStrip,
+  getNews,
+  getManagedPositions,
   getRecentSignals,
   getRecentTrades,
+  getRecorderOutcomes,
+  getRecorderStats,
   getStats,
+  getWatchingNow,
 } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function Overview() {
   const cfg = loadConfig();
-  const [series, stats, recentSignals, openPositions, trades, killSwitch] = await Promise.all([
+  const [
+    series,
+    stats,
+    recentSignals,
+    managed,
+    ledger,
+    trades,
+    killSwitch,
+    recorderStats,
+    edgeSeparation,
+    watching,
+    recorderOutcomes,
+    intel,
+    kpis,
+    edgeSeries,
+    forecast,
+    news,
+  ] = await Promise.all([
     getEquitySeries(),
     getStats(),
     getRecentSignals(),
-    getOpenPositions(),
+    getManagedPositions(),
+    getAccountingLedger(),
     getRecentTrades(),
     getKillSwitch(),
+    getRecorderStats(),
+    getEdgeSeparation(),
+    getWatchingNow(),
+    getRecorderOutcomes(),
+    getIntelReport(),
+    getKpiStrip(),
+    getEdgeSeries(),
+    getForecast(),
+    getNews(),
   ]);
 
-  const equity = stats.equity ?? cfg.PAPER_BANKROLL_USD;
+  const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
+
+  // Live float read for the Intel Report — realizable (post-slippage) unrealized P&L.
+  const greenPositions = managed.filter((p) => p.unrealizedNetUsd > 0);
+  const liveRead = {
+    openPositions: managed.length,
+    floatNetUsd: managed.reduce((s, p) => s + p.unrealizedNetUsd, 0),
+    greenCount: greenPositions.length,
+    redCount: managed.filter((p) => p.unrealizedNetUsd <= 0).length,
+  };
+  const greenUsd = greenPositions.reduce((s, p) => s + p.unrealizedNetUsd, 0);
+  // Harvest promises only what the trader's sweep can DELIVER this cycle: greens
+  // whose latest read passed the sellability bar. A green on a dust-flip read is
+  // shown as suspended, not silently counted (the "clicked 19, swept 2" gap).
+  const sellableGreens = greenPositions.filter((p) => p.sellableNow);
+  const sellableGreenUsd = sellableGreens.reduce((s, p) => s + p.unrealizedNetUsd, 0);
+  const suspendedGreens = greenPositions.length - sellableGreens.length;
+
+  // LIVE equity — realized P&L (ledger, always current) + realizable float
+  // (marked this refresh, net of exit slippage/fees). The old read was the last
+  // pnl_snapshot (~5min stale): the tile froze between snapshots while trades
+  // closed live, which made the curve LOOK pinned at break-even. Snapshots now
+  // only feed the chart; the headline number moves with every 10s refresh.
+  const equity = cfg.PAPER_BANKROLL_USD + stats.realizedPnl + liveRead.floatNetUsd;
   const pnlSinceStart = equity - cfg.PAPER_BANKROLL_USD;
   const chartData = series.map((p) => ({
     at: p.at.toISOString(),
@@ -55,13 +122,13 @@ export default async function Overview() {
         <StatTile
           label="Equity"
           value={usd(equity)}
-          sub={stats.equityAt ? `as of ${timeAgo(stats.equityAt)}` : "no snapshots yet"}
+          sub={`live · float ${liveRead.floatNetUsd >= 0 ? "+" : ""}${usd(liveRead.floatNetUsd)}`}
         />
         <StatTile
           label="P&L since start"
           value={`${pnlSinceStart >= 0 ? "+" : ""}${usd(pnlSinceStart)}`}
           tone={pnlSinceStart > 0 ? "good" : pnlSinceStart < 0 ? "bad" : "neutral"}
-          sub={`realized ${usd(stats.realizedPnl)}`}
+          sub={`realized ${usd(stats.realizedPnl)} · live`}
         />
         <StatTile label="Open positions" value={String(stats.openPositions)} />
         <StatTile
@@ -80,6 +147,64 @@ export default async function Overview() {
         <EquityChart data={chartData} bankroll={cfg.PAPER_BANKROLL_USD} />
       </section>
 
+      {/* Intel Terminal — Bloomberg-style KPIs + edge trend in an on-demand drawer;
+          the ML digest (IntelReport) rides inside as the full methodology detail.
+          Keyless, computed from the data; makes the operator an SME on the market. */}
+      <IntelTerminal
+        kpis={kpis}
+        edgeSeries={edgeSeries}
+        forecast={forecast}
+        newsHeadline={news.brief?.headline ?? null}
+        newsTopTheme={news.themes[0]?.category ?? null}
+      >
+        <IntelReport report={intel} live={liveRead} />
+      </IntelTerminal>
+
+      {/* Position Command — the ride-vs-cut classifier, live and interactive */}
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+            Position Command · ride vs cut
+          </h2>
+          <div className="flex items-center gap-3">
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+              classifier {cfg.CLASSIFIER_ENABLED ? cfg.CLASSIFIER_MODE : "off"} · override any call
+            </span>
+            <HarvestButton greenCount={sellableGreens.length} greenUsd={sellableGreenUsd} suspendedCount={suspendedGreens} />
+          </div>
+        </div>
+        <ManagementBoard positions={managedView} />
+      </section>
+
+      {/* The Recorder — the data flywheel. Watches every safety-passed candidate,
+          entered or not, to build the labeled dataset that will fit the weights. */}
+      <section>
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+            Recorder · the scout &amp; edge flywheel
+          </h2>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+            {cfg.CONFIRM_ENTRY_ENABLED
+              ? "fires ⚡ entry on confirmed demand — no blind t=0 commits"
+              : "keyless · no capital · every candidate tracked for its first minutes"}
+          </span>
+        </div>
+        <RecorderBoard
+          stats={recorderStats}
+          separation={edgeSeparation}
+          watching={watching}
+          outcomes={recorderOutcomes}
+        />
+      </section>
+
+      {/* Accounting ledger — reconciled closed-trade truth + forecaster + portfolio */}
+      <AccountingLedger
+        ledger={ledger}
+        bankroll={cfg.PAPER_BANKROLL_USD}
+        floatNetUsd={liveRead.floatNetUsd}
+        session={{ prime: cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours()), mult: cfg.OFF_HOURS_SIZE_MULT }}
+      />
+
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="card p-4">
           <h2 className="mb-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
@@ -92,7 +217,7 @@ export default async function Overview() {
                 <th className="pb-2 font-normal">Score</th>
                 <th className="pb-2 font-normal">Liquidity</th>
                 <th className="pb-2 font-normal">Status</th>
-                <th className="pb-2 text-right font-normal">When</th>
+                <th className="pb-2 text-right font-normal">Created (UTC)</th>
               </tr>
             </thead>
             <tbody>
@@ -118,8 +243,12 @@ export default async function Overview() {
                     <td className="py-2 text-xs" style={{ color: "var(--text-secondary)" }}>
                       {s.status}
                     </td>
-                    <td className="py-2 text-right text-xs" style={{ color: "var(--text-muted)" }}>
-                      {timeAgo(s.createdAt)}
+                    <td
+                      className="tabular py-2 text-right text-xs"
+                      style={{ color: "var(--text-muted)" }}
+                      title={`${fmtTsFull(s.createdAt)} · ${timeAgo(s.createdAt)}`}
+                    >
+                      {fmtTs(s.createdAt)}
                     </td>
                   </tr>
                 ))
@@ -129,84 +258,7 @@ export default async function Overview() {
         </section>
 
         <div className="space-y-6">
-          <section className="card p-4">
-            <h2 className="mb-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
-              Open positions
-            </h2>
-            {openPositions.length === 0 ? (
-              <p className="py-4 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-                No open positions.
-              </p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs" style={{ color: "var(--text-muted)" }}>
-                    <th className="pb-2 font-normal">Token</th>
-                    <th className="pb-2 font-normal">Size</th>
-                    <th className="pb-2 font-normal">Entry</th>
-                    <th className="pb-2 text-right font-normal">Age</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {openPositions.map((p) => (
-                    <tr key={p.id} className="border-t" style={{ borderColor: "var(--gridline)" }}>
-                      <td className="py-2">
-                        <MintLink mint={p.mint} symbol={p.symbol} />
-                      </td>
-                      <td className="tabular py-2">{usd(p.sizeUsd, 0)}</td>
-                      <td className="tabular py-2" style={{ color: "var(--text-secondary)" }}>
-                        ${Number(p.entryPriceUsd).toPrecision(4)}
-                      </td>
-                      <td className="py-2 text-right text-xs" style={{ color: "var(--text-muted)" }}>
-                        {timeAgo(p.openedAt)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </section>
-
-          <section className="card p-4">
-            <h2 className="mb-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
-              Recent fills
-            </h2>
-            {trades.length === 0 ? (
-              <p className="py-4 text-center text-sm" style={{ color: "var(--text-muted)" }}>
-                No fills yet.
-              </p>
-            ) : (
-              <table className="w-full text-sm">
-                <tbody>
-                  {trades.map((t) => (
-                    <tr key={t.id} className="border-t" style={{ borderColor: "var(--gridline)" }}>
-                      <td className="py-2">
-                        <span
-                          className="mr-2 inline-block w-9 rounded px-1 text-center text-xs font-semibold"
-                          style={{
-                            background: t.side === "buy" ? "rgba(57,135,229,0.18)" : "rgba(255,255,255,0.06)",
-                            color: t.side === "buy" ? "var(--series-1)" : "var(--text-secondary)",
-                          }}
-                        >
-                          {t.side}
-                        </span>
-                        <MintLink mint={t.mint} symbol={t.symbol} />
-                      </td>
-                      <td className="tabular py-2" style={{ color: "var(--text-secondary)" }}>
-                        ${Number(t.priceUsd).toPrecision(4)}
-                      </td>
-                      <td className="py-2 text-xs" style={{ color: "var(--text-muted)" }}>
-                        {t.exitReason ?? ""}
-                      </td>
-                      <td className="py-2 text-right text-xs" style={{ color: "var(--text-muted)" }}>
-                        {timeAgo(t.filledAt)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </section>
+          <FillsTable trades={trades} />
         </div>
       </div>
     </div>

@@ -16,7 +16,8 @@ export default async function TokenPage({ params }: { params: Promise<{ mint: st
   const { mint } = await params;
   const detail = await getTokenDetail(mint);
   if (!detail) notFound();
-  const { token, checks, signals, positions } = detail;
+  const { token, checks, signals, positions, recorderOutcome, recorderTrajectory, fills, mgmtTrajectory } = detail;
+  const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
   // latest run per check
   const latest = new Map<string, (typeof checks)[number]>();
@@ -92,6 +93,70 @@ export default async function TokenPage({ params }: { params: Promise<{ mint: st
           ) : null}
         </div>
       </section>
+
+      {/* Recorder view — how the scout watched this token unfold, entered or not */}
+      {recorderOutcome ? (
+        <section className="card p-4">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+              Recorder view · how the scout saw it
+            </h2>
+            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+              a &quot;winner&quot; here = a 2×+ move existed in the window — a market observation, not our trade
+            </span>
+          </div>
+          <div className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+            <Mini label="Label" value={String(recorderOutcome.label)} tone={recorderOutcome.label === "winner" ? "var(--status-good)" : recorderOutcome.label === "rug" ? "var(--status-critical)" : "var(--text-primary)"} />
+            <Mini label="Peak" value={`${num(recorderOutcome.peakMultiple).toFixed(2)}×`} />
+            <Mini label="Final" value={`${num(recorderOutcome.finalMultiple).toFixed(2)}×`} />
+            <Mini label="Max DD" value={`${num(recorderOutcome.maxDrawdownFromPeakPct).toFixed(0)}%`} />
+            <Mini label="→ Peak" value={recorderOutcome.minutesToPeak == null ? "—" : `${num(recorderOutcome.minutesToPeak).toFixed(0)}m`} />
+            <Mini
+              label="Scout trigger"
+              value={recorderOutcome.triggeredAt ? `⚡ ${num(recorderOutcome.triggerMultiple).toFixed(2)}×` : "—"}
+              tone={recorderOutcome.triggeredAt ? "var(--series-1)" : "var(--text-muted)"}
+            />
+          </div>
+          {recorderOutcome.triggeredAt ? (
+            <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+              Confirmed for entry at {timeAgo(recorderOutcome.triggeredAt)} · {recorderOutcome.triggerReason ?? "confirmed demand"}
+              {recorderOutcome.entered ? <span style={{ color: "var(--series-1)" }}> · we took a position</span> : <span> · not entered</span>}
+            </p>
+          ) : null}
+          {recorderTrajectory.length > 0 ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs" style={{ color: "var(--text-muted)" }}>
+                    <th className="pb-2 font-normal">Watch min</th>
+                    <th className="pb-2 text-right font-normal">Mark</th>
+                    <th className="pb-2 text-right font-normal">DD</th>
+                    <th className="pb-2 text-right font-normal">Buy share</th>
+                    <th className="pb-2 text-right font-normal">Liquidity</th>
+                    <th className="pb-2 text-right font-normal">Score</th>
+                    <th className="pb-2 text-right font-normal">Call</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recorderTrajectory.map((t, i) => (
+                    <tr key={i} className="border-t" style={{ borderColor: "var(--gridline)" }}>
+                      <td className="tabular py-1.5 text-xs" style={{ color: "var(--text-muted)" }}>{t.watchMinutes.toFixed(1)}m</td>
+                      <td className="tabular py-1.5 text-right" style={{ color: "var(--text-secondary)" }}>{t.markMultiple.toFixed(2)}×</td>
+                      <td className="tabular py-1.5 text-right text-xs" style={{ color: t.drawdownFromPeakPct >= 10 ? "var(--status-warning)" : "var(--text-muted)" }}>{t.drawdownFromPeakPct.toFixed(0)}%</td>
+                      <td className="tabular py-1.5 text-right text-xs" style={{ color: "var(--text-muted)" }}>{t.buyShareM5 == null ? "—" : `${(t.buyShareM5 * 100).toFixed(0)}%`}</td>
+                      <td className="tabular py-1.5 text-right text-xs" style={{ color: "var(--text-muted)" }}>{t.liquidityUsd == null ? "—" : usd(t.liquidityUsd, 0)}</td>
+                      <td className="tabular py-1.5 text-right" style={{ color: "var(--text-secondary)" }}>{t.continuationScore == null ? "—" : t.continuationScore.toFixed(0)}</td>
+                      <td className="py-1.5 text-right text-xs" style={{ color: "var(--text-muted)" }}>{t.action ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>No recorder ticks captured for this token.</p>
+          )}
+        </section>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="card p-4">
@@ -176,6 +241,113 @@ export default async function TokenPage({ params }: { params: Promise<{ mint: st
           )}
         </section>
       </div>
+
+      {/* Trade drill-down — fills + the classifier's tick-by-tick management calls
+          on our most recent position in this token */}
+      {(fills.length > 0 || mgmtTrajectory.length > 0) ? (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <section className="card p-4">
+            <h2 className="mb-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+              Fills · latest position
+            </h2>
+            {fills.length === 0 ? (
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>No fills.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs" style={{ color: "var(--text-muted)" }}>
+                    <th className="pb-2 font-normal">Side</th>
+                    <th className="pb-2 text-right font-normal">Qty</th>
+                    <th className="pb-2 text-right font-normal">Price</th>
+                    <th className="pb-2 text-right font-normal">Slip</th>
+                    <th className="pb-2 text-right font-normal">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fills.map((f) => (
+                    <tr key={f.id} className="border-t" style={{ borderColor: "var(--gridline)" }}>
+                      <td className="py-1.5">
+                        <span
+                          className="inline-block w-9 rounded px-1 text-center text-xs font-semibold"
+                          style={{
+                            background: f.side === "buy" ? "rgba(57,135,229,0.18)" : "rgba(255,255,255,0.06)",
+                            color: f.side === "buy" ? "var(--series-1)" : "var(--text-secondary)",
+                          }}
+                        >
+                          {f.side}
+                        </span>
+                      </td>
+                      <td className="tabular py-1.5 text-right text-xs" style={{ color: "var(--text-muted)" }}>{num(f.qtyTokens).toPrecision(3)}</td>
+                      <td className="tabular py-1.5 text-right" style={{ color: "var(--text-secondary)" }}>${num(f.priceUsd).toPrecision(4)}</td>
+                      <td className="tabular py-1.5 text-right text-xs" style={{ color: num(f.slippagePct) >= 10 ? "var(--status-warning)" : "var(--text-muted)" }}>{num(f.slippagePct).toFixed(1)}%</td>
+                      <td className="py-1.5 text-right text-xs" style={{ color: "var(--text-muted)" }}>{timeAgo(f.filledAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+
+          <section className="card p-4">
+            <h2 className="mb-1 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+              Management trajectory · every ride/cut call
+            </h2>
+            <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+              The classifier&apos;s read on each poll while we held it — how the position was managed to its exit.
+            </p>
+            {mgmtTrajectory.length === 0 ? (
+              <p className="text-sm" style={{ color: "var(--text-muted)" }}>No management ticks recorded.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs" style={{ color: "var(--text-muted)" }}>
+                      <th className="pb-2 font-normal">Age</th>
+                      <th className="pb-2 text-right font-normal">Mark</th>
+                      <th className="pb-2 text-right font-normal">Peak</th>
+                      <th className="pb-2 text-right font-normal">DD</th>
+                      <th className="pb-2 text-right font-normal">Liquidity</th>
+                      <th className="pb-2 text-right font-normal">Score</th>
+                      <th className="pb-2 text-right font-normal">Regime</th>
+                      <th className="pb-2 text-right font-normal">Call</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mgmtTrajectory.map((t, i) => (
+                      <tr key={i} className="border-t" style={{ borderColor: "var(--gridline)" }}>
+                        <td className="tabular py-1.5 text-xs" style={{ color: "var(--text-muted)" }}>{t.ageMinutes.toFixed(0)}m</td>
+                        <td className="tabular py-1.5 text-right" style={{ color: "var(--text-secondary)" }}>{t.markMultiple.toFixed(2)}×</td>
+                        <td className="tabular py-1.5 text-right text-xs" style={{ color: "var(--text-muted)" }}>{t.peakMultiple.toFixed(2)}×</td>
+                        <td className="tabular py-1.5 text-right text-xs" style={{ color: t.drawdownFromPeakPct >= 20 ? "var(--status-warning)" : "var(--text-muted)" }}>{t.drawdownFromPeakPct.toFixed(0)}%</td>
+                        <td className="tabular py-1.5 text-right text-xs" style={{ color: t.liquidityUsd != null && t.liquidityUsd < 1000 ? "var(--status-warning)" : "var(--text-muted)" }} title={t.liquidityUsd != null && t.liquidityUsd < 1000 ? "sub-$1k read — likely an empty-pool flicker, not a real drain" : undefined}>{t.liquidityUsd == null ? "—" : usd(t.liquidityUsd, 0)}</td>
+                        <td className="tabular py-1.5 text-right" style={{ color: "var(--text-secondary)" }}>{t.continuationScore == null ? "—" : t.continuationScore.toFixed(0)}</td>
+                        <td className="py-1.5 text-right text-xs" style={{ color: "var(--text-muted)" }}>{t.regime ?? "—"}</td>
+                        <td className="py-1.5 text-right text-xs font-semibold" style={{ color: ACTION_COLOR[t.action ?? ""] ?? "var(--text-muted)" }}>{t.action ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const ACTION_COLOR: Record<string, string> = {
+  RIDE: "var(--status-good)",
+  TRIM: "var(--series-1)",
+  CUT: "var(--status-critical)",
+  HOLD: "var(--text-muted)",
+};
+
+function Mini({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div>
+      <div className="text-xs" style={{ color: "var(--text-muted)" }}>{label}</div>
+      <div className="tabular text-lg font-semibold" style={{ color: tone ?? "var(--text-primary)" }}>{value}</div>
     </div>
   );
 }

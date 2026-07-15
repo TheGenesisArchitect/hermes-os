@@ -20,16 +20,14 @@ interface WatchedProgram {
   createMarker: RegExp;
 }
 
+// Narrowed to the two lower-volume creation streams to limit Helius credit
+// burn. PumpSwap (the highest-volume firehose) is intentionally dropped — the
+// GeckoTerminal poll still catches those pools, just at poll latency.
 const WATCHED_PROGRAMS: WatchedProgram[] = [
   {
     address: "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
     dex: "raydium-v4",
     createMarker: /initialize2/i,
-  },
-  {
-    address: "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
-    dex: "pumpswap",
-    createMarker: /Instruction: CreatePool/i,
   },
   {
     address: "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG",

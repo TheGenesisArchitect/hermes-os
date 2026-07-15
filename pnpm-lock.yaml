@@ -89,6 +89,56 @@ importers:
         specifier: ^5.8.3
         version: 5.9.3
 
+  services/newsdesk:
+    dependencies:
+      '@hermes/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@hermes/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
+      drizzle-orm:
+        specifier: ^0.44.2
+        version: 0.44.7(postgres@3.4.9)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.0
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
+  services/recorder:
+    dependencies:
+      '@hermes/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@hermes/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
+      drizzle-orm:
+        specifier: ^0.44.2
+        version: 0.44.7(postgres@3.4.9)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.3
+        version: 24.13.3
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.0
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+
   services/scout:
     dependencies:
       '@hermes/core':

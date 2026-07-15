@@ -10,6 +10,7 @@
   "packageManager": "pnpm@10.28.0",
   "scripts": {
     "scout": "pnpm --filter @hermes/scout dev",
+    "recorder": "pnpm --filter @hermes/recorder dev",
     "trader": "pnpm --filter @hermes/trader dev",
     "dashboard": "pnpm --filter @hermes/dashboard dev",
     "db:push": "pnpm --filter @hermes/db push",

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { SystemHealth } from "@/components/SystemHealth";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,6 +20,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
               scanner · paper scalper · signal intelligence
             </span>
+            <div className="ml-auto">
+              <SystemHealth />
+            </div>
           </div>
         </header>
         <main className="mx-auto max-w-6xl px-6 py-6">{children}</main>

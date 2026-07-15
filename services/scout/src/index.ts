@@ -11,10 +11,12 @@ import {
   type ScoreBreakdown,
   type TokenCandidate,
 } from "@hermes/core";
-import { auditLog, db, safetyChecks, signals, tokens } from "@hermes/db";
-import { inArray } from "drizzle-orm";
+import { auditLog, config, db, safetyChecks, signals, tokens } from "@hermes/db";
+import { eq, inArray } from "drizzle-orm";
 import { fetchNewPools } from "./ingest/geckoterminal.js";
+import { fetchNewPoolsDexscreener } from "./ingest/dexscreener.js";
 import { HeliusStream, type StreamCandidate } from "./ingest/heliusStream.js";
+import { PumpPortalStream, type PumpPortalHealth } from "./ingest/pumpportal.js";
 
 const cfg = loadConfig();
 
@@ -87,19 +89,31 @@ async function processCandidate(candidate: TokenCandidate): Promise<void> {
     .join("  ");
   const label = `${candidate.symbol ?? "?"} ${short(candidate.mint)} [${candidate.dex}] liq $${Math.round(candidate.liquidityUsd ?? 0).toLocaleString()}`;
 
-  if (verdict.passed) {
+  if (verdict.tradeable) {
     const breakdown = await scoreCandidate(candidate);
     await db.insert(signals).values({
       mint: candidate.mint,
       score: String(breakdown?.score ?? 0),
-      reasons: { checks: summary, scoring: breakdown ?? "market data unavailable" },
+      reasons: {
+        checks: summary,
+        scoring: breakdown ?? "market data unavailable",
+        risk: {
+          tier: verdict.riskTier,
+          sizeMultiplier: verdict.sizeMultiplier,
+          flags: verdict.riskFlags,
+        },
+      },
     });
     const scoreLabel = breakdown
-      ? `score ${breakdown.score} (mom ${breakdown.components.momentum} / buy ${breakdown.components.buyPressure} / liq ${breakdown.components.liquidity} / narr ${breakdown.components.narrative})`
+      ? `score ${breakdown.score} (mom ${breakdown.components.momentum} / buy ${breakdown.components.buyPressure} / cvx ${breakdown.components.convexity} / src ${breakdown.components.source} / narr ${breakdown.components.narrative})`
       : "score 0 (no market data yet)";
-    console.log(`🚨 SIGNAL  ${label}\n          ${summary}\n          ${scoreLabel}`);
+    const riskLabel =
+      verdict.riskTier === "clean"
+        ? "risk: clean · full size"
+        : `risk: ${verdict.riskTier} [${verdict.riskFlags.join(", ")}] · size ×${verdict.sizeMultiplier}`;
+    console.log(`🚨 SIGNAL  ${label}\n          ${summary}\n          ${scoreLabel}\n          ${riskLabel}`);
   } else {
-    console.log(`   reject  ${label}\n          ${summary}`);
+    console.log(`   reject  ${label}  ⛔ trap: ${verdict.traps.join(", ") || "n/a"}\n          ${summary}`);
   }
 }
 
@@ -142,6 +156,11 @@ async function drainStreamQueue(): Promise<void> {
       await processCandidate({
         mint,
         chain: "solana",
+        // Recover identity from the enriched market — PumpPortal migration events
+        // carry no symbol/name, so without this graduated tokens are unidentifiable
+        // ("?") in signals, fills, positions and the recorder board.
+        symbol: market.symbol ?? undefined,
+        name: market.name ?? undefined,
         dex: entry.dex,
         poolAddress: market.pairAddress,
         liquidityUsd: market.liquidityUsd,
@@ -155,10 +174,30 @@ async function drainStreamQueue(): Promise<void> {
   if (processed > 0) console.log(`   (${streamQueue.size} still maturing in stream queue)`);
 }
 
+/**
+ * Pull fresh candidates from GeckoTerminal's new-pools firehose; if it's
+ * unreachable (network filtering, outage), fall back to the keyless DexScreener
+ * fresh-token feed so ingest never goes dark on a single source.
+ */
+async function fetchCandidates(): Promise<TokenCandidate[]> {
+  try {
+    return await fetchNewPools(cfg.SCOUT_MIN_LIQUIDITY_USD);
+  } catch (err) {
+    const gt = err instanceof Error ? err.message : String(err);
+    try {
+      const ds = await fetchNewPoolsDexscreener(cfg.SCOUT_MIN_LIQUIDITY_USD);
+      console.log(`   (GeckoTerminal unreachable: ${gt} — using DexScreener fallback, ${ds.length} candidate(s))`);
+      return ds;
+    } catch (err2) {
+      throw new Error(`both ingests failed — GT: ${gt}; DS: ${err2 instanceof Error ? err2.message : err2}`);
+    }
+  }
+}
+
 async function tick(): Promise<void> {
   await drainStreamQueue();
 
-  const candidates = await fetchNewPools(cfg.SCOUT_MIN_LIQUIDITY_USD);
+  const candidates = await fetchCandidates();
   if (candidates.length === 0) return;
 
   const unknown = await unknownMints(candidates.map((c) => c.mint));
@@ -184,11 +223,48 @@ async function tick(): Promise<void> {
 }
 
 console.log(`SCOUT online — polling GeckoTerminal every ${cfg.SCOUT_POLL_MS / 1000}s, min liquidity $${cfg.SCOUT_MIN_LIQUIDITY_USD.toLocaleString()}`);
-console.log(`RPC: ${cfg.HELIUS_API_KEY ? "Helius" : `${cfg.rpcUrl} (set HELIUS_API_KEY for headroom)`}`);
+const rpcLabel =
+  cfg.HELIUS_API_KEY && cfg.HELIUS_RPC_ENABLED
+    ? "Helius"
+    : `${cfg.rpcUrl}${cfg.HELIUS_API_KEY ? " (Helius RPC disabled — sparing credits)" : ""}`;
+console.log(`RPC: ${rpcLabel}`);
+
+// PumpPortal push ingest — keyless, no gate. A second network-independent
+// source (pump.fun graduations) so ingest survives any single host being
+// filtered. Migrated tokens land in the same stream queue the drain enriches.
+const pumpportal = new PumpPortalStream((c) => {
+  if (!streamQueue.has(c.mint)) {
+    streamQueue.set(c.mint, c);
+    console.log(`   🎓 graduation ${short(c.mint)} [${c.dex}] — queued for enrichment`);
+  }
+});
+pumpportal.start();
+
+/** Surface scout + PumpPortal liveness to the dashboard (separate process) via config. */
+async function writeScoutHealth(): Promise<void> {
+  const pp: PumpPortalHealth = pumpportal.health();
+  const value = {
+    ts: Date.now(),
+    streamQueue: streamQueue.size,
+    pumpportal: pp,
+  };
+  await db
+    .insert(config)
+    .values({ key: "scout_health", value })
+    .onConflictDoUpdate({ target: config.key, set: { value, updatedAt: new Date() } });
+}
+
+// Flush health on a fast, tick-independent cadence so the PumpPortal WS heartbeat
+// age the dashboard sees reflects real liveness (not the 45s poll quantum).
+setInterval(() => {
+  void writeScoutHealth().catch((err) =>
+    console.error(`health flush failed: ${err instanceof Error ? err.message : err}`),
+  );
+}, 10_000);
 
 // Push ingest requires a Helius key (WebSocket logsSubscribe). Without one we
 // fall back to poll-only.
-if (cfg.HELIUS_API_KEY) {
+if (cfg.HELIUS_API_KEY && cfg.STREAM_ENABLED) {
   const stream = new HeliusStream(cfg.HELIUS_API_KEY, cfg.rpcUrl, (c) => {
     if (!streamQueue.has(c.mint)) {
       streamQueue.set(c.mint, c);
@@ -197,7 +273,11 @@ if (cfg.HELIUS_API_KEY) {
   });
   stream.start();
 } else {
-  console.log("(no Helius key — poll-only mode; set HELIUS_API_KEY for real-time push ingest)");
+  console.log(
+    cfg.STREAM_ENABLED
+      ? "(no Helius key — poll-only mode; set HELIUS_API_KEY for real-time push ingest)"
+      : "(STREAM_ENABLED=false — poll-only mode; GeckoTerminal backstop covers ingest)",
+  );
 }
 console.log("");
 
@@ -209,5 +289,8 @@ while (true) {
   } catch (err) {
     console.error(`tick failed: ${err instanceof Error ? err.message : err}`);
   }
+  await writeScoutHealth().catch((err) =>
+    console.error(`health write failed: ${err instanceof Error ? err.message : err}`),
+  );
   await new Promise((r) => setTimeout(r, cfg.SCOUT_POLL_MS));
 }

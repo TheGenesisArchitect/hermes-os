@@ -11,6 +11,7 @@ export async function rpcCall<T>(rpcUrl: string, method: string, params: unknown
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }),
+      signal: AbortSignal.timeout(5000), // filtered public RPCs silently drop — never hang the caller
     });
     if (res.status === 429 || res.status === 403 || res.status >= 500) {
       lastError = `HTTP ${res.status}`;

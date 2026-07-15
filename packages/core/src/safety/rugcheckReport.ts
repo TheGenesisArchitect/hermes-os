@@ -10,6 +10,10 @@ export interface RugcheckHolder {
 
 export interface RugcheckReport {
   mint: string;
+  // SPL mint authorities as RugCheck parses them: null = revoked/none (safe),
+  // a base58 address = still active (unsafe). Present on any indexed token.
+  mintAuthority?: string | null;
+  freezeAuthority?: string | null;
   rugged?: boolean;
   score?: number;
   score_normalised?: number;
@@ -26,6 +30,7 @@ export interface RugcheckReport {
 export async function fetchRugcheckReport(mint: string): Promise<RugcheckReport | null> {
   const res = await fetch(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`, {
     headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(5000), // never let a filtered host hang the safety pipeline
   });
   if (res.status === 404 || res.status === 400) return null;
   if (!res.ok) throw new Error(`rugcheck HTTP ${res.status}`);

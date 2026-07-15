@@ -6,6 +6,46 @@ export { checkRugcheck } from "./safety/rugcheck.js";
 export { checkHolderConcentration } from "./safety/holders.js";
 export { checkHoneypot } from "./safety/honeypot.js";
 export * as rpc from "./rpc.js";
-export { fetchTokenMarket, type TokenMarket } from "./market/dexscreener.js";
+export { fetchTokenMarket, fetchTokenMarkets, type TokenMarket } from "./market/dexscreener.js";
+export { fetchJupiterPrice, fetchJupiterPrices } from "./market/jupiter.js";
+export { convexSlippagePct } from "./market/slippage.js";
+export { resilientFetch } from "./net.js";
 export { computeScore, type ScoreBreakdown } from "./scoring/score.js";
 export { scoreNarrative, type NarrativeScore } from "./scoring/narrative.js";
+export {
+  classify,
+  tickFrom,
+  DEFAULT_CLASSIFIER,
+  type Tick,
+  type ManagementCall,
+  type ManagementFeature,
+  type ClassifierConfig,
+  type Regime,
+  type Action,
+} from "./management/classifier.js";
+export {
+  evaluateEntryTrigger,
+  entryTriggerConfigFrom,
+  type EntryTrigger,
+  type EntryTriggerConfig,
+} from "./management/entryTrigger.js";
+export {
+  runForecast,
+  type ForecastOptions,
+  type ForecastResult,
+  type ForecastBucket,
+} from "./forecast.js";
+export { ollamaJson, ollamaUp, OLLAMA_MODEL } from "./llm/ollama.js";
+export {
+  synthesizeMover,
+  synthesizeBrief,
+  classifyCategory,
+  NEWS_CATEGORIES,
+  type NewsCategory,
+  type MoverInput,
+  type MoverStory,
+  type BriefInput,
+  type MarketBrief,
+  type ThemeStat,
+  type CategoryOnly,
+} from "./news/synthesize.js";

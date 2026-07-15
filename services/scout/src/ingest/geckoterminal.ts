@@ -1,4 +1,4 @@
-import type { TokenCandidate } from "@hermes/core";
+import { resilientFetch, type TokenCandidate } from "@hermes/core";
 
 const NEW_POOLS_URL = "https://api.geckoterminal.com/api/v2/networks/solana/new_pools";
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
@@ -33,7 +33,10 @@ function mintFromId(id: string): string {
  * where the NEW token is paired against SOL or a stable (i.e. the tradeable leg).
  */
 export async function fetchNewPools(minLiquidityUsd: number): Promise<TokenCandidate[]> {
-  const res = await fetch(NEW_POOLS_URL, { headers: { accept: "application/json" } });
+  // geckoterminal.com is SNI-filtered for undici (ECONNRESET); resilientFetch
+  // retries via curl (through GoodbyeDPI). 5s cap so a silent drop fails fast and
+  // the DexScreener fallback can fire instead of hanging the poll.
+  const res = await resilientFetch(NEW_POOLS_URL, { headers: { accept: "application/json" }, timeoutMs: 5000 });
   if (!res.ok) throw new Error(`geckoterminal HTTP ${res.status}`);
   const body = (await res.json()) as { data?: GtPool[] };
 
