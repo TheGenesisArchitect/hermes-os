@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { MintLink, fmtTs, fmtTsFull, timeAgo, usd } from "@/components/ui";
 import { TimeRangeChips, withinRange, type RangeKey } from "@/components/timeFilter";
-import type { RecentTrade } from "@/lib/queries";
+import type { FillsSummary, RecentTrade } from "@/lib/queries";
 
 type SortKey = "filledAt" | "valueUsd" | "priceUsd";
 type SideFilter = "all" | "buy" | "sell";
@@ -52,7 +52,7 @@ const REASON_TONE: Record<string, string> = {
   user_cut: "var(--status-warning)",
 };
 
-export function FillsTable({ trades }: { trades: RecentTrade[] }) {
+export function FillsTable({ trades, summaryAll }: { trades: RecentTrade[]; summaryAll?: FillsSummary }) {
   const [query, setQuery] = useState("");
   const [side, setSide] = useState<SideFilter>("all");
   const [range, setRange] = useState<RangeKey>("all");
@@ -122,8 +122,9 @@ export function FillsTable({ trades }: { trades: RecentTrade[] }) {
         <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
           Fill ledger
           <span className="ml-2 text-xs font-normal" style={{ color: "var(--text-muted)" }}>
-            {rows.length} of {trades.length}
+            {rows.length} of {summaryAll?.totalFills ?? trades.length}
             {range !== "all" ? " in range" : ""}
+            {summaryAll && trades.length < summaryAll.totalFills ? ` · oldest ${summaryAll.totalFills - trades.length} beyond view cap` : ""}
           </span>
         </h2>
         <input
@@ -135,7 +136,7 @@ export function FillsTable({ trades }: { trades: RecentTrade[] }) {
         />
       </div>
       {/* Accounting strip — cash through the book for the filtered view */}
-      <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+      <p className="mb-1 text-xs" style={{ color: "var(--text-muted)" }}>
         <span>{summary.buys} buys {usd(summary.buyUsd, 0)} in</span>
         <span className="mx-1.5">·</span>
         <span>{summary.sells} sells {usd(summary.sellUsd, 0)} out</span>
@@ -146,7 +147,32 @@ export function FillsTable({ trades }: { trades: RecentTrade[] }) {
           net flow {summary.net >= 0 ? "+" : ""}
           {usd(summary.net, 0)}
         </span>
+        <span className="mx-1.5">·</span>
+        <span>(filtered view)</span>
       </p>
+      {/* THE BRIDGE — whole history, SQL-side (cap-proof): why this panel and
+          the Accounting Ledger MUST agree: net flow + still-deployed = realized. */}
+      {summaryAll ? (
+        <p className="mb-3 text-xs" style={{ color: "var(--text-muted)" }}>
+          all history: net flow {summaryAll.netFlow >= 0 ? "+" : ""}
+          {usd(summaryAll.netFlow, 0)} + deployed {usd(summaryAll.openCostUsd, 0)} ={" "}
+          <span style={{ color: summaryAll.realizedUsd >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>
+            realized {summaryAll.realizedUsd >= 0 ? "+" : ""}
+            {usd(summaryAll.realizedUsd)}
+          </span>{" "}
+          <span
+            style={{
+              color:
+                Math.abs(summaryAll.netFlow + summaryAll.openCostUsd - summaryAll.realizedUsd) <= 1
+                  ? "var(--status-good)"
+                  : "var(--status-critical)",
+            }}
+            title="net flow + deployed must equal realized — the same identity the Accounting Ledger verifies"
+          >
+            {Math.abs(summaryAll.netFlow + summaryAll.openCostUsd - summaryAll.realizedUsd) <= 1 ? "✓ ties to Accounting Ledger" : "⚠ PANELS DISAGREE"}
+          </span>
+        </p>
+      ) : null}
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <div className="flex gap-1">
           <button onClick={() => setSide("all")} className="rounded px-2 py-0.5 text-xs font-medium" style={chip(side === "all")}>All</button>

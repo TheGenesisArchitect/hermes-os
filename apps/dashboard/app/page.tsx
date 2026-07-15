@@ -13,6 +13,7 @@ import { MintLink, ScoreBadge, StatTile, fmtTs, fmtTsFull, timeAgo, usd } from "
 import {
   getAccountingLedger,
   getEdgeSeparation,
+  getFillsSummary,
   getEdgeSeries,
   getEquitySeries,
   getForecast,
@@ -40,6 +41,7 @@ export default async function Overview() {
     managed,
     ledger,
     trades,
+    fillsSummary,
     killSwitch,
     recorderStats,
     edgeSeparation,
@@ -57,6 +59,7 @@ export default async function Overview() {
     getManagedPositions(),
     getAccountingLedger(),
     getRecentTrades(),
+    getFillsSummary(),
     getKillSwitch(),
     getRecorderStats(),
     getEdgeSeparation(),
@@ -258,7 +261,7 @@ export default async function Overview() {
         </section>
 
         <div className="space-y-6">
-          <FillsTable trades={trades} />
+          <FillsTable trades={trades} summaryAll={fillsSummary} />
         </div>
       </div>
     </div>

@@ -629,7 +629,12 @@ async function sell(
   const exitPrice = market.priceUsd * (1 - slip / 100);
   const feeUsd = (qtySold * exitPrice * FEE_PCT) / 100 + FIXED_FEE_USD;
   const proceeds = qtySold * exitPrice - feeUsd;
-  const costBasis = qtySold * n(position.entryPriceUsd);
+  // Cost basis = the CASH we paid for this slice (size × fraction sold), which
+  // includes the entry fee. The old qty×entryPrice basis silently dropped the
+  // buy fee from realized P&L (~$0.05/position — the growing recon gap the
+  // fills≡positions identity caught): fees are real cash and must be expensed.
+  const qtyTotal = n(position.qtyTokens);
+  const costBasis = qtyTotal > 0 ? n(position.sizeUsd) * (qtySold / qtyTotal) : qtySold * n(position.entryPriceUsd);
   const pnl = proceeds - costBasis;
 
   const remaining = n(position.qtyRemaining) - qtySold;

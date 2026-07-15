@@ -379,16 +379,17 @@ const envSchema = z.object({
     .default("18,19,20,21,22,23")
     .transform((s) => new Set(s.split(",").map((x) => Number.parseInt(x.trim(), 10)).filter((n) => Number.isFinite(n)))),
   OFF_HOURS_SIZE_MULT: z.coerce.number().default(0.5),
-  // Off-hours ENTRY switch. Was paused (2026-07-15 ~04:40Z) when 81% of
-  // off-hours entries were farm-wave rugs bleeding −$93/50min under the
-  // runner-keeping ladder. RE-ENABLED after the DNA study + FARM_VENUES
-  // no-runner ladder: the same 101-rug cohort sims +$9.51 when 100% is out by
-  // TP2 — the escalator pays the aggressive taker and the cliff catches
-  // nothing. Off-hours sizing stays ×OFF_HOURS_SIZE_MULT; flip to false to
-  // stand down from the late tape entirely.
+  // Off-hours ENTRY switch — OFF after the escalator-scalp experiment FAILED
+  // its pre-registered falsifier (2026-07-15 05:51Z): 26 closes, net −$25.49
+  // (line: −$15), rugs avg −$3.37 (line: −$2.50), breaker tripped. The no-runner
+  // ladder mechanism itself worked (7 full TP2 rides banked), but the farm
+  // pulls EARLIER than its own 24h history when the tape is hot — 50% of
+  // entries rugged pre-TP1 vs the 32% the sim was built on. They adapt
+  // intra-night; a backtest on yesterday's farm can't price today's farm.
+  // Off-hours = no entries. Prime window (PRIME_HOURS_UTC) is the game.
   OFF_HOURS_ENTRIES: z
     .string()
-    .default("true")
+    .default("false")
     .transform((v) => v !== "false"),
   // Book-wide dust is an ANOMALY for this many minutes, then a DIE-OFF: meme-wave
   // entries cluster in time so their rugs cluster too; an eternal anomaly-hold

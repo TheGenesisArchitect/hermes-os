@@ -168,6 +168,49 @@ export interface RecentTrade {
   realizedPnlUsd: string | null;
 }
 
+/**
+ * Whole-history fills accounting, computed SQL-side so the strip can never be
+ * poisoned by the row cap. `netFlow + openCost ≡ realized` is the bridge that
+ * ties the Fill Ledger to the Accounting Ledger — the two panels MUST agree.
+ */
+export interface FillsSummary {
+  totalFills: number;
+  buysUsd: number; // cash out: buy value + buy fees
+  sellsUsd: number; // cash in: sell value − sell fees
+  feesUsd: number;
+  netFlow: number; // sellsUsd − buysUsd
+  openCostUsd: number; // cost basis still deployed
+  realizedUsd: number; // Σ positions.realized (post fee-basis fix)
+}
+
+export async function getFillsSummary(): Promise<FillsSummary> {
+  const rows = await db.execute(sql`
+    WITH f AS (
+      SELECT coalesce(sum(qty_tokens*price_usd) FILTER (WHERE side='sell'),0)::float sg,
+        coalesce(sum(fee_usd) FILTER (WHERE side='sell'),0)::float sf,
+        coalesce(sum(qty_tokens*price_usd) FILTER (WHERE side='buy'),0)::float bv,
+        coalesce(sum(fee_usd) FILTER (WHERE side='buy'),0)::float bf,
+        count(*)::int n
+      FROM fills),
+    p AS (SELECT coalesce(sum(realized_pnl_usd),0)::float realized,
+        coalesce(sum(size_usd*qty_remaining/NULLIF(qty_tokens,0)) FILTER (WHERE status='open'),0)::float oc
+      FROM positions WHERE lane='paper')
+    SELECT f.n, f.sg-f.sf AS cash_in, f.bv+f.bf AS cash_out, f.sf+f.bf AS fees, p.oc, p.realized FROM f,p
+  `);
+  const r = (rows as unknown as Array<Record<string, unknown>>)[0] ?? {};
+  const buysUsd = Number(r.cash_out) || 0;
+  const sellsUsd = Number(r.cash_in) || 0;
+  return {
+    totalFills: Number(r.n) || 0,
+    buysUsd,
+    sellsUsd,
+    feesUsd: Number(r.fees) || 0,
+    netFlow: sellsUsd - buysUsd,
+    openCostUsd: Number(r.oc) || 0,
+    realizedUsd: Number(r.realized) || 0,
+  };
+}
+
 // Cap is generous (covers the whole current run of ~400 fills with headroom) so
 // the client-side time-range filter never silently truncates. The Fills surface
 // renders "showing N of M in range" so any future cap is VISIBLE, not silent.
