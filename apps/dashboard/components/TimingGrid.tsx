@@ -78,8 +78,11 @@ function Card({
   const [confirming, setConfirming] = useState(false);
   useEffect(() => setConfirming(false), [t.id]);
   const isOpen = t.status === "open";
-  const valueNow = t.sizeUsd * t.curMult;
-  const floatGross = valueNow - t.sizeUsd;
+  // Float on the REMAINDER only — TP tranches already sold are in `banked`.
+  // Full-size × mark once overstated a GAIN runner 4.5x (+$39.52 shown, ~$8.7 real).
+  const basisRem = t.sizeUsd * t.remFrac;
+  const valueNow = t.sizeUsd * t.curMult * t.remFrac;
+  const floatGross = valueNow - basisRem;
   const row = (k: string, v: React.ReactNode) => (
     <div className="flex items-baseline justify-between gap-3">
       <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{k}</span>
@@ -110,12 +113,13 @@ function Card({
       {/* value-over-time — the card's centerpiece */}
       <ValueSpark t={t} />
       <div className="mb-2 mt-1 flex items-baseline justify-between">
-        <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>value</span>
-        <span className="tabular text-[13px] font-semibold" style={{ color: (isOpen ? floatGross : (t.exit?.pnl ?? 0)) >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>
-          ${t.sizeUsd.toFixed(2)} → ${valueNow.toFixed(2)}
+        <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+          {isOpen && t.remFrac < 0.999 ? `value · ${Math.round(t.remFrac * 100)}% held` : "value"}
+        </span>
+        <span className="tabular text-[13px] font-semibold" style={{ color: (isOpen ? floatGross + t.banked : (t.exit?.pnl ?? 0)) >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>
           {isOpen
-            ? ` (${floatGross >= 0 ? "+" : ""}$${floatGross.toFixed(2)} gross)`
-            : ` (${(t.exit?.pnl ?? 0) >= 0 ? "+" : ""}$${(t.exit?.pnl ?? 0).toFixed(2)} realized)`}
+            ? `$${basisRem.toFixed(2)} → $${valueNow.toFixed(2)} (${floatGross >= 0 ? "+" : ""}$${floatGross.toFixed(2)} float${t.banked !== 0 ? ` · ${t.banked >= 0 ? "+" : ""}$${t.banked.toFixed(2)} banked` : ""})`
+            : `$${t.sizeUsd.toFixed(2)} in (${(t.exit?.pnl ?? 0) >= 0 ? "+" : ""}$${(t.exit?.pnl ?? 0).toFixed(2)} realized)`}
         </span>
       </div>
 

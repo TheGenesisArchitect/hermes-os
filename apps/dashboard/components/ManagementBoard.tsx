@@ -288,7 +288,9 @@ export function ManagementBoard({ positions }: { positions: ManagedPositionView[
     <div>
       <FloatSummary positions={positions} />
       <div className="grid gap-4 md:grid-cols-2">
-        {positions.map((p) => (
+        {/* Biggest live float first — the star runner must never hide below the
+            fold behind two fresher $0.90 positions (the missing-GAIN report). */}
+        {[...positions].sort((a, b) => b.unrealizedNetUsd - a.unrealizedNetUsd).map((p) => (
           <Card key={p.id} p={p} />
         ))}
       </div>

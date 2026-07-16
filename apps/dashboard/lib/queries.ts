@@ -496,6 +496,12 @@ export interface TimingTrade {
   triggerMult: number | null; // market-proven multiple at confirm (conviction)
   rugProb: number | null; // fitted rug-model score at arm time
   qualityMult: number | null; // combined sizing multiplier applied at entry
+  // Partial-sell truth: fraction of tokens still held and P&L already banked
+  // by TP tranches — float math must run on the REMAINDER, not original size
+  // (the GAIN card once showed +$39.52 gross on a position 80% banked; the
+  // true remaining float was ~$8.7).
+  remFrac: number;
+  banked: number;
 }
 export interface TimingGridView {
   trades: TimingTrade[];
@@ -538,6 +544,9 @@ export async function getTimingGrid(): Promise<TimingGridView> {
         openedAt: positions.openedAt,
         triggerMult: positions.triggerMult,
         qualityMult: positions.qualityMult,
+        qtyTokens: positions.qtyTokens,
+        qtyRemaining: positions.qtyRemaining,
+        realizedPnlUsd: positions.realizedPnlUsd,
         rugProb: candidateOutcomes.rugProb,
       })
       .from(positions)
@@ -638,6 +647,8 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       triggerMult: p.triggerMult === null ? null : num(p.triggerMult),
       rugProb: p.rugProb === null ? null : num(p.rugProb),
       qualityMult: p.qualityMult === null ? null : num(p.qualityMult),
+      remFrac: num(p.qtyTokens) > 0 ? Math.max(0, Math.min(1, num(p.qtyRemaining) / num(p.qtyTokens))) : 1,
+      banked: num(p.realizedPnlUsd),
     });
   }
   for (const p of closed) {
@@ -666,6 +677,8 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       triggerMult: p.triggerMult === null ? null : num(p.triggerMult),
       rugProb: p.rugProb === null ? null : num(p.rugProb),
       qualityMult: p.qualityMult === null ? null : num(p.qualityMult),
+      remFrac: 0,
+      banked: num(p.realizedPnlUsd),
     });
   }
 
