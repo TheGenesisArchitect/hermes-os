@@ -54,6 +54,25 @@ function Row({ c }: { c: WatchingCandidate }) {
           />
         ))}
       </div>
+      {/* trader disposition — why an armed row is/isn't a trade */}
+      {c.disposition ? (
+        <span
+          className="shrink-0 rounded px-1 py-px text-[9px]"
+          style={{
+            color:
+              c.disposition === "in book ✓"
+                ? "var(--status-good)"
+                : c.disposition.startsWith("queued")
+                  ? "var(--status-warning)"
+                  : "var(--text-muted)",
+            border: "1px solid var(--border)",
+            background: "var(--surface-1)",
+          }}
+          title="what the trader did with this confirmation"
+        >
+          {c.disposition}
+        </span>
+      ) : null}
       {/* current + peak */}
       <div className="w-[92px] shrink-0 text-right">
         <span

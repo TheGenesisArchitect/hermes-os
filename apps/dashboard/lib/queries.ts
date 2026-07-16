@@ -1018,6 +1018,9 @@ export interface WatchingCandidate {
   triggerMultiple: number | null;
   armed: boolean; // qualifies RIGHT NOW — the trader will take the shot
   entered: boolean; // we hold (or held) a position on it
+  // What the trader actually DID with this candidate — the armed-vs-traded
+  // transparency chip. null = not armed/triggered (nothing to explain).
+  disposition: string | null;
   spark: { i: number; mm: number }[];
 }
 
@@ -1042,6 +1045,36 @@ export async function getWatchingNow(): Promise<WatchingCandidate[]> {
     .where(eq(candidateOutcomes.label, "open"))
     .orderBy(desc(candidateOutcomes.updatedAt))
     .limit(24);
+
+  // Recent trader verdicts per mint (last 5 min) — names WHY an armed row
+  // isn't a trade yet, so "armed but queued" never reads as "missed".
+  const mints = open.map((o) => o.mint);
+  // drizzle spreads a JS array in sql`` into scalar params (breaks `= any($1)`)
+  // — bind as an explicit IN list, same as adaptive.ts farmCond.
+  const mintList = sql.join(
+    mints.map((m) => sql`${m}`),
+    sql`, `,
+  );
+  const verdictRows =
+    mints.length > 0
+      ? ((await db.execute(sql`
+          select distinct on (details->>'mint') details->>'mint' as mint, action
+          from audit_log
+          where created_at > now() - interval '5 minutes'
+            and action in ('entry_farm_cap_defer','capacity_full','lane_full','entry_feed_divergence_skip','entry_filtered','entry_concentration_defer')
+            and details->>'mint' in (${mintList})
+          order by details->>'mint', id desc
+        `)) as unknown as { mint: string; action: string }[])
+      : [];
+  const verdictLabel: Record<string, string> = {
+    entry_farm_cap_defer: "queued · farm cap",
+    capacity_full: "queued · book full",
+    lane_full: "queued · lane full",
+    entry_feed_divergence_skip: "held · price disputed",
+    entry_filtered: "skipped · filtered",
+    entry_concentration_defer: "queued · concentration",
+  };
+  const verdicts = new Map(verdictRows.map((r) => [r.mint, verdictLabel[r.action] ?? r.action]));
 
   const out: WatchingCandidate[] = [];
   for (const o of open) {
@@ -1073,6 +1106,13 @@ export async function getWatchingNow(): Promise<WatchingCandidate[]> {
       triggerMultiple: o.triggerMultiple == null ? null : num(o.triggerMultiple),
       armed: o.armed,
       entered: o.entered,
+      disposition: o.entered
+        ? "in book ✓"
+        : o.armed
+          ? (verdicts.get(o.mint) ?? "queued · next scan")
+          : o.triggeredAt != null
+            ? "disarmed"
+            : null,
       spark: view.map((r, i) => ({ i, mm: num(r.markMultiple) })),
     });
   }
