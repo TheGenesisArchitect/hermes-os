@@ -422,6 +422,18 @@ const envSchema = z.object({
   POND_PROMOTE_MAX_RUG: z.coerce.number().default(0.25),
   POND_DEMOTE_WIN: z.coerce.number().default(0.2),
   POND_DEMOTE_RUG: z.coerce.number().default(0.4),
+  // HOUR POLICY — the measured daily clock (Pond Radar's hourly windows made
+  // executive). Each ET hour-of-day with enough closed trades is classified
+  // prime (full size) or probe (OFF_HOURS_SIZE_MULT) by its own realized P&L;
+  // unmeasured hours fall back to the static PRIME_HOURS_UTC declaration.
+  // First reading already contradicted the declaration: 6am ET banked +$169
+  // at half stakes while some declared-prime hours ran red.
+  HOUR_POLICY_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  HOUR_POLICY_MIN_TRADES: z.coerce.number().default(15),
+  HOUR_POLICY_MIN_PNL_USD: z.coerce.number().default(2),
   // PRIME VENUES — the measured healthy ponds (recorder pond map 2026-07-15:
   // fluxbeam 15/15 winners, 0 rugs, 14 hit 3x+). Armed candidates from these
   // venues jump the entry queue ahead of raw trigger-multiple ordering, and

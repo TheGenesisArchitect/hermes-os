@@ -280,7 +280,7 @@ async function openFromSignal(
   const risk = (signal.reasons as { risk?: { sizeMultiplier?: number; tier?: string } } | null)?.risk;
   const sizeMult = typeof risk?.sizeMultiplier === "number" ? risk.sizeMultiplier : 1;
   // Session sizing — survive the dead zone, grow in the moonshot window.
-  const sessionMult = cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours()) ? 1 : cfg.OFF_HOURS_SIZE_MULT;
+  const sessionMult = await hourSessionMult(cfg);
   const sizeUsd = Number((cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult).toFixed(2));
   const slip = slippagePct(sizeUsd, market.liquidityUsd);
   // Never buy a corpse: a slip past the cap means the pool has drained since the
@@ -1045,6 +1045,37 @@ async function refreshAutoFarm(cfg: HermesConfig): Promise<void> {
 // size boost) = static PRIME_VENUES ∪ currently-promoted. A cooling pond loses
 // its boost automatically — allocation tracks the live pond map, which is the
 // working answer to the 30-day edge half-life.
+// ── HOUR-DRIVEN THROTTLE — the measured daily clock, made executive ─────────
+// The recorder's hour-policy scan classifies each ET hour-of-day by its OWN
+// realized economics (≥HOUR_POLICY_MIN_TRADES closes): prime → full size,
+// probe → OFF_HOURS_SIZE_MULT, unmeasured → the static PRIME_HOURS_UTC
+// declaration decides (exactly the old behavior). First reading: 6am ET
+// banked +$169 at half stakes while declared-prime hours ran red — hours are
+// now sized by what they earn, not by what we assumed.
+const hourPolicy = { hours: {} as Record<string, string>, refreshedAt: 0 };
+async function hourSessionMult(cfg: HermesConfig): Promise<number> {
+  if (cfg.HOUR_POLICY_ENABLED && Date.now() - hourPolicy.refreshedAt > 120_000) {
+    hourPolicy.refreshedAt = Date.now();
+    try {
+      const rows = (await db.execute(sql`select value from config where key = 'hour_policy'`)) as unknown as {
+        value: { hours?: Record<string, string> };
+      }[];
+      hourPolicy.hours = rows[0]?.value?.hours ?? {};
+    } catch {
+      /* keep last-known policy on a read hiccup */
+    }
+  }
+  // Policy is keyed by ET hour-of-day (the operator's clock).
+  const etHour = Number(
+    new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "America/New_York" }).format(new Date()),
+  ) % 24;
+  const cls = cfg.HOUR_POLICY_ENABLED ? hourPolicy.hours[String(etHour)] : undefined;
+  if (cls === "prime") return 1;
+  if (cls === "probe") return cfg.OFF_HOURS_SIZE_MULT;
+  // unmeasured (or policy disabled/missing) → the static declaration decides
+  return cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours()) ? 1 : cfg.OFF_HOURS_SIZE_MULT;
+}
+
 const promotedVenues = { set: new Set<string>(), refreshedAt: 0 };
 const PROMOTED_REFRESH_MS = 120_000;
 async function primeVenueSet(cfg: HermesConfig): Promise<Set<string>> {

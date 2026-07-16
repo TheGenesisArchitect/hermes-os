@@ -44,6 +44,58 @@ export async function scanPonds(cfg: Cfg): Promise<void> {
   } catch (err) {
     console.error(`pond scan failed: ${err instanceof Error ? err.message : err}`);
   }
+  try {
+    await scanHours(cfg);
+  } catch (err) {
+    console.error(`hour policy scan failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/**
+ * HOUR POLICY — classify each ET hour-of-day by its own measured economics.
+ * prime = enough closed trades AND positive realized → full size;
+ * probe = enough trades AND negative realized → OFF_HOURS_SIZE_MULT;
+ * unmeasured = thin sample → the trader falls back to static PRIME_HOURS_UTC.
+ * Written to config `hour_policy`; the trader reads it cached. Audited only
+ * when the classification SET changes, so the log stays quiet.
+ */
+let lastHourPolicy = "";
+async function scanHours(cfg: Cfg): Promise<void> {
+  if (!cfg.HOUR_POLICY_ENABLED) return;
+  const rows = (await db.execute(sql`
+    select extract(hour from p.opened_at at time zone 'America/New_York')::int as h,
+      count(*)::int as n, sum(p.realized_pnl_usd::float) as pnl
+    from positions p where p.status = 'closed'
+    group by 1
+  `)) as unknown as { h: number; n: number; pnl: number | null }[];
+
+  const hours: Record<number, string> = {};
+  for (let h = 0; h < 24; h++) hours[h] = "unmeasured";
+  for (const r of rows) {
+    if (r.n < cfg.HOUR_POLICY_MIN_TRADES) continue;
+    const pnl = r.pnl ?? 0;
+    if (pnl >= cfg.HOUR_POLICY_MIN_PNL_USD) hours[r.h] = "prime";
+    else if (pnl <= -cfg.HOUR_POLICY_MIN_PNL_USD) hours[r.h] = "probe";
+    // measured-but-flat stays unmeasured → static declaration decides
+  }
+
+  const fingerprint = Object.values(hours).join("");
+  await db.execute(sql`
+    insert into config (key, value)
+    values ('hour_policy', ${JSON.stringify({ hours, computedAt: new Date().toISOString() })}::jsonb)
+    on conflict (key) do update set value = excluded.value, updated_at = now()
+  `);
+  if (fingerprint !== lastHourPolicy && lastHourPolicy !== "") {
+    const prime = Object.entries(hours).filter(([, v]) => v === "prime").map(([k]) => k);
+    const probe = Object.entries(hours).filter(([, v]) => v === "probe").map(([k]) => k);
+    await db.insert(auditLog).values({
+      actor: "recorder",
+      action: "hour_policy_update",
+      details: { primeET: prime, probeET: probe },
+    });
+    console.log(`🕐 HOUR POLICY — prime ET [${prime.join(",")}] · probe ET [${probe.join(",")}]`);
+  }
+  lastHourPolicy = fingerprint;
 }
 
 interface VenueRow {

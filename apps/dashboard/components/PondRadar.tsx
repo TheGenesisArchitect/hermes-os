@@ -29,7 +29,7 @@ function HourStrip({ hours }: { hours: HourWindow[] }) {
       <div className="mb-1 flex items-baseline justify-between">
         <span className="text-[11px] font-medium" style={{ color: "var(--text-secondary)" }}>Hourly windows · ET</span>
         <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-          bar = launch flow (all history) · bar color = realized P&amp;L in that hour (current run) · ⭐ best mover · 💰 best banked hour
+          bar = launch flow (all history) · bar color = realized P&amp;L in that hour (current run) · ⭐ best mover · 💰 best banked · rail = throttle (green full · amber probe · gray static)
         </span>
       </div>
       <div className="flex items-end gap-[3px]" style={{ height: 64 }}>
@@ -56,6 +56,24 @@ function HourStrip({ hours }: { hours: HourWindow[] }) {
             </div>
           );
         })}
+      </div>
+      {/* hour-driven throttle readout: which hours trade full size vs probe */}
+      <div className="mt-0.5 flex gap-[3px]">
+        {hours.map((h) => (
+          <div
+            key={`p${h.hour}`}
+            className="h-[3px] flex-1 rounded-full"
+            title={`${fmtHour(h.hour)} ET — throttle: ${h.policy ?? "unmeasured (static schedule decides)"}`}
+            style={{
+              background:
+                h.policy === "prime"
+                  ? "var(--status-good)"
+                  : h.policy === "probe"
+                    ? "var(--status-warning)"
+                    : "var(--gridline)",
+            }}
+          />
+        ))}
       </div>
       <div className="mt-0.5 flex gap-[3px]">
         {hours.map((h) => (

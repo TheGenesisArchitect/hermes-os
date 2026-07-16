@@ -2269,6 +2269,7 @@ export interface HourWindow {
   bestSymbol: string | null;
   traded: number; // closed positions opened this hour (current run)
   realized: number | null;
+  policy: string | null; // hour-driven throttle class: prime | probe | unmeasured
 }
 
 export async function getHourlyWindows(): Promise<HourWindow[]> {
@@ -2306,6 +2307,10 @@ export async function getHourlyWindows(): Promise<HourWindow[]> {
       best_symbol: string | null; best_peak: string | null;
       traded: number; pnl: number | null;
     }[];
+    const [policyRow] = (await db.execute(sql`select value from config where key = 'hour_policy'`)) as unknown as {
+      value: { hours?: Record<string, string> };
+    }[];
+    const policy = policyRow?.value?.hours ?? {};
     return rows.map((r) => ({
       hour: r.h,
       watched: r.watched,
@@ -2314,6 +2319,7 @@ export async function getHourlyWindows(): Promise<HourWindow[]> {
       bestSymbol: r.best_symbol,
       traded: r.traded,
       realized: r.pnl === null ? null : Number(r.pnl),
+      policy: policy[String(r.h)] ?? null,
     }));
   } catch {
     return [];
