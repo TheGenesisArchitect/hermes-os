@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { setManagementIntent } from "@/app/actions";
 import type { TimingGridView, TimingTrade } from "@/lib/queries";
 
-// The vertical Trade Matrix: one heat-bar per open trade, height = how high it has
-// risen (mark multiple), filled with the progress-distribution palette (neutral at
-// 1.0×, deepening green up / red down). A gold LOCK line rides up under the peak —
-// the protected floor a close-now can't drop below — so "price gets locked in the
-// higher it rises" is literal. TP rails cross behind; each bar is click-to-close.
+// The vertical Trade Matrix: one heat-bar per trade, height = how high it rose
+// (mark multiple) on a LOG scale — a 41x parabolic bar no longer flattens the
+// 1.1-2x field where most of the book lives. Ghost bars scroll back through 6h
+// of history; hovering any bar opens its BASEBALL CARD (venue, sizing, model
+// scores, value-over-time spark), and closing a live position is a deliberate
+// two-step inside the card — no more accidental clicks on a trending candle.
 
 const NEUTRAL: [number, number, number] = [38, 38, 36];
 const GAIN: [number, number, number] = [22, 190, 80];
@@ -29,21 +30,152 @@ const STATE_TONE: Record<TimingTrade["state"], string> = {
 const zoneTone = (sec: number) =>
   sec < 150 ? "var(--status-critical)" : sec < 300 ? "var(--status-warning)" : "var(--status-good)";
 const fmtSec = (s: number) => (s >= 60 ? `${Math.round(s / 60)}m` : `${Math.round(s)}s`);
+const fmtClock = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 const TRACK_H = 300; // px — the shared 1.0×→yMax wall
+const GHOST_W = 26;
+const LIVE_W = 40;
 
+// ── the baseball card ────────────────────────────────────────────────────────
+function ValueSpark({ t }: { t: TimingTrade }) {
+  const pts = t.points;
+  if (pts.length < 2) return null;
+  const W = 232;
+  const H = 44;
+  const vals = pts.map((p) => p.mm * t.sizeUsd);
+  const lo = Math.min(...vals, t.sizeUsd);
+  const hi = Math.max(...vals, t.sizeUsd * 1.02);
+  const x = (i: number) => (i / (pts.length - 1)) * (W - 4) + 2;
+  const y = (v: number) => H - 3 - ((v - lo) / (hi - lo)) * (H - 8);
+  const d = vals.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ");
+  const last = vals[vals.length - 1]!;
+  const up = last >= t.sizeUsd;
+  return (
+    <svg width={W} height={H} aria-label="traded value over time">
+      {/* cost-basis baseline */}
+      <line x1={2} x2={W - 2} y1={y(t.sizeUsd)} y2={y(t.sizeUsd)} stroke="var(--gridline)" strokeDasharray="3 3" />
+      <path d={d} fill="none" stroke={up ? "var(--status-good)" : "var(--status-critical)"} strokeWidth={1.5} />
+      <circle cx={x(pts.length - 1)} cy={y(last)} r={2.5} fill={up ? "var(--status-good)" : "var(--status-critical)"} />
+    </svg>
+  );
+}
+
+function Card({
+  t,
+  onClose,
+  closing,
+}: {
+  t: TimingTrade;
+  onClose: (id: number) => void;
+  closing: boolean;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => setConfirming(false), [t.id]);
+  const isOpen = t.status === "open";
+  const valueNow = t.sizeUsd * t.curMult;
+  const floatGross = valueNow - t.sizeUsd;
+  const row = (k: string, v: React.ReactNode) => (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>{k}</span>
+      <span className="tabular text-[11.5px]" style={{ color: "var(--text-primary)" }}>{v}</span>
+    </div>
+  );
+  return (
+    <div
+      className="w-[260px] rounded-md border p-3 shadow-xl"
+      style={{ background: "var(--surface-1)", borderColor: "var(--border)" }}
+    >
+      {/* header */}
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{t.symbol ?? "?"}</span>
+        <span
+          className="rounded px-1.5 py-px text-[9px] uppercase tracking-wide"
+          style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+        >
+          {t.venue ?? "unknown"}{t.isFarm ? " ◇ farm" : ""}
+        </span>
+      </div>
+      <div className="mb-2 text-[10.5px]" style={{ color: isOpen ? STATE_TONE[t.state] : "var(--text-muted)" }}>
+        {isOpen
+          ? `OPEN · ${t.state} · ${fmtSec(t.ageSec)} · since ${fmtClock(t.openedAtIso)}`
+          : `CLOSED · ${t.exit?.reason ?? "closed"} · held ${fmtSec(t.ageSec)} · opened ${fmtClock(t.openedAtIso)}`}
+      </div>
+
+      {/* value-over-time — the card's centerpiece */}
+      <ValueSpark t={t} />
+      <div className="mb-2 mt-1 flex items-baseline justify-between">
+        <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>value</span>
+        <span className="tabular text-[13px] font-semibold" style={{ color: (isOpen ? floatGross : (t.exit?.pnl ?? 0)) >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>
+          ${t.sizeUsd.toFixed(2)} → ${valueNow.toFixed(2)}
+          {isOpen
+            ? ` (${floatGross >= 0 ? "+" : ""}$${floatGross.toFixed(2)} gross)`
+            : ` (${(t.exit?.pnl ?? 0) >= 0 ? "+" : ""}$${(t.exit?.pnl ?? 0).toFixed(2)} realized)`}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 border-t pt-2" style={{ borderColor: "var(--border)" }}>
+        {row("mark", `${t.curMult.toFixed(2)}×`)}
+        {row("peak", `${t.peakMult.toFixed(2)}×`)}
+        {row("conviction", t.triggerMult ? `${t.triggerMult.toFixed(2)}× proven` : "—")}
+        {row("rug score", t.rugProb !== null ? `${Math.round(t.rugProb * 100)}%` : "—")}
+        {row("size mult", t.qualityMult !== null ? `×${t.qualityMult.toFixed(2)}` : "—")}
+        {isOpen ? row("locked floor", t.armed ? `${t.lockedMult.toFixed(2)}×` : "not armed") : row("exit fill", `${(t.exit?.mm ?? 0).toFixed(2)}×`)}
+      </div>
+
+      {isOpen && (
+        <button
+          className="mt-3 w-full rounded border py-1.5 text-[11px] font-medium"
+          style={{
+            borderColor: confirming ? "var(--status-critical)" : "var(--border)",
+            color: confirming ? "var(--status-critical)" : "var(--text-secondary)",
+            background: confirming ? "rgba(214,62,62,0.08)" : "transparent",
+          }}
+          onClick={() => {
+            if (!confirming) {
+              setConfirming(true);
+              return;
+            }
+            onClose(t.id);
+          }}
+        >
+          {closing ? "closing…" : confirming ? "Confirm close — sell at market ✕" : "Close position…"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── the matrix ───────────────────────────────────────────────────────────────
 export function TimingGrid({ view }: { view: TimingGridView }) {
-  const [hovered, setHovered] = useState<number | null>(null);
+  const [card, setCard] = useState<{ id: number; x: number } | null>(null);
   const [closing, setClosing] = useState<Set<number>>(new Set());
   const [, startTransition] = useTransition();
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const open = view.trades
-    .filter((t) => t.status === "open")
-    .sort((a, b) => b.curMult - a.curMult);
-  const closed = view.trades
-    .filter((t) => t.status === "closed")
-    .sort((a, b) => b.ageSec - a.ageSec)
-    .slice(0, 12);
+  const open = useMemo(
+    () => view.trades.filter((t) => t.status === "open").sort((a, b) => b.curMult - a.curMult),
+    [view.trades],
+  );
+  // History reads left → right, oldest → newest, ending at the live edge.
+  const closed = useMemo(
+    () => view.trades.filter((t) => t.status === "closed").sort((a, b) => a.id - b.id),
+    [view.trades],
+  );
+
+  // Land on the live edge; history is a scroll to the left.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [closed.length, open.length]);
+
+  const yMax = Math.max(1.8, ...view.trades.map((t) => t.peakMult)) * 1.05;
+  // LOG scale: a parabolic 41x bar keeps the 1.1-2x field readable — equal
+  // ratios get equal pixels, which is the honest geometry for multiples.
+  const pct = (mult: number) => Math.max(0, Math.min(1, Math.log(Math.max(mult, 1)) / Math.log(yMax))) * 100;
+  const ticks = [1.2, 1.5, 2, 3, 5, 10, 20, 50, 100].filter((m) => m < yMax * 0.96).slice(0, 6);
 
   if (view.trades.length === 0) {
     return (
@@ -53,26 +185,88 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
     );
   }
 
-  const yMax = Math.max(1.8, ...view.trades.map((t) => t.peakMult)) * 1.05;
-  const pct = (mult: number) => Math.max(0, Math.min(1, (mult - 1) / (yMax - 1))) * 100;
-
-  // Minor gridlines — a light lattice between 1.0× and the ceiling so the field
-  // reads as a levels chart even when only a few bars are live.
-  const MINOR = 8;
-  const minorLines = Array.from({ length: MINOR - 1 }, (_, i) => 1 + ((yMax - 1) * (i + 1)) / MINOR);
-
   const closePosition = (id: number) => {
     setClosing((s) => new Set(s).add(id));
     startTransition(() => {
       void setManagementIntent(id, "cut");
     });
+    setCard(null);
+  };
+
+  const showCard = (id: number, el: HTMLElement) => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const w = wrap.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const x = Math.max(8, Math.min(r.left - w.left + r.width / 2 - 130, w.width - 268));
+    setCard({ id, x });
+  };
+  const scheduleHide = () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => setCard(null), 250);
+  };
+  const cancelHide = () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+  };
+
+  const cardTrade = card ? view.trades.find((t) => t.id === card.id) : undefined;
+
+  const Bar = ({ t, ghost }: { t: TimingTrade; ghost: boolean }) => {
+    const exitUp = (t.exit?.pnl ?? 0) >= 0;
+    return (
+      <div
+        className="relative flex h-full shrink-0 cursor-pointer flex-col justify-end"
+        style={{ width: ghost ? GHOST_W : LIVE_W }}
+        onMouseEnter={(e) => showCard(t.id, e.currentTarget)}
+        onMouseLeave={scheduleHide}
+      >
+        {!ghost && (
+          <div
+            className="absolute left-0 right-0 text-center text-[9px] font-semibold tabular"
+            style={{ bottom: `calc(${pct(t.curMult)}% + 2px)`, color: STATE_TONE[t.state] }}
+          >
+            {t.curMult.toFixed(2)}
+          </div>
+        )}
+        <div
+          className="relative w-full rounded-t-[2px] transition-all duration-500"
+          style={{
+            height: `${pct(ghost ? t.peakMult : t.curMult)}%`,
+            minHeight: 2,
+            background: `linear-gradient(to top, ${heat(1)}, ${heat(ghost ? t.peakMult : t.curMult)})`,
+            opacity: ghost ? 0.35 : 1,
+          }}
+        >
+          {!ghost && t.peakMult > t.curMult + 0.01 && (
+            <div
+              className="absolute left-0 right-0 border-t border-dashed"
+              style={{ bottom: `calc((${pct(t.peakMult)}% - ${pct(t.curMult)}%))`, borderColor: "var(--text-muted)", opacity: 0.7 }}
+            />
+          )}
+        </div>
+        {ghost && (
+          <div className="absolute left-0 right-0" style={{ bottom: `${pct(Math.max(t.exit?.mm ?? 1, 1))}%` }}>
+            <div className="h-[2px] w-full" style={{ background: exitUp ? "var(--status-good)" : "var(--status-critical)", opacity: 0.9 }} />
+          </div>
+        )}
+        {!ghost && t.armed && t.lockedMult > 1.0 && (
+          <div className="absolute left-0 right-0" style={{ bottom: `${pct(t.lockedMult)}%` }}>
+            <div className="h-[2px] w-full" style={{ background: "var(--status-warning)", boxShadow: "0 0 3px var(--status-warning)" }} />
+          </div>
+        )}
+        {t.isFarm && !ghost && (
+          <div className="absolute right-0 top-0 text-[8px]" style={{ color: "var(--text-muted)" }}>◇</div>
+        )}
+      </div>
+    );
   };
 
   return (
-    <div className="w-full">
+    <div className="w-full" ref={wrapRef} style={{ position: "relative" }}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs" style={{ color: "var(--text-muted)" }}>
         <span>
-          {open.length} live · {closed.length} closed (20m, ghosted) · bar height = how high it rose · notch = exit fill · dashed = TP levels · gold = locked floor · click a live bar to close
+          {open.length} live · {closed.length} closed (6h — scroll ← for history) · log scale · hover a bar for its card · closing is two-step inside the card
         </span>
         <span className="flex items-center gap-3 tabular">
           <span style={{ color: "var(--status-good)" }}>▲ {view.counts.rising}</span>
@@ -87,150 +281,63 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
       </div>
 
       <div className="flex gap-2">
-        {/* shared Y axis */}
-        <div className="relative shrink-0" style={{ width: 34, height: TRACK_H }}>
-          {[{ m: yMax, l: `${yMax.toFixed(1)}×` }, ...view.tpLevels.map((t) => ({ m: t.mult, l: t.label })), { m: 1, l: "1.0×" }].map((r, i) => (
+        {/* shared Y axis — log ticks */}
+        <div className="relative shrink-0" style={{ width: 38, height: TRACK_H }}>
+          {[{ m: yMax, l: `${yMax >= 10 ? yMax.toFixed(0) : yMax.toFixed(1)}×` }, ...ticks.map((m) => ({ m, l: `${m}×` })), { m: 1, l: "1.0×" }].map((r, i) => (
             <div key={i} className="absolute right-0 -translate-y-1/2 text-[9px] tabular" style={{ bottom: `${pct(r.m)}%`, color: "var(--text-muted)" }}>
               {r.l}
             </div>
           ))}
         </div>
 
-        {/* bar field */}
-        <div className="relative flex-1 overflow-x-auto">
-          {/* level grid — the adjustable TP levels + a light minor lattice, so the
-              field has presence and every bar is read against the trading levels */}
-          <div className="pointer-events-none absolute inset-0" style={{ height: TRACK_H }}>
-            {/* minor lattice */}
-            {minorLines.map((m, i) => (
-              <div key={`min${i}`} className="absolute w-full" style={{ bottom: `${pct(m)}%`, borderTop: "1px solid var(--gridline)", opacity: 0.3 }} />
-            ))}
-            {/* TP level rails — labeled, the operator-adjustable take-profit levels */}
-            {view.tpLevels.filter((t) => t.mult < yMax).map((t) => (
-              <div key={t.label} className="absolute w-full" style={{ bottom: `${pct(t.mult)}%` }}>
-                <div className="w-full border-t border-dashed" style={{ borderColor: "var(--series-1)", opacity: 0.55 }} />
-                <span
-                  className="absolute right-0 top-[-7px] rounded-sm px-1 text-[8px] font-medium tabular"
-                  style={{ background: "var(--surface-1)", color: "var(--series-1)", opacity: 0.9 }}
-                >
-                  {t.label} {t.mult.toFixed(2)}×
-                </span>
-              </div>
-            ))}
-            {/* 1.0× baseline */}
-            <div className="absolute w-full" style={{ bottom: 0, borderTop: "1.5px solid var(--baseline)" }} />
+        {/* bar field — scrolls back through history */}
+        <div className="relative flex-1 overflow-x-auto" ref={scrollRef}>
+          <div className="pointer-events-none sticky left-0 top-0 h-0 w-full" style={{ zIndex: 1 }}>
+            <div className="absolute inset-x-0" style={{ height: TRACK_H }}>
+              {ticks.map((m, i) => (
+                <div key={`t${i}`} className="absolute w-full" style={{ bottom: `${pct(m)}%`, borderTop: "1px solid var(--gridline)", opacity: 0.3 }} />
+              ))}
+              {view.tpLevels.filter((t) => t.mult < yMax).map((t) => (
+                <div key={t.label} className="absolute w-full" style={{ bottom: `${pct(t.mult)}%` }}>
+                  <div className="w-full border-t border-dashed" style={{ borderColor: "var(--series-1)", opacity: 0.55 }} />
+                  <span className="absolute right-0 top-[-7px] rounded-sm px-1 text-[8px] font-medium tabular" style={{ background: "var(--surface-1)", color: "var(--series-1)", opacity: 0.9 }}>
+                    {t.label} {t.mult.toFixed(2)}×
+                  </span>
+                </div>
+              ))}
+              <div className="absolute w-full" style={{ bottom: 0, borderTop: "1.5px solid var(--baseline)" }} />
+            </div>
           </div>
 
-          <div className="flex items-end gap-[3px]" style={{ height: TRACK_H }}>
-            {/* GHOST TAPE — the last-20m closed trades as dimmed bars, so the
-                terminal shows the flow even when the live book is 1-2 positions
-                (median hold ~90s: the action lives in the recent past, and text
-                chips alone made the matrix read as empty). Bar rises to PEAK;
-                the colored notch is the exit fill — gap above the notch = what
-                the token did after we left (the giveback/runner story at a glance). */}
-            {closed.map((t) => {
-              const exitUp = (t.exit?.pnl ?? 0) >= 0;
-              return (
-                <div
-                  key={`c${t.id}`}
-                  className="relative flex h-full shrink-0 flex-col justify-end"
-                  style={{ width: 30 }}
-                  title={`${t.symbol ?? "?"} — ${t.exit?.reason ?? "closed"} · exit ${t.curMult.toFixed(2)}× / peak ${t.peakMult.toFixed(2)}× · held ${fmtSec(t.ageSec)} · ${exitUp ? "+" : ""}$${(t.exit?.pnl ?? 0).toFixed(2)}`}
-                >
-                  <div
-                    className="relative w-full rounded-t-[2px]"
-                    style={{
-                      height: `${pct(t.peakMult)}%`,
-                      minHeight: 2,
-                      background: `linear-gradient(to top, ${heat(1)}, ${heat(t.peakMult)})`,
-                      opacity: 0.35,
-                    }}
-                  />
-                  <div className="absolute left-0 right-0" style={{ bottom: `${pct(t.curMult)}%` }}>
-                    <div
-                      className="h-[2px] w-full"
-                      style={{ background: exitUp ? "var(--status-good)" : "var(--status-critical)", opacity: 0.9 }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
+          <div className="flex items-end gap-[3px]" style={{ height: TRACK_H, minWidth: "100%", width: "max-content" }}>
+            {closed.map((t) => (
+              <Bar key={`c${t.id}`} t={t} ghost />
+            ))}
             {closed.length > 0 && open.length > 0 && (
-              <div className="h-full w-[1px] shrink-0" style={{ background: "var(--border)" }} />
+              <div className="h-full w-[2px] shrink-0" style={{ background: "var(--border)" }} />
             )}
-            {open.map((t) => {
-              const isClosing = closing.has(t.id);
-              const hi = hovered === t.id;
-              const dim = hovered != null && !hi;
-              return (
-                <div
-                  key={t.id}
-                  className="group relative flex h-full shrink-0 cursor-pointer flex-col justify-end"
-                  style={{ width: 40, opacity: dim ? 0.4 : 1 }}
-                  onMouseEnter={() => setHovered(t.id)}
-                  onMouseLeave={() => setHovered(null)}
-                  onClick={() => !isClosing && closePosition(t.id)}
-                  title={`${t.symbol ?? "?"} — ${t.curMult.toFixed(2)}× (peak ${t.peakMult.toFixed(2)}×) · ${fmtSec(t.ageSec)} · ${t.state}${t.isFarm ? " · farm" : ""} — click to close`}
-                >
-                  {/* current mult label */}
-                  <div className="absolute left-0 right-0 text-center text-[9px] font-semibold tabular" style={{ bottom: `calc(${pct(t.curMult)}% + 2px)`, color: STATE_TONE[t.state] }}>
-                    {t.curMult.toFixed(2)}
-                  </div>
-
-                  {/* the heat bar: 1.0 → current mult */}
-                  <div
-                    className="relative w-full rounded-t-[2px] transition-all duration-500"
-                    style={{
-                      height: `${pct(t.curMult)}%`,
-                      minHeight: 2,
-                      background: `linear-gradient(to top, ${heat(1)}, ${heat(t.curMult)})`,
-                      boxShadow: hi ? "0 0 0 1px var(--text-secondary)" : undefined,
-                    }}
-                  >
-                    {/* peak cap — the high-water mark (gap above the bar = giveback) */}
-                    {t.peakMult > t.curMult + 0.01 && (
-                      <div className="absolute left-0 right-0 border-t border-dashed" style={{ bottom: `calc((${pct(t.peakMult)}% - ${pct(t.curMult)}%) )`, borderColor: "var(--text-muted)", opacity: 0.7 }} />
-                    )}
-                  </div>
-
-                  {/* locked-floor line — rides up under the peak */}
-                  {t.armed && t.lockedMult > 1.0 && (
-                    <div className="absolute left-0 right-0" style={{ bottom: `${pct(t.lockedMult)}%` }}>
-                      <div className="h-[2px] w-full" style={{ background: "var(--status-warning)", boxShadow: "0 0 3px var(--status-warning)" }} />
-                    </div>
-                  )}
-
-                  {/* farm tag */}
-                  {t.isFarm && <div className="absolute right-0 top-0 text-[8px]" style={{ color: "var(--text-muted)" }}>◇</div>}
-
-                  {/* close affordance on hover */}
-                  {hi && (
-                    <div className="absolute inset-x-0 top-0 text-center text-[10px] font-bold" style={{ color: "var(--status-critical)" }}>
-                      {isClosing ? "…" : "✕"}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {open.map((t) => (
+              <Bar key={t.id} t={t} ghost={false} />
+            ))}
           </div>
 
-          {/* per-bar footers: ghosts get ticker + P&L; live bars get ticker + age (zone-tinted) */}
-          <div className="mt-1 flex gap-[3px]">
+          {/* footers */}
+          <div className="mt-1 flex gap-[3px]" style={{ width: "max-content", minWidth: "100%" }}>
             {closed.map((t) => {
               const exitUp = (t.exit?.pnl ?? 0) >= 0;
               return (
-                <div key={`cf${t.id}`} className="shrink-0 overflow-hidden text-center" style={{ width: 30, opacity: 0.75 }}>
-                  <div className="truncate text-[9px]" style={{ color: "var(--text-muted)" }}>{t.symbol ?? "?"}</div>
+                <div key={`cf${t.id}`} className="shrink-0 overflow-hidden text-center" style={{ width: GHOST_W, opacity: 0.75 }}>
+                  <div className="truncate text-[8px]" style={{ color: "var(--text-muted)" }}>{t.symbol ?? "?"}</div>
                   <div className="text-[8px] tabular" style={{ color: exitUp ? "var(--status-good)" : "var(--status-critical)" }}>
-                    {exitUp ? "+" : ""}{(t.exit?.pnl ?? 0).toFixed(2)}
+                    {exitUp ? "+" : ""}{(t.exit?.pnl ?? 0).toFixed(1)}
                   </div>
                 </div>
               );
             })}
-            {closed.length > 0 && open.length > 0 && <div className="w-[1px] shrink-0" />}
+            {closed.length > 0 && open.length > 0 && <div className="w-[2px] shrink-0" />}
             {open.map((t) => (
-              <div key={t.id} className="shrink-0 overflow-hidden text-center" style={{ width: 40 }}>
-                <div className="truncate text-[9px]" style={{ color: hovered === t.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
+              <div key={t.id} className="shrink-0 overflow-hidden text-center" style={{ width: LIVE_W }}>
+                <div className="truncate text-[9px]" style={{ color: card?.id === t.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
                   {t.symbol ?? "?"}
                 </div>
                 <div className="text-[8px] tabular" style={{ color: zoneTone(t.ageSec) }}>{fmtSec(t.ageSec)}</div>
@@ -248,29 +355,14 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
         <span style={{ color: "var(--status-good)" }}>▮ &gt;300s runner (winners grind)</span>
       </div>
 
-      {/* recently closed */}
-      {closed.length > 0 && (
-        <div className="mt-3 border-t pt-2" style={{ borderColor: "var(--border)" }}>
-          <div className="mb-1 text-[10px]" style={{ color: "var(--text-muted)" }}>just closed (20m window)</div>
-          <div className="flex flex-wrap gap-1.5">
-            {closed.map((t) => (
-              <span
-                key={t.id}
-                className="rounded px-1.5 py-0.5 text-[10px] tabular"
-                style={{
-                  background: "var(--surface-1)",
-                  border: `1px solid ${t.exit && t.exit.pnl >= 0 ? "var(--status-good)" : "var(--status-critical)"}`,
-                  color: "var(--text-secondary)",
-                }}
-                title={`${t.exit?.reason ?? "closed"} · peak ${t.peakMult.toFixed(2)}× · ${fmtSec(t.ageSec)}`}
-              >
-                {t.symbol ?? "?"} {t.curMult.toFixed(2)}×{" "}
-                <span style={{ color: t.exit && t.exit.pnl >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>
-                  {t.exit && t.exit.pnl >= 0 ? "+" : ""}${t.exit?.pnl.toFixed(2)}
-                </span>
-              </span>
-            ))}
-          </div>
+      {/* the baseball card */}
+      {card && cardTrade && (
+        <div
+          style={{ position: "absolute", left: card.x, top: 24, zIndex: 20 }}
+          onMouseEnter={cancelHide}
+          onMouseLeave={scheduleHide}
+        >
+          <Card t={cardTrade} onClose={closePosition} closing={closing.has(cardTrade.id)} />
         </div>
       )}
     </div>

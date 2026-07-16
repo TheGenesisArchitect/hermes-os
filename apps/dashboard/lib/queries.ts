@@ -490,6 +490,12 @@ export interface TimingTrade {
   state: "rising" | "stalling" | "falling";
   status: "open" | "closed";
   exit: { t: number; mm: number; reason: string; pnl: number } | null;
+  // Baseball-card fields — the scorecard behind every bar.
+  venue: string | null;
+  openedAtIso: string;
+  triggerMult: number | null; // market-proven multiple at confirm (conviction)
+  rugProb: number | null; // fitted rug-model score at arm time
+  qualityMult: number | null; // combined sizing multiplier applied at entry
 }
 export interface TimingGridView {
   trades: TimingTrade[];
@@ -501,7 +507,11 @@ export interface TimingGridView {
 }
 
 const TIMING_POLL_SEC = 6.5; // measured median gap between position_ticks
-const TIMING_CLOSED_WINDOW_MIN = 20; // recently-closed trades linger then fade off the grid
+// Ghost history now scrolls: keep 6 HOURS of closed bars (capped by count below)
+// so the operator can scroll back through the session, not just the last 20m.
+const TIMING_CLOSED_WINDOW_MIN = 360;
+const TIMING_CLOSED_MAX_BARS = 120; // newest N closed bars — bounds payload + DOM
+const TIMING_SPARK_MAX_POINTS = 60; // downsample long trajectories for the card spark
 
 function timingState(points: TimingTradePoint[]): "rising" | "stalling" | "falling" {
   if (points.length < 2) return "rising";
@@ -526,9 +536,13 @@ export async function getTimingGrid(): Promise<TimingGridView> {
         sizeUsd: positions.sizeUsd,
         entryPriceUsd: positions.entryPriceUsd,
         openedAt: positions.openedAt,
+        triggerMult: positions.triggerMult,
+        qualityMult: positions.qualityMult,
+        rugProb: candidateOutcomes.rugProb,
       })
       .from(positions)
       .innerJoin(tokens, eq(tokens.mint, positions.mint))
+      .leftJoin(candidateOutcomes, eq(candidateOutcomes.mint, positions.mint))
       .where(eq(positions.status, "open")),
     db
       .select({
@@ -543,10 +557,16 @@ export async function getTimingGrid(): Promise<TimingGridView> {
         realizedPnlUsd: positions.realizedPnlUsd,
         openedAt: positions.openedAt,
         closedAt: positions.closedAt,
+        triggerMult: positions.triggerMult,
+        qualityMult: positions.qualityMult,
+        rugProb: candidateOutcomes.rugProb,
       })
       .from(positions)
       .innerJoin(tokens, eq(tokens.mint, positions.mint))
-      .where(and(eq(positions.status, "closed"), gte(positions.closedAt, closedSince))),
+      .leftJoin(candidateOutcomes, eq(candidateOutcomes.mint, positions.mint))
+      .where(and(eq(positions.status, "closed"), gte(positions.closedAt, closedSince)))
+      .orderBy(desc(positions.closedAt))
+      .limit(TIMING_CLOSED_MAX_BARS),
   ]);
 
   const ids = [...open.map((p) => p.id), ...closed.map((p) => p.id)];
@@ -572,6 +592,13 @@ export async function getTimingGrid(): Promise<TimingGridView> {
 
   const trades: TimingTrade[] = [];
   const isFarm = (dex: string | null) => (dex ?? "").toLowerCase() === "meteora-damm-v2";
+  // Long histories carry long trajectories — downsample evenly for the card
+  // spark (first + last always kept, shape preserved).
+  const thin = (pts: TimingTradePoint[]): TimingTradePoint[] => {
+    if (pts.length <= TIMING_SPARK_MAX_POINTS) return pts;
+    const step = (pts.length - 1) / (TIMING_SPARK_MAX_POINTS - 1);
+    return Array.from({ length: TIMING_SPARK_MAX_POINTS }, (_, i) => pts[Math.round(i * step)]!);
+  };
 
   // The protected floor a close-now can't drop below — armed once green (by mult OR
   // the $ floor), then the ratcheting trail rides up under the peak. Approximates
@@ -597,7 +624,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       symbol: p.symbol,
       isFarm: isFarm(p.dex),
       sizeUsd: num(p.sizeUsd),
-      points,
+      points: thin(points),
       curMult: last.mm,
       peakMult,
       lockedMult,
@@ -606,6 +633,11 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       state: timingState(points),
       status: "open",
       exit: null,
+      venue: p.dex,
+      openedAtIso: p.openedAt.toISOString(),
+      triggerMult: p.triggerMult === null ? null : num(p.triggerMult),
+      rugProb: p.rugProb === null ? null : num(p.rugProb),
+      qualityMult: p.qualityMult === null ? null : num(p.qualityMult),
     });
   }
   for (const p of closed) {
@@ -620,7 +652,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       symbol: p.symbol,
       isFarm: isFarm(p.dex),
       sizeUsd: num(p.sizeUsd),
-      points,
+      points: thin(points),
       curMult: exitMm,
       peakMult,
       lockedMult: exitMm,
@@ -629,6 +661,11 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       state: "falling",
       status: "closed",
       exit: { t: exitT, mm: exitMm, reason: p.exitReason ?? "closed", pnl: num(p.realizedPnlUsd) },
+      venue: p.dex,
+      openedAtIso: p.openedAt.toISOString(),
+      triggerMult: p.triggerMult === null ? null : num(p.triggerMult),
+      rugProb: p.rugProb === null ? null : num(p.rugProb),
+      qualityMult: p.qualityMult === null ? null : num(p.qualityMult),
     });
   }
 
