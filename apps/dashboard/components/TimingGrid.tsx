@@ -153,7 +153,7 @@ function Card({
 
 // ── the matrix ───────────────────────────────────────────────────────────────
 export function TimingGrid({ view }: { view: TimingGridView }) {
-  const [card, setCard] = useState<{ id: number; x: number } | null>(null);
+  const [card, setCard] = useState<{ id: number; x: number; y: number } | null>(null);
   const [closing, setClosing] = useState<Set<number>>(new Set());
   const [, startTransition] = useTransition();
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -176,7 +176,12 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
     if (el) el.scrollLeft = el.scrollWidth;
   }, [closed.length, open.length]);
 
-  const yMax = Math.max(1.8, ...view.trades.map((t) => t.peakMult)) * 1.05;
+  // Scale to the CURRENT neighborhood — live bars + the newest ghosts — not
+  // the tallest candle in six hours of history. A 41x monster from this
+  // morning must not squash tonight's 1.1-1.2x field; when an older ghost
+  // exceeds the scale it clips at the ceiling and wears a cap label instead.
+  const neighborhood = [...open, ...closed.slice(-12)];
+  const yMax = Math.max(1.8, ...neighborhood.map((t) => t.peakMult)) * 1.05;
   // LOG scale: a parabolic 41x bar keeps the 1.1-2x field readable — equal
   // ratios get equal pixels, which is the honest geometry for multiples.
   const pct = (mult: number) => Math.max(0, Math.min(1, Math.log(Math.max(mult, 1)) / Math.log(yMax))) * 100;
@@ -198,18 +203,24 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
     setCard(null);
   };
 
-  const showCard = (id: number, el: HTMLElement) => {
+  const showCard = (id: number, el: HTMLElement, displayMult: number) => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
     const wrap = wrapRef.current;
     if (!wrap) return;
     const w = wrap.getBoundingClientRect();
     const r = el.getBoundingClientRect();
     const x = Math.max(8, Math.min(r.left - w.left + r.width / 2 - 130, w.width - 268));
-    setCard({ id, x });
+    // Anchor the card at the BAR'S VISUAL TOP, not the grid's top — the mouse
+    // travels a few pixels to enter it, so the hover never expires en route.
+    const CARD_H = 330;
+    const barHeightPx = (pct(displayMult) / 100) * TRACK_H;
+    const barTopY = r.bottom - w.top - barHeightPx; // el spans the wall; bottom = baseline
+    const y = Math.max(4, Math.min(barTopY - CARD_H + 60, w.height - CARD_H - 8));
+    setCard({ id, x, y });
   };
   const scheduleHide = () => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setCard(null), 250);
+    hideTimer.current = setTimeout(() => setCard(null), 600);
   };
   const cancelHide = () => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
@@ -223,7 +234,7 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
       <div
         className="relative flex h-full shrink-0 cursor-pointer flex-col justify-end"
         style={{ width: ghost ? GHOST_W : LIVE_W }}
-        onMouseEnter={(e) => showCard(t.id, e.currentTarget)}
+        onMouseEnter={(e) => showCard(t.id, e.currentTarget, ghost ? t.peakMult : t.curMult)}
         onMouseLeave={scheduleHide}
       >
         {!ghost && (
@@ -365,7 +376,7 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
       {/* the baseball card */}
       {card && cardTrade && (
         <div
-          style={{ position: "absolute", left: card.x, top: 24, zIndex: 20 }}
+          style={{ position: "absolute", left: card.x, top: card.y, zIndex: 20 }}
           onMouseEnter={cancelHide}
           onMouseLeave={scheduleHide}
         >
