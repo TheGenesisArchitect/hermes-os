@@ -33,9 +33,14 @@ const fmtSec = (s: number) => (s >= 60 ? `${Math.round(s / 60)}m` : `${Math.roun
 const fmtClock = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-const TRACK_H = 300; // px — the shared 1.0×→yMax wall
-const GHOST_W = 26;
-const LIVE_W = 40;
+// Presence: bars at 2x width and 2x height with real gaps between them — the
+// grid flexes (scrolls) to accommodate the field, the candles carry the room.
+const TRACK_H = 600; // px — the shared 1.0×→yMax wall
+const GHOST_W = 60;
+const LIVE_W = 80;
+const BAR_GAP = 8;
+const RIGHT_PAD = 40; // breathing room so live bars never sit against the right wall
+const GHOST_OPACITY = 0.6; // pronounced history — readable at a glance, still clearly not live
 
 // ── the baseball card ────────────────────────────────────────────────────────
 function ValueSpark({ t }: { t: TimingTrade }) {
@@ -223,7 +228,7 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
       >
         {!ghost && (
           <div
-            className="absolute left-0 right-0 text-center text-[9px] font-semibold tabular"
+            className="absolute left-0 right-0 text-center text-[11px] font-semibold tabular"
             style={{ bottom: `calc(${pct(t.curMult)}% + 2px)`, color: STATE_TONE[t.state] }}
           >
             {t.curMult.toFixed(2)}
@@ -235,7 +240,7 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
             height: `${pct(ghost ? t.peakMult : t.curMult)}%`,
             minHeight: 2,
             background: `linear-gradient(to top, ${heat(1)}, ${heat(ghost ? t.peakMult : t.curMult)})`,
-            opacity: ghost ? 0.35 : 1,
+            opacity: ghost ? GHOST_OPACITY : 1,
           }}
         >
           {!ghost && t.peakMult > t.curMult + 0.01 && (
@@ -309,7 +314,7 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
             </div>
           </div>
 
-          <div className="flex items-end gap-[3px]" style={{ height: TRACK_H, minWidth: "100%", width: "max-content" }}>
+          <div className="flex items-end gap-[8px]" style={{ height: TRACK_H, minWidth: "100%", width: "max-content" }}>
             {closed.map((t) => (
               <Bar key={`c${t.id}`} t={t} ghost />
             ))}
@@ -319,16 +324,17 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
             {open.map((t) => (
               <Bar key={t.id} t={t} ghost={false} />
             ))}
+            <div className="h-full shrink-0" style={{ width: RIGHT_PAD }} />
           </div>
 
           {/* footers */}
-          <div className="mt-1 flex gap-[3px]" style={{ width: "max-content", minWidth: "100%" }}>
+          <div className="mt-1 flex gap-[8px]" style={{ width: "max-content", minWidth: "100%" }}>
             {closed.map((t) => {
               const exitUp = (t.exit?.pnl ?? 0) >= 0;
               return (
-                <div key={`cf${t.id}`} className="shrink-0 overflow-hidden text-center" style={{ width: GHOST_W, opacity: 0.75 }}>
+                <div key={`cf${t.id}`} className="shrink-0 overflow-hidden text-center" style={{ width: GHOST_W, opacity: 0.9 }}>
                   <div className="truncate text-[8px]" style={{ color: "var(--text-muted)" }}>{t.symbol ?? "?"}</div>
-                  <div className="text-[8px] tabular" style={{ color: exitUp ? "var(--status-good)" : "var(--status-critical)" }}>
+                  <div className="text-[10px] tabular" style={{ color: exitUp ? "var(--status-good)" : "var(--status-critical)" }}>
                     {exitUp ? "+" : ""}{(t.exit?.pnl ?? 0).toFixed(1)}
                   </div>
                 </div>
@@ -337,12 +343,13 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
             {closed.length > 0 && open.length > 0 && <div className="w-[2px] shrink-0" />}
             {open.map((t) => (
               <div key={t.id} className="shrink-0 overflow-hidden text-center" style={{ width: LIVE_W }}>
-                <div className="truncate text-[9px]" style={{ color: card?.id === t.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                <div className="truncate text-[11px]" style={{ color: card?.id === t.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
                   {t.symbol ?? "?"}
                 </div>
-                <div className="text-[8px] tabular" style={{ color: zoneTone(t.ageSec) }}>{fmtSec(t.ageSec)}</div>
+                <div className="text-[10px] tabular" style={{ color: zoneTone(t.ageSec) }}>{fmtSec(t.ageSec)}</div>
               </div>
             ))}
+            <div className="shrink-0" style={{ width: RIGHT_PAD }} />
           </div>
         </div>
       </div>
