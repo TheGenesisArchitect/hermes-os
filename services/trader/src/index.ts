@@ -6,6 +6,7 @@ import { config, db } from "@hermes/db";
 import { eq } from "drizzle-orm";
 import { managePositions, openConfirmedPositions, openNewPositions, snapshotEquity } from "./paper.js";
 import { readEffectiveConfig, refreshAdaptivePolicy } from "./adaptive.js";
+import { liveLaneStatus, sweepLiveBook } from "./live/executor.js";
 
 async function killSwitchEngaged(): Promise<boolean> {
   const [row] = await db.select().from(config).where(eq(config.key, "kill_switch"));
@@ -42,8 +43,11 @@ console.log(
 console.log(
   `exits: ratcheting profit-trail (arm ${cfg.PROFIT_LOCK_ARM_MULT}x, floor ${cfg.PROFIT_LOCK_FLOOR_MULT}x, trail ${cfg.TRAIL_TIGHT_PCT}/${cfg.TRAIL_MID_PCT}/${cfg.TRAIL_WIDE_PCT}% by run, +${cfg.TRAIL_RIDE_BONUS_PCT}% on RIDE), pre-profit hard -${cfg.HARD_STOP_PCT}%, no moonshot cap, max hold ${cfg.MAX_HOLD_HOURS}h`,
 );
+console.log(liveLaneStatus(cfg));
 if (cfg.LIVE_TRADING_ENABLED) {
-  console.warn("⚠️  LIVE_TRADING_ENABLED is set but the live lane ships in M5 — ignored.");
+  console.warn(
+    "⚠️  LIVE LANE ENABLED — real capital. Confirm docs/GO_LIVE_GATE.md gates G1–G6 all PASS before funding.",
+  );
 }
 
 console.log(
@@ -124,6 +128,10 @@ while (true) {
       lastOpen = Date.now();
     }
     await managePositions(eff); // every fast tick
+    // Live-book reconciliation (M5): force-close any live position whose paper
+    // twin is gone. No-op unless the live lane is armed; internally guarded
+    // against overlapping runs (chain confirms can outlast a tick).
+    void sweepLiveBook(eff);
     if (Date.now() - lastSnapshot >= cfg.PNL_SNAPSHOT_MS) {
       await snapshotEquity(eff);
       lastSnapshot = Date.now();

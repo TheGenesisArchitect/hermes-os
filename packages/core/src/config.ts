@@ -511,6 +511,9 @@ const envSchema = z.object({
     .string()
     .default("true")
     .transform((v) => v !== "false"),
+  // Live swap slippage tolerance (basis points). 300 = 3%: tight enough that a
+  // draining pool rejects, loose enough that a normal thin-pool fill lands.
+  LIVE_SLIPPAGE_BPS: z.coerce.number().default(300),
 });
 
 export type HermesConfig = z.infer<typeof envSchema> & { rpcUrl: string };

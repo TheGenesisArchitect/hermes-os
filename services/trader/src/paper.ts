@@ -26,6 +26,7 @@ import {
   tokens,
 } from "@hermes/db";
 import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { maybeLiveBuy, mirrorLiveSell } from "./live/executor.js";
 
 /** How many recent ticks the classifier reads to judge continuation. */
 const TICK_WINDOW = 12;
@@ -249,7 +250,7 @@ async function openFromSignal(
           .select({ n: sql<number>`count(*)::int` })
           .from(positions)
           .innerJoin(tokens, eq(tokens.mint, positions.mint))
-          .where(and(eq(positions.status, "open"), or(...farmConds)))
+          .where(and(eq(positions.status, "open"), eq(positions.lane, "paper"), or(...farmConds)))
       : [{ n: 0 }];
     if ((farmOpen?.n ?? 0) >= cfg.FARM_MAX_SLOTS) {
       await audit("entry_farm_cap_defer", { mint: signal.mint, dex: market.dexId, farmOpen: farmOpen?.n ?? 0 });
@@ -267,7 +268,7 @@ async function openFromSignal(
       .select({ n: sql<number>`count(*)::int` })
       .from(positions)
       .innerJoin(tokens, eq(tokens.mint, positions.mint))
-      .where(and(eq(positions.status, "open"), eq(tokens.symbol, token.symbol)));
+      .where(and(eq(positions.status, "open"), eq(positions.lane, "paper"), eq(tokens.symbol, token.symbol)));
     if ((sameSymbol?.n ?? 0) >= cfg.MAX_PER_SYMBOL) {
       await audit("entry_concentration_defer", { mint: signal.mint, symbol: token.symbol, open: sameSymbol?.n ?? 0 });
       console.log(`⛔ DEFER  ${token.symbol} ${short(signal.mint)} — already ${sameSymbol?.n} open positions on this ticker (wave cap ${cfg.MAX_PER_SYMBOL})`);
@@ -476,7 +477,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
   // right now DEFERS (never consumes) — it stays armed and enters when its lane
   // frees, IF still qualifying. openFromSignal assigns the lane from the live
   // market and books each real fill into this ledger.
-  const openNow = await db.select({ tier: positions.tier }).from(positions).where(eq(positions.status, "open"));
+  const openNow = await db.select({ tier: positions.tier }).from(positions).where(and(eq(positions.status, "open"), eq(positions.lane, "paper")));
   const book: LaneBook = { moonshot: 0, core: 0, base: 0 };
   for (const p of openNow) {
     const t: keyof LaneBook = p.tier === "moonshot" || p.tier === "core" ? p.tier : "base";
@@ -504,6 +505,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
           .where(
             and(
               eq(positions.status, "open"),
+              eq(positions.lane, "paper"),
               lte(positions.openedAt, ageCutoff),
               sql`${positions.peakPriceUsd}::numeric <= ${positions.entryPriceUsd}::numeric * ${cfg.DISPLACE_MAX_PEAK_MULT}`,
               sql`not exists (select 1 from ${managementIntents} mi where mi.position_id = ${positions.id} and mi.applied = false)`,
@@ -573,6 +575,10 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // cycle — a transient miss or a momentarily-reserved lane never permanently
     // burns a token that then runs 3–24x.
     if (await openFromSignal(cfg, signal, token, "confirmed", book, qualityMult, tm)) {
+      // MIRROR the confirmed entry into the live lane (M5). Fire-and-forget:
+      // a 45s on-chain confirm must never stall the entry scan; the executor
+      // audits its own outcome and sweepLiveBook reconciles any miss.
+      void maybeLiveBuy(cfg, mint, token.symbol);
       await db.update(candidateOutcomes).set({ entered: true, armed: false, updatedAt: new Date() }).where(eq(candidateOutcomes.mint, mint));
     }
   }
@@ -1179,7 +1185,7 @@ async function writeOffAtZero(position: Position, reason: string): Promise<void>
 /** Mark open positions to market and execute the exit rules. */
 export async function managePositions(cfg: HermesConfig): Promise<void> {
   await refreshAutoFarm(cfg); // keep the adaptive farm list current (no-op inside refresh window)
-  const open = await db.select().from(positions).where(eq(positions.status, "open"));
+  const open = await db.select().from(positions).where(and(eq(positions.status, "open"), eq(positions.lane, "paper")));
   if (open.length === 0) return;
 
   // Real-time marks for every open position in ONE keyless call — block-level
@@ -1421,6 +1427,7 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     const intent = taken?.intent ?? null;
     if (intent === "cut") {
       await sell(position, market, 1, taken?.source === "displace" ? "slot_displaced" : "user_cut");
+      void mirrorLiveSell(cfg, position.mint, 1, "live_mirror_cut");
       continue;
     }
 
@@ -1434,6 +1441,7 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     if (cfg.CLASSIFIER_MODE === "active" && call && intent !== "ride") {
       if (call.action === "CUT" && !armed) {
         await sell(position, market, 1, `classifier_${call.regime.toLowerCase()}`);
+        void mirrorLiveSell(cfg, position.mint, 1, "live_mirror_classifier");
         continue;
       }
     }
@@ -1462,6 +1470,10 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     }
     if (exit && !(intent === "ride" && (exit.reason === "profit_trail" || exit.reason === "hard_stop"))) {
       await sell(position, market, exit.fraction, exit.reason);
+      // Mirror the exit onto the live twin (M5): same fraction, same reason.
+      // Fire-and-forget — the 5s manage loop never waits on chain confirms;
+      // sweepLiveBook() force-closes anything a failed mirror leaves behind.
+      void mirrorLiveSell(cfg, position.mint, exit.fraction, exit.reason);
     }
   }
 }
