@@ -1076,6 +1076,25 @@ export async function getWatchingNow(): Promise<WatchingCandidate[]> {
   };
   const verdicts = new Map(verdictRows.map((r) => [r.mint, verdictLabel[r.action] ?? r.action]));
 
+  // Position truth per mint: `entered` on the outcome row means "we took this
+  // trade" and stays true after the close — but the Matrix/Positions surfaces
+  // only show OPEN positions. The chip must say which it is, or the boards
+  // read as disagreeing (2 of 3 "in book" chips pointed at closed trades).
+  const posRows =
+    mints.length > 0
+      ? await db
+          .select({ mint: positions.mint, status: positions.status, pnl: positions.realizedPnlUsd })
+          .from(positions)
+          .where(inArray(positions.mint, mints))
+      : [];
+  const posState = new Map<string, { open: boolean; pnl: number }>();
+  for (const r of posRows) {
+    const cur = posState.get(r.mint) ?? { open: false, pnl: 0 };
+    cur.open = cur.open || r.status === "open";
+    cur.pnl += num(r.pnl);
+    posState.set(r.mint, cur);
+  }
+
   const out: WatchingCandidate[] = [];
   for (const o of open) {
     const rows = await db
@@ -1107,7 +1126,9 @@ export async function getWatchingNow(): Promise<WatchingCandidate[]> {
       armed: o.armed,
       entered: o.entered,
       disposition: o.entered
-        ? "in book ✓"
+        ? posState.get(o.mint)?.open
+          ? "in book ✓" // an OPEN position — visible on the Matrix + Positions now
+          : `traded ${(posState.get(o.mint)?.pnl ?? 0) >= 0 ? "✓ +" : "· −"}$${Math.abs(posState.get(o.mint)?.pnl ?? 0).toFixed(2)}` // closed — lives in the ghost tape / fills
         : o.armed
           ? (verdicts.get(o.mint) ?? "queued · next scan")
           : o.triggeredAt != null

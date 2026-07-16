@@ -60,11 +60,13 @@ function Row({ c }: { c: WatchingCandidate }) {
           className="shrink-0 rounded px-1 py-px text-[9px]"
           style={{
             color:
-              c.disposition === "in book ✓"
+              c.disposition === "in book ✓" || c.disposition.startsWith("traded ✓")
                 ? "var(--status-good)"
-                : c.disposition.startsWith("queued")
-                  ? "var(--status-warning)"
-                  : "var(--text-muted)",
+                : c.disposition.startsWith("traded ·")
+                  ? "var(--status-critical)"
+                  : c.disposition.startsWith("queued")
+                    ? "var(--status-warning)"
+                    : "var(--text-muted)",
             border: "1px solid var(--border)",
             background: "var(--surface-1)",
           }}
