@@ -90,22 +90,28 @@ export function rugFeatureVector(r: RugModelInput): number[] {
   ];
 }
 
-/** Raw-space fitted weights (see provenance above). */
+/**
+ * Raw-space fitted weights. REFIT 2026-07-16T14:31Z on n=3025 triggered
+ * candidates (train 2117 / test 908, time-split) — the overnight 1o window
+ * grew the dataset ~30% and lifted held-out AUC 0.698 → 0.789; test quintile
+ * rug rates 1.1% / 6.1% / 14.8% / 40.3% / 45.1% vs 21.5% base. The overnight
+ * dust rugs the old weights scored ~0.25 (below caution) motivated the refit.
+ */
 export const RUG_WEIGHTS: Record<(typeof RUG_FEATURE_NAMES)[number], number> = {
-  accelDead: 0.470139,
+  accelDead: 0.6766,
   accelFresh: 0.0,
-  log10Liq: 0.30609,
-  fdvMissing: 1.817238,
-  fdvLiq: 0.038623,
-  venueDammV2: -1.118113,
-  venueDbc: -0.982388,
-  venuePump: -0.176092,
-  triggerMult: -0.722449,
-  triggerDd: -15.42612,
-  watchMin: -2.216229,
-  log10VolM5: -0.374684,
+  log10Liq: 0.222791,
+  fdvMissing: 1.544922,
+  fdvLiq: 0.031455,
+  venueDammV2: -0.845006,
+  venueDbc: -0.716994,
+  venuePump: -0.296854,
+  triggerMult: -0.716665,
+  triggerDd: -10.661298,
+  watchMin: -1.59994,
+  log10VolM5: -0.173518,
 };
-export const RUG_BIAS = 0.24238;
+export const RUG_BIAS = -0.474194;
 
 /** P(rug within the 15-min recorder window | confirmed at these conditions). */
 export function scoreRugProb(input: RugModelInput): number {

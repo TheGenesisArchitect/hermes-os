@@ -448,8 +448,11 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     .innerJoin(tokens, eq(tokens.mint, candidateOutcomes.mint))
     .where(
       and(
+        // `armed` is the recorder's LIVE authority — it already encodes the
+        // re-entry policy (no open position, entry cap, cooldown, gate
+        // re-qualified). The old `entered=false` filter here made every entry
+        // one-shot and forfeited the VICE-class re-runs (67 overnight).
         eq(candidateOutcomes.armed, true),
-        eq(candidateOutcomes.entered, false),
         gte(candidateOutcomes.updatedAt, freshCutoff),
       ),
     )
@@ -533,7 +536,13 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
   for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple } of armed) {
     if (total() >= cfg.PAPER_MAX_CONCURRENT) break; // global cap hit — leave the rest armed
 
-    const [held] = await db.select({ id: positions.id }).from(positions).where(eq(positions.mint, mint)).limit(1);
+    // Open-only duplicate guard — a CLOSED prior position no longer blocks
+    // (re-entry policy lives in the recorder's armed flag: cap + cooldown).
+    const [held] = await db
+      .select({ id: positions.id })
+      .from(positions)
+      .where(and(eq(positions.mint, mint), eq(positions.status, "open")))
+      .limit(1);
     if (held) continue; // already in it — recorder will disarm on its next poll
     if (signal.status === "traded_paper" || signal.status === "dismissed") continue;
 

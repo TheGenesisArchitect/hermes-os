@@ -269,12 +269,28 @@ async function observe(
           drawdownPct: t.drawdownFromPeakPct,
           buyShare: t.buyShareM5,
         };
-    const [held] = await db
-      .select({ id: positions.id })
+    // RE-ENTRY (the VICE 8.4x lesson, 2026-07-16): one-shot `!o.entered`
+    // permanently burned any candidate we ever touched — overnight, 67
+    // entered-then-closed-flat candidates went on to peak ≥2x (avg 3.1x)
+    // with no way back in. A candidate now re-arms after its position closes
+    // IF it re-qualifies the full live gate, bounded by an entry cap and a
+    // cooldown so a whipsaw can't thrash open/stop/reopen.
+    const [book] = await db
+      .select({
+        openCount: sql<number>`count(*) filter (where ${positions.status} = 'open')::int`,
+        totalCount: sql<number>`count(*)::int`,
+        lastClosedAt: sql<Date | null>`max(${positions.closedAt})`,
+      })
       .from(positions)
-      .where(eq(positions.mint, o.mint))
-      .limit(1);
-    const armed = trig.triggered && !held && !o.entered;
+      .where(eq(positions.mint, o.mint));
+    const cooledDown =
+      !book?.lastClosedAt ||
+      Date.now() - new Date(book.lastClosedAt).getTime() >= cfg.REENTRY_COOLDOWN_MIN * 60_000;
+    const armed =
+      trig.triggered &&
+      (book?.openCount ?? 0) === 0 &&
+      (book?.totalCount ?? 0) < cfg.REENTRY_MAX_ENTRIES &&
+      cooledDown;
 
     // Fitted rug probability at the freshest armed read (core rugModel.ts,
     // held-out AUC 0.70). The trader sizes by this — shrink, never veto.

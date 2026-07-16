@@ -393,8 +393,10 @@ const envSchema = z.object({
   // RUG-MODEL SIZING (fitted logistic, core rugModel.ts, held-out AUC 0.70 —
   // quintile rug rates 7.9%→44.3%). Thresholds = the top two held-out quintile
   // boundaries. Shrink, never veto: even the dirtiest quintile is 56% not-rug.
-  RUG_PROB_CAUTION: z.coerce.number().default(0.39), // held-out Q4 boundary → ×RUG_SIZE_CAUTION
-  RUG_PROB_HIGH: z.coerce.number().default(0.45), // held-out Q5 boundary → ×RUG_SIZE_HIGH
+  // Refit 2026-07-16 (AUC 0.789): Q4/Q5 boundaries moved down — the model got
+  // sharper, so caution starts earlier (Q4 = 40.3% rug rate begins at 0.31).
+  RUG_PROB_CAUTION: z.coerce.number().default(0.31), // held-out Q4 boundary → ×RUG_SIZE_CAUTION
+  RUG_PROB_HIGH: z.coerce.number().default(0.41), // held-out Q5 boundary → ×RUG_SIZE_HIGH
   RUG_SIZE_CAUTION: z.coerce.number().default(0.6),
   RUG_SIZE_HIGH: z.coerce.number().default(0.35),
   // CONVICTION SIZING — a candidate that confirmed at ≥ this market-proven
@@ -402,6 +404,13 @@ const envSchema = z.object({
   // 1.26x mill relaunch does not. Quality gets the capital, mills get scraps.
   CONVICTION_MULT_MIN: z.coerce.number().default(2.5),
   CONVICTION_SIZE_BOOST: z.coerce.number().default(1.4),
+  // RE-ENTRY — a candidate whose position closed may re-arm if it re-qualifies
+  // the full live gate (the VICE 8.4x lesson: one-shot entry burned 67
+  // entered-then-closed candidates that went on to peak ≥2x overnight).
+  // Bounded: at most this many total entries per mint, and a cooldown after a
+  // close so a whipsaw can't thrash open/stop/reopen on the same wiggle.
+  REENTRY_MAX_ENTRIES: z.coerce.number().default(2),
+  REENTRY_COOLDOWN_MIN: z.coerce.number().default(3),
   // PRIME VENUES — the measured healthy ponds (recorder pond map 2026-07-15:
   // fluxbeam 15/15 winners, 0 rugs, 14 hit 3x+). Armed candidates from these
   // venues jump the entry queue ahead of raw trigger-multiple ordering, and

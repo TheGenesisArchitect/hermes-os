@@ -1125,15 +1125,17 @@ export async function getWatchingNow(): Promise<WatchingCandidate[]> {
       triggerMultiple: o.triggerMultiple == null ? null : num(o.triggerMultiple),
       armed: o.armed,
       entered: o.entered,
-      disposition: o.entered
-        ? posState.get(o.mint)?.open
-          ? "in book ✓" // an OPEN position — visible on the Matrix + Positions now
-          : `traded ${(posState.get(o.mint)?.pnl ?? 0) >= 0 ? "✓ +" : "· −"}$${Math.abs(posState.get(o.mint)?.pnl ?? 0).toFixed(2)}` // closed — lives in the ghost tape / fills
+      // Precedence: holding now > armed (incl. RE-ARMED after a close — must
+      // read "queued", not "traded") > traded-and-closed > disarmed.
+      disposition: posState.get(o.mint)?.open
+        ? "in book ✓" // an OPEN position — visible on the Matrix + Positions now
         : o.armed
           ? (verdicts.get(o.mint) ?? "queued · next scan")
-          : o.triggeredAt != null
-            ? "disarmed"
-            : null,
+          : o.entered
+            ? `traded ${(posState.get(o.mint)?.pnl ?? 0) >= 0 ? "✓ +" : "· −"}$${Math.abs(posState.get(o.mint)?.pnl ?? 0).toFixed(2)}` // closed — lives in the ghost tape / fills
+            : o.triggeredAt != null
+              ? "disarmed"
+              : null,
       spark: view.map((r, i) => ({ i, mm: num(r.markMultiple) })),
     });
   }
