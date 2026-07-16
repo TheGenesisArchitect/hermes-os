@@ -32,3 +32,22 @@ body {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* Trade Matrix history scroller — thin terminal-styled scrollbar, not the OS default */
+.matrix-scroll {
+  scrollbar-width: thin; /* firefox */
+  scrollbar-color: var(--border) transparent;
+}
+.matrix-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.matrix-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.matrix-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+.matrix-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}

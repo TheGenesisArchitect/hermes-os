@@ -35,7 +35,7 @@ const fmtClock = (iso: string) =>
 
 // Presence: bars at 2x width and 2x height with real gaps between them — the
 // grid flexes (scrolls) to accommodate the field, the candles carry the room.
-const TRACK_H = 600; // px — the shared 1.0×→yMax wall
+const TRACK_H = 480; // px — the shared 1.0×→yMax wall (full module fits one viewport)
 const GHOST_W = 60;
 const LIVE_W = 80;
 const BAR_GAP = 8;
@@ -307,7 +307,7 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
         </div>
 
         {/* bar field — scrolls back through history */}
-        <div className="relative flex-1 overflow-x-auto" ref={scrollRef}>
+        <div className="matrix-scroll relative flex-1 overflow-x-auto" ref={scrollRef}>
           <div className="pointer-events-none sticky left-0 top-0 h-0 w-full" style={{ zIndex: 1 }}>
             <div className="absolute inset-x-0" style={{ height: TRACK_H }}>
               {ticks.map((m, i) => (
