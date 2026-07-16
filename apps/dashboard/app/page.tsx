@@ -27,6 +27,7 @@ import {
   getNews,
   getManagedPositions,
   getPondRadar,
+  getHourlyWindows,
   getTimingGrid,
   getRecentSignals,
   getRecentTrades,
@@ -61,6 +62,7 @@ export default async function Overview() {
     timingGrid,
     controlTerminal,
     ponds,
+    hourWindows,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -82,6 +84,7 @@ export default async function Overview() {
     getTimingGrid(),
     getControlTerminal(),
     getPondRadar(),
+    getHourlyWindows(),
   ]);
 
   const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
@@ -236,7 +239,7 @@ export default async function Overview() {
       </section>
 
       {/* Pond Radar — venue R&D lifecycle: discovery → watchlist → promotion */}
-      <PondRadar ponds={ponds} />
+      <PondRadar ponds={ponds} hours={hourWindows} />
 
       {/* Accounting ledger — reconciled closed-trade truth + forecaster + portfolio */}
       <AccountingLedger

@@ -2259,3 +2259,63 @@ export async function getPondRadar(): Promise<PondRow[]> {
     return []; // table may not exist yet on a fresh install — radar just hides
   }
 }
+
+// ── Hourly windows — when does flow arrive, when do the best trades show up ─
+export interface HourWindow {
+  hour: number; // 0-23 in America/New_York (the operator's clock)
+  watched: number; // recorder candidates first seen this hour (all history)
+  winRate: number | null;
+  bestPeak: number | null;
+  bestSymbol: string | null;
+  traded: number; // closed positions opened this hour (current run)
+  realized: number | null;
+}
+
+export async function getHourlyWindows(): Promise<HourWindow[]> {
+  try {
+    const rows = (await db.execute(sql`
+      with hrs as (select generate_series(0, 23) as h),
+      cand as (
+        select extract(hour from o.first_seen_at at time zone 'America/New_York')::int as h,
+          count(*)::int as n, sum((o.label = 'winner')::int)::int as wins
+        from candidate_outcomes o where o.label in ('winner','dud','rug') group by 1
+      ),
+      best as (
+        select distinct on (extract(hour from o.first_seen_at at time zone 'America/New_York')::int)
+          extract(hour from o.first_seen_at at time zone 'America/New_York')::int as h,
+          t.symbol, o.peak_multiple
+        from candidate_outcomes o join tokens t on t.mint = o.mint
+        where o.label = 'winner'
+        order by extract(hour from o.first_seen_at at time zone 'America/New_York')::int, o.peak_multiple desc
+      ),
+      trades as (
+        select extract(hour from p.opened_at at time zone 'America/New_York')::int as h,
+          count(*)::int as n, sum(p.realized_pnl_usd::float) as pnl
+        from positions p where p.status = 'closed' group by 1
+      )
+      select hrs.h, coalesce(cand.n, 0) as watched, cand.wins,
+        best.symbol as best_symbol, best.peak_multiple as best_peak,
+        coalesce(trades.n, 0) as traded, trades.pnl
+      from hrs
+      left join cand on cand.h = hrs.h
+      left join best on best.h = hrs.h
+      left join trades on trades.h = hrs.h
+      order by hrs.h
+    `)) as unknown as {
+      h: number; watched: number; wins: number | null;
+      best_symbol: string | null; best_peak: string | null;
+      traded: number; pnl: number | null;
+    }[];
+    return rows.map((r) => ({
+      hour: r.h,
+      watched: r.watched,
+      winRate: r.watched > 0 && r.wins !== null ? r.wins / r.watched : null,
+      bestPeak: r.best_peak === null ? null : Number(r.best_peak),
+      bestSymbol: r.best_symbol,
+      traded: r.traded,
+      realized: r.pnl === null ? null : Number(r.pnl),
+    }));
+  } catch {
+    return [];
+  }
+}
