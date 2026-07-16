@@ -2218,3 +2218,44 @@ export async function getControlTerminal(): Promise<ControlTerminalView> {
     },
   };
 }
+
+// ── Pond Radar — the venue lifecycle table (see recorder pondScanner.ts) ────
+export interface PondRow {
+  venue: string;
+  state: string;
+  watched: number;
+  winRate: number | null;
+  rugRate: number | null;
+  avgPeak: number | null;
+  traded: number;
+  realized: number | null;
+  inStateHours: number;
+}
+
+export async function getPondRadar(): Promise<PondRow[]> {
+  try {
+    const rows = (await db.execute(sql`
+      select venue, state, watched_24h, win_rate_24h, rug_rate_24h, avg_peak_24h,
+        traded_24h, realized_24h,
+        extract(epoch from (now() - state_since)) / 3600 as in_state_hours
+      from venue_intel order by venue
+    `)) as unknown as {
+      venue: string; state: string; watched_24h: number;
+      win_rate_24h: string | null; rug_rate_24h: string | null; avg_peak_24h: string | null;
+      traded_24h: number; realized_24h: string | null; in_state_hours: number;
+    }[];
+    return rows.map((r) => ({
+      venue: r.venue,
+      state: r.state,
+      watched: r.watched_24h,
+      winRate: r.win_rate_24h === null ? null : Number(r.win_rate_24h),
+      rugRate: r.rug_rate_24h === null ? null : Number(r.rug_rate_24h),
+      avgPeak: r.avg_peak_24h === null ? null : Number(r.avg_peak_24h),
+      traded: r.traded_24h,
+      realized: r.realized_24h === null ? null : Number(r.realized_24h),
+      inStateHours: Number(r.in_state_hours),
+    }));
+  } catch {
+    return []; // table may not exist yet on a fresh install — radar just hides
+  }
+}

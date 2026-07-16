@@ -320,3 +320,25 @@ export const marketNews = pgTable(
   },
   (t) => [index("market_news_kind_created_idx").on(t.kind, t.createdAt)],
 );
+
+/**
+ * POND RADAR — the venue lifecycle engine's state (the anti-edge-decay organ).
+ * Every venue the recorder has ever observed gets a row and walks a lifecycle:
+ *   observed → watchlist → promoted → (decay) → watchlist · blocked is terminal
+ * Transitions are computed from ROLLING 24h windows by the recorder's pond
+ * scanner, so capital allocation tracks the LIVE pond map instead of a static
+ * belief — the report's 30-day half-life is exactly what this counteracts.
+ */
+export const venueIntel = pgTable("venue_intel", {
+  venue: text("venue").primaryKey(),
+  state: text("state").notNull().default("observed"), // observed | watchlist | promoted | core | blocked
+  watched24h: integer("watched_24h").notNull().default(0),
+  winRate24h: numeric("win_rate_24h"),
+  rugRate24h: numeric("rug_rate_24h"),
+  avgPeak24h: numeric("avg_peak_24h"),
+  traded24h: integer("traded_24h").notNull().default(0),
+  realized24h: numeric("realized_24h"),
+  firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  stateSince: timestamp("state_since", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

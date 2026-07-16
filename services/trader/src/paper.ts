@@ -464,11 +464,13 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
 
   // PRIME PONDS jump the queue: a fluxbeam-class confirm (measured 15/15
   // winners, 0 rugs) takes a slot before any raw trigger-multiple ordering —
-  // the rarest healthy flow must never wait behind mill relaunches.
-  if (cfg.PRIME_VENUES.size > 0) {
+  // the rarest healthy flow must never wait behind mill relaunches. The set is
+  // DYNAMIC: static config ∪ the Pond Radar's currently-promoted venues.
+  const prime = await primeVenueSet(cfg);
+  if (prime.size > 0) {
     armed.sort((a, b) => {
-      const ap = cfg.PRIME_VENUES.has((a.token.dex ?? "").toLowerCase()) ? 1 : 0;
-      const bp = cfg.PRIME_VENUES.has((b.token.dex ?? "").toLowerCase()) ? 1 : 0;
+      const ap = prime.has((a.token.dex ?? "").toLowerCase()) ? 1 : 0;
+      const bp = prime.has((b.token.dex ?? "").toLowerCase()) ? 1 : 0;
       return bp - ap; // stable: preserves triggerMultiple order within each group
     });
   }
@@ -572,7 +574,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // multiple (ARGENTINU armed at 4.94x → ran 11.4x) earns a bigger bet than
     // a 1.26x mill relaunch. Quality gets the capital, mills get scraps.
     const tm = triggerMultiple === null ? null : Number(triggerMultiple);
-    const primeVenue = cfg.PRIME_VENUES.has((token.dex ?? "").toLowerCase());
+    const primeVenue = prime.has((token.dex ?? "").toLowerCase());
     const convictionMult =
       primeVenue || (tm !== null && Number.isFinite(tm) && tm >= cfg.CONVICTION_MULT_MIN)
         ? cfg.CONVICTION_SIZE_BOOST
@@ -1036,6 +1038,31 @@ async function refreshAutoFarm(cfg: HermesConfig): Promise<void> {
 // canonicalVenue now lives in @hermes/core (market/venue.ts) so the recorder's
 // rug model and the trader resolve venues identically — see its doc for the
 // dex-string-leak history (meteora+DYN2 → meteora-damm-v2).
+
+// ── DYNAMIC PRIME SET — the Pond Radar's output, consumed live ───────────────
+// The recorder's pond scanner walks venues through observed→watchlist→promoted
+// on rolling 24h evidence; the trader's prime set (queue priority + conviction
+// size boost) = static PRIME_VENUES ∪ currently-promoted. A cooling pond loses
+// its boost automatically — allocation tracks the live pond map, which is the
+// working answer to the 30-day edge half-life.
+const promotedVenues = { set: new Set<string>(), refreshedAt: 0 };
+const PROMOTED_REFRESH_MS = 120_000;
+async function primeVenueSet(cfg: HermesConfig): Promise<Set<string>> {
+  if (Date.now() - promotedVenues.refreshedAt > PROMOTED_REFRESH_MS) {
+    promotedVenues.refreshedAt = Date.now();
+    try {
+      const rows = (await db.execute(sql`select venue from venue_intel where state = 'promoted'`)) as unknown as {
+        venue: string;
+      }[];
+      promotedVenues.set = new Set(rows.map((r) => r.venue.toLowerCase()));
+    } catch {
+      /* keep the last-known set on a read hiccup */
+    }
+  }
+  const merged = new Set(cfg.PRIME_VENUES);
+  for (const v of promotedVenues.set) merged.add(v);
+  return merged;
+}
 
 /** Farm classification for a position's live market read: static venue list ∪ adaptive sets. */
 function isFarmTape(cfg: HermesConfig, market: TokenMarket): boolean {

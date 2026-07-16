@@ -24,6 +24,7 @@ import {
   signals,
 } from "@hermes/db";
 import { asc, eq, gte, sql } from "drizzle-orm";
+import { scanPonds } from "./pondScanner.js";
 
 const cfg = loadConfig();
 const triggerCfg = entryTriggerConfigFrom(cfg);
@@ -355,6 +356,9 @@ async function observe(
 
 async function tick(): Promise<void> {
   await seedNewCandidates();
+  // Pond Radar: venue lifecycle from rolling 24h evidence (self-throttled to
+  // POND_SCAN_MS; own try/catch — R&D must never stall the recording loop).
+  void scanPonds(cfg);
   const open = await db
     .select()
     .from(candidateOutcomes)

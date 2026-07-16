@@ -411,6 +411,17 @@ const envSchema = z.object({
   // close so a whipsaw can't thrash open/stop/reopen on the same wiggle.
   REENTRY_MAX_ENTRIES: z.coerce.number().default(2),
   REENTRY_COOLDOWN_MIN: z.coerce.number().default(3),
+  // POND SCANNER — the venue lifecycle engine (recorder pondScanner.ts).
+  // Rolling-24h evidence walks each venue observed→watchlist→promoted with
+  // decay demotion; the trader's prime set follows automatically. Promote
+  // gate is strictly harder than the demote gate (hysteresis, no flapping).
+  POND_SCAN_MS: z.coerce.number().default(600_000), // 10 min
+  POND_WATCH_MIN_N: z.coerce.number().default(8),
+  POND_PROMOTE_MIN_N: z.coerce.number().default(15),
+  POND_PROMOTE_WIN: z.coerce.number().default(0.35),
+  POND_PROMOTE_MAX_RUG: z.coerce.number().default(0.25),
+  POND_DEMOTE_WIN: z.coerce.number().default(0.2),
+  POND_DEMOTE_RUG: z.coerce.number().default(0.4),
   // PRIME VENUES — the measured healthy ponds (recorder pond map 2026-07-15:
   // fluxbeam 15/15 winners, 0 rugs, 14 hit 3x+). Armed candidates from these
   // venues jump the entry queue ahead of raw trigger-multiple ordering, and

@@ -10,6 +10,7 @@ import { IntelTerminal } from "@/components/IntelTerminal";
 import { KillSwitch } from "@/components/KillSwitch";
 import { ManagementBoard } from "@/components/ManagementBoard";
 import { RecorderBoard } from "@/components/RecorderBoard";
+import { PondRadar } from "@/components/PondRadar";
 import { TimingGrid } from "@/components/TimingGrid";
 import { MintLink, ScoreBadge, StatTile, fmtTs, fmtTsFull, timeAgo, usd } from "@/components/ui";
 import {
@@ -25,6 +26,7 @@ import {
   getKpiStrip,
   getNews,
   getManagedPositions,
+  getPondRadar,
   getTimingGrid,
   getRecentSignals,
   getRecentTrades,
@@ -58,6 +60,7 @@ export default async function Overview() {
     news,
     timingGrid,
     controlTerminal,
+    ponds,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -78,6 +81,7 @@ export default async function Overview() {
     getNews(),
     getTimingGrid(),
     getControlTerminal(),
+    getPondRadar(),
   ]);
 
   const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
@@ -230,6 +234,9 @@ export default async function Overview() {
           outcomes={recorderOutcomes}
         />
       </section>
+
+      {/* Pond Radar — venue R&D lifecycle: discovery → watchlist → promotion */}
+      <PondRadar ponds={ponds} />
 
       {/* Accounting ledger — reconciled closed-trade truth + forecaster + portfolio */}
       <AccountingLedger
