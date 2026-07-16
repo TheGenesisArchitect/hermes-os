@@ -31,16 +31,25 @@ If the live lane's cumulative realized P&L reaches **−$50** (one daily cap) OR
 **halts itself and reverts to paper-only**. Re-opening requires a fresh pass of
 G1–G4 on the paper book. No mid-drawdown threshold edits; no "one more day."
 
-## Current status (2026-07-15)
+## Current status (2026-07-16)
 
 - G1–G4: **measuring** — the current management stack (TP ladder, post-bank
   leash, venue-split stop, rug-model sizing, prime ponds) went fully live
-  ~22:45Z today; the qualifying window starts from there.
-- G5: Jupiter swap quotes verified reachable (lite-api + api.jup.ag both 200
-  through GoodbyeDPI). Honeypot probe re-verifying automatically.
-  ⚠ GoodbyeDPI must survive reboot before go-live: run
-  `C:\Users\mrbee\GoodbyeDPI\install-hermes-service.cmd` **as admin** (user
-  action — the session cannot install boot persistence).
+  ~22:45Z 2026-07-15; the qualifying window continues.
+- G5: **PASS.** GoodbyeDPI service reconfigured to `-9` (max evasion) and
+  running as Auto-start — this defeated the DPI filter that `-5` could not,
+  and cleared BOTH the Jupiter swap hosts AND the public Solana RPC class.
+  Full M5 dry-run ran clean 2026-07-16: quote (0.05 SOL → 3.76 USDC) → build
+  (672B tx) → sign (fee payer matches) → real-RPC simulate returned the
+  expected `AccountNotFound` for the unfunded ephemeral wallet — the proof
+  that everything up to funding works. Boot persistence confirmed (service
+  Auto-start, survives reboot).
+- G5 watchdog: a **sell-route watchdog** now probes the real live-exit path
+  (Jupiter swap quote + RPC getLatestBlockhash) every 20s in the System Health
+  drawer. Down while PAPER → amber "go-live blocked"; down while LIVE → critical
+  "SELL ROUTE DARK WHILE LIVE" and the overall roll-up flips to `down`. This is
+  the mid-session DPI-regression alarm — it fires before a position needs to exit.
 - G6: generator script ready; **not yet run** — run it at go-live time, not before.
-- M5 live execution code (Jupiter swap build+sign+send): **not yet built** —
-  build it while the paper window qualifies, behind `LIVE_TRADING_ENABLED=false`.
+- M5 live execution code (Jupiter swap build+sign+send): **BUILT** —
+  `services/trader/src/live/{wallet,jupiter,executor,dryRun}.ts`, mirror lane
+  behind `LIVE_TRADING_ENABLED=false`, hard caps + kill criterion enforced.

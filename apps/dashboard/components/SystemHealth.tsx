@@ -207,6 +207,70 @@ export function SystemHealth() {
             </div>
           </section>
 
+          {/* Sell-route watchdog — the live EXIT path. Alarms before a position needs out. */}
+          {health?.sellRoute ? (
+            <section>
+              <h3 className="mb-2 flex items-center justify-between text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                <span>Sell route · live exit path</span>
+                <span
+                  className="rounded px-1.5 py-px text-[9px] tracking-normal"
+                  style={{
+                    color: health.sellRoute.liveEnabled ? "var(--status-critical)" : "var(--text-muted)",
+                    border: `1px solid ${health.sellRoute.liveEnabled ? "var(--status-critical)" : "var(--gridline)"}`,
+                  }}
+                >
+                  {health.sellRoute.liveEnabled ? "LIVE" : "PAPER"}
+                </span>
+              </h3>
+              {(() => {
+                const sr = health.sellRoute;
+                // Severity: down while LIVE = critical (a position can't exit);
+                // down while PAPER = warning (go-live blocker); up = good.
+                const critical = !sr.ok && sr.liveEnabled;
+                const bannerColor = sr.ok ? "var(--status-good)" : critical ? "var(--status-critical)" : "var(--status-warning)";
+                const bannerBg = sr.ok
+                  ? "rgba(63,185,80,0.10)"
+                  : critical
+                    ? "rgba(208,59,59,0.14)"
+                    : "rgba(210,153,34,0.12)";
+                const bannerText = sr.ok
+                  ? "Exit path clear — quote + RPC both reachable"
+                  : critical
+                    ? "⚠ SELL ROUTE DARK WHILE LIVE — open positions may be unsellable"
+                    : "Sell route down — go-live blocked until it clears";
+                const leg = (label: string, ok: boolean, latency: number | null, note: string) => (
+                  <div
+                    className="flex items-center justify-between rounded-md px-3 py-2"
+                    style={{ background: "var(--surface-1)", border: "1px solid var(--gridline)" }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Dot ok={ok} warn={!ok && !sr.liveEnabled} />
+                      <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{label}</span>
+                    </div>
+                    <span
+                      className="tabular text-[11px]"
+                      style={{ color: ok ? "var(--text-muted)" : sr.liveEnabled ? "var(--status-critical)" : "var(--status-warning)" }}
+                    >
+                      {ok ? `${latency}ms · ${note}` : note}
+                    </span>
+                  </div>
+                );
+                return (
+                  <div className="space-y-1.5">
+                    <div
+                      className="rounded-md px-3 py-2 text-[11px] font-medium"
+                      style={{ background: bannerBg, border: `1px solid ${bannerColor}`, color: bannerColor }}
+                    >
+                      {bannerText}
+                    </div>
+                    {leg("Jupiter swap (quote+build)", sr.swapOk, sr.swapLatencyMs, sr.swapNote)}
+                    {leg("Solana RPC (send+confirm)", sr.rpcOk, sr.rpcLatencyMs, sr.rpcNote)}
+                  </div>
+                );
+              })()}
+            </section>
+          ) : null}
+
           {/* Feeds */}
           <section>
             <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>

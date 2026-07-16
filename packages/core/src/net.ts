@@ -23,6 +23,8 @@ const resetHosts = new Set<string>();
 interface ResilientOpts {
   headers?: Record<string, string>;
   timeoutMs?: number;
+  method?: string;
+  body?: string;
 }
 
 export async function resilientFetch(url: string, opts: ResilientOpts = {}): Promise<Response> {
@@ -36,13 +38,18 @@ export async function resilientFetch(url: string, opts: ResilientOpts = {}): Pro
 
   if (!resetHosts.has(host)) {
     try {
-      return await fetch(url, { headers: opts.headers, signal: AbortSignal.timeout(timeoutMs) });
+      return await fetch(url, {
+        method: opts.method,
+        headers: opts.headers,
+        body: opts.body,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
     } catch (err) {
       if (!isConnectionReset(err)) throw err; // a real timeout/abort — don't mask it with curl
       if (host) resetHosts.add(host); // filtered host: skip the doomed native attempt next time
     }
   }
-  return curlFetch(url, opts.headers, timeoutMs);
+  return curlFetch(url, opts.headers, timeoutMs, opts.method, opts.body);
 }
 
 /** A TLS/TCP reset (the SNI-filter signature) — not a deliberate abort or DNS error. */
@@ -57,10 +64,16 @@ function curlFetch(
   url: string,
   headers: Record<string, string> | undefined,
   timeoutMs: number,
+  method?: string,
+  body?: string,
 ): Promise<Response> {
   return new Promise((resolve, reject) => {
     const args = ["-s", "--max-time", String(Math.max(1, Math.ceil(timeoutMs / 1000))), "-w", "\n%{http_code}"];
     for (const [k, v] of Object.entries(headers ?? {})) args.push("-H", `${k}: ${v}`);
+    if (method && method.toUpperCase() !== "GET") args.push("-X", method.toUpperCase());
+    // spawn passes args verbatim (no shell), so a JSON body needs no escaping;
+    // --data-binary preserves it exactly rather than stripping newlines like -d.
+    if (body != null) args.push("--data-binary", body);
     args.push(url);
     const child = spawn("curl", args, { windowsHide: true });
     let out = "";

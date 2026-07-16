@@ -1839,10 +1839,25 @@ export interface PumpPortalHealthView {
   migrationsSeen: number;
   reconnects: number;
 }
+// The live EXIT path — distinct from the "Jupiter" data feed above. A live
+// position can only be sold if BOTH the swap host (quote+build) and the RPC
+// (send+confirm) are reachable; this watchdog probes the real execution route
+// so a mid-session DPI regression is caught BEFORE a position needs to exit.
+export interface SellRouteHealth {
+  ok: boolean; // both legs up
+  liveEnabled: boolean; // LIVE_TRADING_ENABLED — decides alarm severity
+  swapOk: boolean;
+  swapLatencyMs: number | null;
+  swapNote: string;
+  rpcOk: boolean;
+  rpcLatencyMs: number | null;
+  rpcNote: string;
+}
 export interface SystemHealthView {
   at: string;
   services: ServiceHealth[];
   feeds: FeedHealth[];
+  sellRoute: SellRouteHealth;
   pumpportal: PumpPortalHealthView | null;
   pipeline: {
     scanned24h: number;
@@ -1880,6 +1895,73 @@ async function probeFeed(name: string, url: string, essential: boolean): Promise
 }
 
 const WSOL = "So11111111111111111111111111111111111111112";
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+/**
+ * SELL-ROUTE WATCHDOG — probe the actual live-exit path, not just host liveness.
+ *
+ *   swap leg: a REAL quote (0.01 SOL → USDC) against the swap base
+ *             (lite-api.jup.ag/swap/v1) — a route coming back proves the swap
+ *             backend, which a bare 200 on the host does not.
+ *   rpc leg:  getLatestBlockhash against the send/confirm RPC — the tx can't be
+ *             submitted without it.
+ *
+ * Both use resilientFetch (curl-through-GoodbyeDPI fallback), so the panel
+ * reports the same reachability the live executor would actually get.
+ */
+async function probeSellRoute(cfg: ReturnType<typeof loadConfig>): Promise<SellRouteHealth> {
+  const swapBase = cfg.JUPITER_BASE_URL.replace(/\/$/, "");
+  const swapUrl =
+    `${swapBase}/quote?inputMint=${WSOL}&outputMint=${USDC_MINT}` +
+    `&amount=10000000&slippageBps=${cfg.LIVE_SLIPPAGE_BPS}&restrictIntermediateTokens=true`;
+
+  const swapProbe = (async () => {
+    const t = Date.now();
+    try {
+      const res = await resilientFetch(swapUrl, { headers: { accept: "application/json" }, timeoutMs: 4000 });
+      if (!res.ok) return { swapOk: false, swapLatencyMs: null, swapNote: `HTTP ${res.status}` };
+      const body = (await res.json()) as { outAmount?: string; error?: string };
+      if (!body.outAmount) return { swapOk: false, swapLatencyMs: null, swapNote: body.error ?? "no route" };
+      return { swapOk: true, swapLatencyMs: Date.now() - t, swapNote: "route ok" };
+    } catch (err) {
+      return {
+        swapOk: false,
+        swapLatencyMs: null,
+        swapNote: err instanceof Error && err.name === "TimeoutError" ? "timeout" : "unreachable",
+      };
+    }
+  })();
+
+  const rpcProbe = (async () => {
+    const t = Date.now();
+    try {
+      const res = await resilientFetch(cfg.rpcUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestBlockhash", params: [{ commitment: "processed" }] }),
+        timeoutMs: 4000,
+      });
+      if (!res.ok) return { rpcOk: false, rpcLatencyMs: null, rpcNote: `HTTP ${res.status}` };
+      const body = (await res.json()) as { result?: { value?: { blockhash?: string } }; error?: { message?: string } };
+      if (!body.result?.value?.blockhash) return { rpcOk: false, rpcLatencyMs: null, rpcNote: body.error?.message ?? "no blockhash" };
+      return { rpcOk: true, rpcLatencyMs: Date.now() - t, rpcNote: "blockhash ok" };
+    } catch (err) {
+      return {
+        rpcOk: false,
+        rpcLatencyMs: null,
+        rpcNote: err instanceof Error && err.name === "TimeoutError" ? "timeout" : "unreachable",
+      };
+    }
+  })();
+
+  const [swap, rpc] = await Promise.all([swapProbe, rpcProbe]);
+  return {
+    ...swap,
+    ...rpc,
+    liveEnabled: cfg.LIVE_TRADING_ENABLED,
+    ok: swap.swapOk && rpc.rpcOk,
+  };
+}
 
 export async function getSystemHealth(): Promise<SystemHealthView> {
   // ── service liveness (each daemon writes a cheap config heartbeat every cycle) ──
@@ -1943,20 +2025,25 @@ export async function getSystemHealth(): Promise<SystemHealthView> {
       }
     : null;
 
-  // ── feed reachability (live probes, in parallel) ──
-  const feeds = await Promise.all([
-    probeFeed("DexScreener", "https://api.dexscreener.com/token-profiles/latest/v1", true),
-    probeFeed("RugCheck", `https://api.rugcheck.xyz/v1/tokens/${WSOL}/report`, true),
-    // Discovery-only + a flaky marketing host; the WS canary (connected + heartbeat
-    // age) is its real liveness signal, and DexScreener still covers ingest if it
-    // blips — so a down HTTP probe here must not drag the overall roll-up.
-    probeFeed("PumpPortal", "https://pumpportal.fun", false),
-    // Essential to the full "winning formula": Jupiter = real-time block-level
-    // price marks (truer exits), GeckoTerminal = new-pools firehose (earliest
-    // discovery). Currently SNI-blocked on this host — surfaced as a real gap,
-    // not written off, until the DPI filter is bypassed/allowlisted.
-    probeFeed("Jupiter", `https://datapi.jup.ag/v1/pools?assetIds=${WSOL}`, true),
-    probeFeed("GeckoTerminal", "https://api.geckoterminal.com/api/v2/networks/solana/new_pools", true),
+  const cfg = loadConfig();
+
+  // ── feed reachability + sell-route watchdog (live probes, in parallel) ──
+  const [feeds, sellRoute] = await Promise.all([
+    Promise.all([
+      probeFeed("DexScreener", "https://api.dexscreener.com/token-profiles/latest/v1", true),
+      probeFeed("RugCheck", `https://api.rugcheck.xyz/v1/tokens/${WSOL}/report`, true),
+      // Discovery-only + a flaky marketing host; the WS canary (connected + heartbeat
+      // age) is its real liveness signal, and DexScreener still covers ingest if it
+      // blips — so a down HTTP probe here must not drag the overall roll-up.
+      probeFeed("PumpPortal", "https://pumpportal.fun", false),
+      // Essential to the full "winning formula": Jupiter = real-time block-level
+      // price marks (truer exits), GeckoTerminal = new-pools firehose (earliest
+      // discovery). Currently SNI-blocked on this host — surfaced as a real gap,
+      // not written off, until the DPI filter is bypassed/allowlisted.
+      probeFeed("Jupiter", `https://datapi.jup.ag/v1/pools?assetIds=${WSOL}`, true),
+      probeFeed("GeckoTerminal", "https://api.geckoterminal.com/api/v2/networks/solana/new_pools", true),
+    ]),
+    probeSellRoute(cfg),
   ]);
 
   // ── funnel ──
@@ -1989,19 +2076,26 @@ export async function getSystemHealth(): Promise<SystemHealthView> {
   const killSwitch = await getKillSwitch();
 
   // ── overall roll-up ──
-  // Down: any service dead OR the load-bearing price/ingest feed (DexScreener) gone.
-  // Warn: another essential feed degraded (RugCheck/PumpPortal). Optional feeds
-  // (Jupiter/GeckoTerminal) are known-filtered here and never drive the roll-up.
+  // Down: any service dead OR the load-bearing price/ingest feed (DexScreener)
+  // gone OR — while LIVE — the sell route is dark (an open position can't exit).
+  // Warn: an essential feed degraded (RugCheck/PumpPortal) OR the sell route is
+  // down while still paper (a go-live blocker, no capital at risk yet). Optional
+  // feeds (Jupiter/GeckoTerminal) are known-filtered here and never drive it.
   const anyServiceDown = services.some((s) => !s.ok);
   const dexDown = feeds.find((f) => f.name === "DexScreener")?.ok === false;
   const essentialDown = feeds.some((f) => f.essential && !f.ok);
   const overall: SystemHealthView["overall"] =
-    anyServiceDown || dexDown ? "down" : essentialDown ? "warn" : "ok";
+    anyServiceDown || dexDown || (sellRoute.liveEnabled && !sellRoute.ok)
+      ? "down"
+      : essentialDown || !sellRoute.ok
+        ? "warn"
+        : "ok";
 
   return {
     at: new Date().toISOString(),
     services,
     feeds,
+    sellRoute,
     pumpportal,
     pipeline: {
       scanned24h: scanned?.n ?? 0,
