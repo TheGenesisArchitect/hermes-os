@@ -17,6 +17,44 @@ const envSchema = z.object({
     .default("true")
     .transform((v) => v === "true"),
   SOLANA_RPC_URL: z.string().default("https://solana-rpc.publicnode.com"),
+  // RPC FAILOVER — comma-separated additional endpoints. The primary (rpcUrl) is
+  // tried first, then these, then keyless public fallbacks. Removes the RPC as a
+  // single point of failure once Jupiter is no longer the dependency.
+  RPC_URLS: z.string().default(""),
+  // Self-hosted Jupiter Swap API base (e.g. http://localhost:8080/swap/v1). Empty
+  // = provider dormant (router skips it). Set once the jupiter-swap-api container
+  // is up (see docs/SWAP_ROUTE_RESILIENCE_SPEC.md) → live execution survives a
+  // Jupiter hosted-API outage on our own uptime.
+  JUPITER_SELFHOSTED_URL: z.string().default(""),
+  // Fluxbeam swap API — an INDEPENDENT (non-Jupiter) swap route for Fluxbeam-
+  // routable tokens (our 'fluxbeam' premium venue). Verified shapes:
+  //   GET  /v1/quote?inputMint&outputMint&amount&slippageBps → { quote: {...} }
+  //   POST /v1/swap  { quote, userPublicKey }                → { transaction }
+  // Keyless. Gives real failover against a Jupiter outage for fluxbeam tokens.
+  FLUXBEAM_API_URL: z.string().default("https://api.fluxbeam.xyz/v1"),
+  FLUXBEAM_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  // PumpPortal trade-local — an INDEPENDENT (non-Jupiter) route for pump.fun /
+  // pumpswap tokens (the dominant flow). Keyless, non-custodial: returns a
+  // ready-to-sign transaction. Covers exactly the venues Jupiter's outage strands.
+  PUMPPORTAL_URL: z.string().default("https://pumpportal.fun/api"),
+  PUMPPORTAL_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  PUMPPORTAL_PRIORITY_FEE: z.coerce.number().default(0.00005), // SOL priority fee for the trade tx
+  PUMPPORTAL_POOL: z.string().default("auto"), // auto | pump | pumpswap | raydium
+  // Direct PumpSwap AMM route (via @pump-fun/pump-swap-sdk). The ONLY route that
+  // reaches paper's actual winners — graduated PumpSwap pools for OTHER-origin
+  // tokens (Meteora-DBC/bags), which Fluxbeam ("no pool") and PumpPortal (pump.fun
+  // -only, 400) both miss. Built swaps against the pAMM program, keyless, works on
+  // this DPI host through the curl-fallback RPC. Slots ahead of PumpPortal.
+  PUMPSWAP_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
   BIRDEYE_API_KEY: z.string().optional().default(""),
   JUPITER_BASE_URL: z.string().default("https://lite-api.jup.ag/swap/v1"),
   // Real-time (block-level) USD price feed — keyless, fresher than DexScreener's
@@ -146,6 +184,36 @@ const envSchema = z.object({
   TP1_CUM_SELL: z.coerce.number().default(0.5), // cumulative fraction of ORIGINAL size sold once TP1 is hit
   TP2_MULT: z.coerce.number().default(1.7), // +70% — bank most of the rest
   TP2_CUM_SELL: z.coerce.number().default(0.8), // total 80% banked by TP2; the remaining 20% rides uncapped
+  // DUD CUT — the divergence cull (validated 2026-07-19, +$85/48h fill-realistic). Winners
+  // clear the divergence line by ~2.25min (win_p25 crosses above dud_p75); duds sit flat.
+  // A position whose PEAK hasn't cleared DUD_CUT_MARK by DUD_CUT_AGE_MIN never followed
+  // through — cut it while it's still liquid, before it bleeds to the hard-stop. Peak-based
+  // so a proven lifter (peak already cleared the line) is NEVER cut. Tune both from live.
+  DUD_CUT_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  DUD_CUT_AGE_MIN: z.coerce.number().default(2.25), // the divergence line — cut a no-lifter at/after this age
+  DUD_CUT_MARK: z.coerce.number().default(1.09), // peak never cleared +9% by the cut age = dud
+  // FAST-FLOOR — block-level Jupiter mark on LIFTED positions, SUB-POLLED between the 5s manage
+  // cycles so a trailing floor is enforced at ~1s resolution instead of the price gapping through
+  // it (the SX runner / 1.10-give-back problem). CRITICAL: it is READ-ONLY on peak — it never
+  // ratchets peak from the fast mark (that re-introduces the thin-pool mirage); the manage loop
+  // owns peak off DexScreener. It only reads the stored peak, divergence-guards the fast mark vs
+  // the last DexScreener read, and fires the floor with last-good liquidity for an honest fill.
+  // Ships DARK + LOG-ONLY. Jupiter-routable only (graduated/AMM/pumpswap); bonding-curve (dbc/bags,
+  // e.g. SX) have no fast mark → fall back to the 5s loop, so this does NOT help those.
+  FAST_FLOOR_ENABLED: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
+  FAST_FLOOR_LOG_ONLY: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  FAST_FLOOR_MS: z.coerce.number().default(1000), // sub-poll cadence between the 5s manage cycles
+  FAST_FLOOR_ARM_MULT: z.coerce.number().default(1.15), // only watch positions lifted past this (in profit)
+  FAST_FLOOR_TRAIL_PCT: z.coerce.number().default(8), // fire when the fast mark <= peak * (1 - this/100)
   // FARM-VENUE LADDER — the escalator counter-play. DNA study (2026-07-15, 101
   // dust rugs dissected): 99/101 lived on meteora-damm-v2, pumped a machine-
   // linear ramp (buy-share pinned ~0.78, liquidity growing in lockstep) with
@@ -229,6 +297,18 @@ const envSchema = z.object({
   // untouched. Rationale: the 5-6.8% tight trail fires inside normal 5s wick
   // noise, exiting 9-90s after entry at breakeven while the token runs 1.3-2.3x.
   POST_BANK_TRAIL_PCT: z.coerce.number().default(12),
+  // GAIN-BASED TRAIL — locks a consistent fraction of the RISE instead of a fixed
+  // % below price. The %-of-price trail is harshest exactly where most winners
+  // live: a 12% price trail on a 1.4× peak gives back 42% of the GAIN, but only
+  // ~18% on an 8×. This gives back the SAME fraction of gain at every scale, and
+  // does it as BRACKETED slices (like tax brackets) so the floor is monotonic —
+  // it never drops at a zone boundary and can't be wicked out below a prior tick.
+  // 'price' = the legacy behavior (unchanged); 'gain' = the new smooth trail.
+  // Ships only after the replay proves it net-positive over winners AND rugs.
+  TRAIL_MODE: z.enum(["price", "gain"]).default("price"),
+  TRAIL_GAIN_GB_TIGHT: z.coerce.number().default(0.15), // give back 15% of the gain in the 1–2.5× spike slice
+  TRAIL_GAIN_GB_MID: z.coerce.number().default(0.3), // 30% in the 2.5–6× runner slice
+  TRAIL_GAIN_GB_WIDE: z.coerce.number().default(0.45), // 45% above 6× — room to ride the parabola
   HARD_STOP_PCT: z.coerce.number().default(5), // pre-ignition: a confirmed entry that reverses 5% failed — cut it cheap (~-$0.9 not -$17)
   // VENUE-SPLIT pre-ignition stop (user-ruled 2026-07-15, the BULLDOG 153x
   // autopsy): on THIN bonding-curve tape a tight stop is a lie twice over — it
@@ -375,6 +455,12 @@ const envSchema = z.object({
   // Calibration: winners/duds both pass ~99% at 0.45, so the band between 0.40
   // and 0.45 costs <1% in dud admits; quality-sizing prices the risk.
   CONFIRM_MIN_BUYSHARE: z.coerce.number().default(0.4),
+  // Neutral-churn DEAD ZONE (recalibrated 2026-07-19 on clean labels, n=5988
+  // triggers): confirm-tick buy share in [0.50, 0.55) = symmetric wash flow —
+  // 7.9% winners / 76.6% duds vs 31-43% win in every neighboring band. The
+  // ragoon bait signature. An exclusion band, NOT a floor: 0.45-0.50 wins 33%.
+  CONFIRM_DEAD_BUYSHARE_LO: z.coerce.number().default(0.50),
+  CONFIRM_DEAD_BUYSHARE_HI: z.coerce.number().default(0.55),
   // Volume acceleration = vol_m5 / vol_h1, the fraction of the trailing hour's
   // volume packed into the last 5 minutes — a genuine demand BURST. This is the
   // one clean positive edge in the separation study: winner median 0.234 vs rug
@@ -393,10 +479,10 @@ const envSchema = z.object({
   // RUG-MODEL SIZING (fitted logistic, core rugModel.ts, held-out AUC 0.70 —
   // quintile rug rates 7.9%→44.3%). Thresholds = the top two held-out quintile
   // boundaries. Shrink, never veto: even the dirtiest quintile is 56% not-rug.
-  // Refit 2026-07-16 (AUC 0.789): Q4/Q5 boundaries moved down — the model got
-  // sharper, so caution starts earlier (Q4 = 40.3% rug rate begins at 0.31).
-  RUG_PROB_CAUTION: z.coerce.number().default(0.31), // held-out Q4 boundary → ×RUG_SIZE_CAUTION
-  RUG_PROB_HIGH: z.coerce.number().default(0.41), // held-out Q5 boundary → ×RUG_SIZE_HIGH
+  // Refit 2026-07-19 (AUC 0.710, clean liquidity-collapse labels, n=5988):
+  // held-out Q4 (29.5% rug) begins at 0.30, Q5 (46.4% rug) at 0.43.
+  RUG_PROB_CAUTION: z.coerce.number().default(0.30), // held-out Q4 boundary → ×RUG_SIZE_CAUTION
+  RUG_PROB_HIGH: z.coerce.number().default(0.43), // held-out Q5 boundary → ×RUG_SIZE_HIGH
   RUG_SIZE_CAUTION: z.coerce.number().default(0.6),
   RUG_SIZE_HIGH: z.coerce.number().default(0.35),
   // CONVICTION SIZING — a candidate that confirmed at ≥ this market-proven
@@ -527,13 +613,106 @@ const envSchema = z.object({
   // This never blocks a real convex candidate — it blocks buying a corpse.
   ENTRY_MAX_SLIPPAGE_PCT: z.coerce.number().default(30),
 
+  // PAPER WALLET-GRAPH GATE — apply the wallet graph to PAPER entries too, so the
+  // book stops opening positions on the rug-wallet slice of bleeder venues (the
+  // recorder still watches everything free). "Don't bleed for the sake of being
+  // busy" — exploration ≠ execution. Default true.
+  PAPER_WALLET_GATE: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+
+  // CONVICTION MODEL — the fused high-performance score ∈ [0,1] driving entry
+  // PRIORITY (creme rises) and live conviction-scaled sizing. WALLET-DOMINANT by
+  // design: the wallet graph is the only factor with a strong leak-free lift; the
+  // gate/venue/honeypot are already binary pre-conditions, so within the armed
+  // pool the wallet edge is what still separates. Weights FROZEN for the window
+  // (no live fitting — that overfits noise). rugSafe = 1−rugProb; gate = trigger
+  // strength × buy-share.
+  CONVICTION_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  // Live-lane conviction TILT only (faithful mirror = flat balance-fraction live
+  // sizing → set false). Distinct from CONVICTION_ENABLED, which also drives
+  // recorder score-stamping and paper's conviction-first entry queue — turning
+  // THAT off to flatten live sizing silently degraded paper entry priority.
+  LIVE_CONVICTION_SIZING: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  CONVICTION_W_WALLET: z.coerce.number().default(0.5),
+  CONVICTION_W_RUGSAFE: z.coerce.number().default(0.25),
+  CONVICTION_W_GATE: z.coerce.number().default(0.25),
+  // Sizing band: conviction ∈ [0,1] maps to a size multiplier on the base. High
+  // conviction sizes toward the 14%-of-balance cap (~2.2× base), low to 0.6×.
+  CONVICTION_SIZE_MIN_BAND: z.coerce.number().default(0.6),
+  CONVICTION_SIZE_MAX_BAND: z.coerce.number().default(2.2),
+
   LIVE_TRADING_ENABLED: z
     .string()
     .default("false")
     .transform((v) => v === "true"),
-  LIVE_MAX_POSITION_USD: z.coerce.number().default(25),
-  LIVE_MAX_CONCURRENT: z.coerce.number().default(2),
-  LIVE_DAILY_LOSS_CAP_USD: z.coerce.number().default(50),
+  // LIVE SIZER — the live lane manages by REGIME + WALLET BALANCE, not a flat
+  // ceiling. Small positions (~$3.50–8.50 at a ~$60 balance) so the wallet holds
+  // MANY concurrent (not 2×$25), and sizes scale as the balance compounds. More
+  // small shots = more lottery tickets on the convex runners. Quality (walletEdge,
+  // premium venue) GATES entry; magnitude is balance×regime only for night one
+  // (quality-magnitude modulation deferred until validated).
+  LIVE_MIN_POSITION_USD: z.coerce.number().default(3.5), // floor — below this the tx fee drag is too high
+  LIVE_SIZE_FRAC: z.coerce.number().default(0.1), // base position = 10% of balance
+  LIVE_MAX_POSITION_FRAC: z.coerce.number().default(0.14), // ≤14% of balance in any one position
+  LIVE_MAX_EXPOSURE_FRAC: z.coerce.number().default(0.75), // deploy ≤75% of balance (reserve for fees/rent)
+  LIVE_MIN_FREE_SOL: z.coerce.number().default(0.03), // keep ≥0.03 SOL free for fees/ATA rent so buys don't fail
+  LIVE_PROBE_SIZE_MULT: z.coerce.number().default(0.6), // off-hours/probe regime shrink
+  // Absolute per-position backstop (frac governs in practice); balance-scaled kill.
+  LIVE_MAX_POSITION_USD: z.coerce.number().default(40),
+  LIVE_MAX_CONCURRENT: z.coerce.number().default(15), // count backstop; real limit is exposure fraction
+  LIVE_DAILY_LOSS_CAP_USD: z.coerce.number().default(24), // ~40% of a $60 start — actually fires, unlike a stale $50
+  LIVE_KILL_LOSS_USD: z.coerce.number().default(36), // ~60% of a $60 start — the permanent halt
+  LIVE_WALLET_GATE: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"), // block a serial-rugger holder set with no smart-money offset
+  // SMART-MONEY RESCUE: a token with ≥ this many winner-wallet holders and ZERO
+  // rug-wallets is the proven-winning slice even on a bleeder venue, so it
+  // overrides the premium-venue gate (the BRIBE +2× had 9 winner-wallets and was
+  // wrongly excluded as meteora-damm-v2). 0 disables the rescue.
+  LIVE_WALLET_RESCUE_MIN_WINNERS: z.coerce.number().default(2),
+  // BLEEDING-REGIME GATE — don't follow the paper book into a hostile regime.
+  // Paper is the regime sensor (high trade volume); if its realized over the
+  // recent window is deeply negative, live stands down on NEW entries (open
+  // positions still manage/exit normally) until the regime recovers.
+  LIVE_REGIME_GATE: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  LIVE_REGIME_WINDOW_MIN: z.coerce.number().default(45),
+  LIVE_REGIME_MAX_LOSS_USD: z.coerce.number().default(5), // paper realized over the window ≤ −this = bleeding
+  // MIRROR-MODE regime signal — a PERCENTAGE, not a dollar amount. A fixed dollar
+  // threshold does not scale: as paper's volume grows, normal 45-min swings grow
+  // with it, so any dollar figure eventually pauses live constantly. The scale-
+  // invariant signal is the venue EDGE over the window = net P&L ÷ gross capital
+  // deployed. Measured windows swing −10% to +179% edge — the negative ones are
+  // convex noise between winners — so only a CATASTROPHIC edge (a rug wave that
+  // loses most of everything deployed) should preempt live. The live daily cap
+  // (−$24) and kill (−$36) remain the real dollar backstops on live capital.
+  LIVE_MIRROR_REGIME_MAX_LOSS_PCT: z.coerce.number().default(0.5), // edge ≤ −50% (lost half of deployed) = hostile
+  LIVE_MIRROR_REGIME_MIN_GROSS_USD: z.coerce.number().default(100), // need this much deployed in the window for a signal; below it, don't gate
+  // LIVE PROTECTIVE GUARD — the live lane's OWN downside exit, independent of the
+  // paper twin. The −100% sweep loss (token dumped to ~zero before its paper twin
+  // closed) is a RUG, detectable by POOL COLLAPSE, not price whipsaw. Each cycle,
+  // probe every open live position's real sellability: catastrophic sell impact
+  // (pool draining) or a mark past the WIDE catastrophe backstop → cut NOW while
+  // liquidity remains. A tight price stop is deliberately AVOIDED — it would
+  // forfeit the convex runners; this only kills the zero-bound tail.
+  LIVE_GUARD_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  LIVE_GUARD_MS: z.coerce.number().default(15000), // guard cadence (throttle Jupiter probes)
+  LIVE_RUG_IMPACT_PCT: z.coerce.number().default(40), // sell price-impact above this = pool collapse → cut
+  LIVE_CATASTROPHE_STOP_PCT: z.coerce.number().default(55), // mark down past this = cut (wide, rides whipsaw)
   // LIVE LANE HARD RULE (pre-committed while paper-only, per advisor): an
   // INCONCLUSIVE honeypot probe (Jupiter unreachable / token unroutable) is a
   // paper-only soft flag — with real capital, unverifiable sellability is a
@@ -544,11 +723,155 @@ const envSchema = z.object({
     .default("true")
     .transform((v) => v !== "false"),
   // Live swap slippage tolerance (basis points). 300 = 3%: tight enough that a
-  // draining pool rejects, loose enough that a normal thin-pool fill lands.
+  // draining pool rejects, loose enough that a normal thin-pool fill lands. This
+  // is the ENTRY tolerance — keep it tight so a bad-priced buy is refused.
   LIVE_SLIPPAGE_BPS: z.coerce.number().default(300),
+  // EXIT slippage tolerance — deliberately WIDER than entry. In a convex book the
+  // winners are the whole P&L, so banking a trail on a fast-pulling-back runner
+  // must PRIORITIZE LANDING over price: a min-out computed on pool state that
+  // moved a moment ago reverts (the DOW live sell sim-failed twice at 3% before a
+  // retry landed), and repeatedly failing to exit a winner round-trips it. 10%
+  // ensures the exit fills; the guard's catastrophe/rug stops backstop the worst.
+  LIVE_SELL_SLIPPAGE_BPS: z.coerce.number().default(1000),
+  // LIVE PREMIUM-VENUE GATE — real capital only enters venues the recorder has
+  // proven premium by MEASURED performance, never by volume/'core' label
+  // (volume ≠ quality: the highest-volume venue can be the biggest bleeder).
+  // A venue qualifies for live capital when it is NOT blocked, has enough sample
+  // (watched ≥ LIVE_VENUE_MIN_N), keeps drawdown down (rug ≤ LIVE_VENUE_MAX_RUG),
+  // AND is proven to make money (realized_24h > 0) OR has earned 'promoted'.
+  // Note we do NOT gate on win RATE — these are convex venues where the hit rate
+  // is low but winners are huge, so a win-rate floor would wrongly cut the best
+  // venue. Rug rate (drawdown) + realized P&L (upside proven) are the real
+  // discriminators. Paper explores the whole universe so venues can earn their
+  // numbers; live exploits only the measured-premium map. Skip reason surfaces
+  // in the paper-vs-live funnel. ∪ static PRIME_VENUES always.
+  LIVE_PREMIUM_ONLY: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  LIVE_VENUE_MAX_RUG: z.coerce.number().default(0.25), // drawdown gate — cleanly separates pumpswap(.16) from toxic core(.37+)
+  LIVE_VENUE_MIN_N: z.coerce.number().default(15), // sample floor before a venue can hold real capital
+  // MIRROR MODE — the live lane copies the PAPER lane's entries (which it already
+  // mirror-sells on paper's exits) instead of applying its own stricter selection
+  // gate. Rationale (validated 2026-07-17 morning session): paper netted +$1,066
+  // with ~94% of it on pumpswap (BRIBE 111×/+$750, all the top winners), while the
+  // live lane's premium+honeypot gate skipped those exact tokens — 61 blocked on
+  // "honeypot not affirmatively verified" (a Jupiter-OUTAGE artifact: the swap-sim
+  // probe is inconclusive, route=none, for every one of the winners) and 100+ on
+  // "venue not premium". Mirror mode keeps EVERY capital-protection check (kill,
+  // daily cap, exposure, concurrency, regime, rug-wallet trap) but (a) swaps the
+  // premium-venue filter for an EXECUTABLE-venue filter and (b) makes the honeypot
+  // check trap-only. Safe because the executable venues are standard-program
+  // curve/AMM tokens (sells structurally symmetric with buys — no buy-yes/sell-no
+  // construct), paper already cleared the keyless RugCheck trap gate on each, and
+  // positions stay small + exposure-capped.
+  LIVE_MIRROR_PAPER: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  // Venues the live lane can actually route+exit WITHOUT Jupiter (PumpPortal covers
+  // pump.fun/pumpswap/pump-amm/bonding; Fluxbeam covers its own pools). This is the
+  // mirror-mode entry filter: it captures paper's entire winning set (pumpswap,
+  // fluxbeam, pump-amm, meteora-dbc) and naturally drops the unroutable net-negative
+  // bleeder (meteora-damm-v2: 140 trades, +$4 in FRICTIONLESS paper, negative live).
+  // Widen when Jupiter recovers (then all venues become routable).
+  LIVE_MIRROR_VENUES: z.string().default("pumpswap,pump-amm,fluxbeam,meteora-dbc,pumpfun,bags-fm"),
+  // EXIT PRE-CHECK — "never enter what we can't currently sell." Before every live
+  // buy, verify a REAL sell route exists for the token right now; a token we can
+  // buy but not sell is a guaranteed strand (KIMI). pump.fun-origin tokens are
+  // inherently sellable (symmetric curve/pool) and skip the network probe; the
+  // graduated non-pump class — the actual strand risk — is verified via PumpSwap
+  // pool then Jupiter. This is what makes selective all-venue trading safe.
+  LIVE_EXIT_PRECHECK: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  // Stranded-position write-off. A live position whose token has NO exit route on
+  // any provider (pool dumped to dust, all routes exhausted) is a total loss, not
+  // an open position — but the sweep would otherwise retry the doomed sell every
+  // 5s forever (KIMI spammed for 57min). After this many minutes of a route-
+  // exhausted sell failure, book the honest loss and close the row.
+  LIVE_STRAND_WRITEOFF_MIN: z.coerce.number().default(8),
+  // ANTICIPATION-DRIVEN SIZING — the forward forecast as a control input, not just
+  // a dashboard readout. Lean size IN when the token's venue is HEATING (paper
+  // realized rising, last 3h vs prior) and the window's TAIL ODDS are elevated;
+  // throttle when cold. Bounded so it TILTS the sizer within its clamps, never
+  // dominates — a heating venue in a hot window sizes toward the 14% cap, a cold
+  // one toward the floor. This is how the overnight-bleed lesson becomes action.
+  LIVE_ANTICIPATION_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  LIVE_ANTICIPATION_MIN: z.coerce.number().default(0.6), // floor on the combined tilt
+  LIVE_ANTICIPATION_MAX: z.coerce.number().default(1.5), // ceiling on the combined tilt
+  LIVE_ANTI_MOMENTUM_USD: z.coerce.number().default(3), // |recent−prior| paper P&L to call a venue heating/cooling
+  // ANTICIPATION GATE — the forecast as a STAND-DOWN, not just a size tilt. The
+  // kill autopsy (2026-07-18): live burned its runway taking shots in COLD windows
+  // (probe hours run a 4.58% tail rate vs 7.82% in prime — tails cluster 1.7× in
+  // prime) and hit 0 tails before the −$36 kill. A thin wallet cannot afford
+  // low-tail-probability shots. So when the combined anticipation signal (venue
+  // momentum × tail odds) is below this floor, live STANDS DOWN entirely and
+  // preserves runway for the warm windows where tails actually fire. This converts
+  // a few cheap shots into few HIGH-QUALITY shots — the real fix for "died dry".
+  LIVE_ANTICIPATION_GATE: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  LIVE_ANTICIPATION_GATE_MIN: z.coerce.number().default(0.85), // skip entry when anticipation mult < this (cold)
+  // FAST LIVE PROTECTIVE STOP — live's own executable stop, independent of the
+  // paper mirror. The kill autopsy (2026-07-18): live lost FULL positions to
+  // `live_sweep_close` because (a) the guard was blind to graduated-pumpswap
+  // tokens (swap quote canValue=false → it skipped them) so no stop fired, and
+  // (b) it only cut at the −55% catastrophe line, by which point the route is
+  // dead. Fix: value EVERY position by its price mark, cut at this tighter
+  // drawdown while liquidity still exists, and DUMP at market (wide slippage) so
+  // the exit actually fills instead of reverting into the −100% sweep. Paper's
+  // stop is a fiction (instant fill at the stop price); this is live's real one.
+  LIVE_STOP_PCT: z.coerce.number().default(28), // mark drawdown that triggers the fast protective cut
+  LIVE_STOP_SLIPPAGE_BPS: z.coerce.number().default(3500), // 35% — a stop must FILL; any fill beats the −100% sweep
+  // DAILY-CAP THROTTLE (not halt). A daily cap that STOPS trading locks in the
+  // loss and forfeits the recovery tail — the single most losing behavior for a
+  // tail strategy (24h autopsy: live daily-capped → sat out EVERY mover → the
+  // −$47 was guaranteed). Instead, as the day's loss grows toward the cap, SHRINK
+  // position size toward this floor but KEEP taking shots — stay present for the
+  // tail. Only the hard cumulative KILL (−$KILL) truly halts, protecting the wallet.
+  LIVE_DAILY_THROTTLE_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  LIVE_DAILY_THROTTLE_MIN: z.coerce.number().default(0.4), // size multiplier at/beyond the daily cap
+  // EARLY-FILL FLOOR — the insurance leg (docs/live-early-fill-floor.md). Paper's TP0
+  // floor fills at a mark; live's must fill into a real pool that can vanish, which is
+  // why live's rugs went −100% while paper banked 40%. The guard loop already values
+  // each open position via a REAL SELL QUOTE every ~5s; when that value is ≥ arm mult
+  // AND nothing's banked yet, bank the first defensive tranche NOW — the sell-quote
+  // itself is the liquidity gate (no quote → can't fire → no false bank). Wallet
+  // crucible on the real Wed–Sat sequence: this flips the $60/6% death (17%/$2) to
+  // 100%/$2,936. Ships DARK: enable + observe in LOG-ONLY before any capital moves.
+  LIVE_FLOOR_ENABLED: z
+    .string()
+    .default("false")
+    .transform((v) => v === "true"),
+  LIVE_FLOOR_LOG_ONLY: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"), // shadow: log the 🩹 intent, don't sell — flip to false to arm
+  LIVE_FLOOR_ARM_MULT: z.coerce.number().default(1.15), // = TP0_MULT; bank the first tranche into the blow-off
+  LIVE_FLOOR_FRACTION: z.coerce.number().default(0.4), // = TP0_CUM_SELL; farm tape uses FARM_TP0_CUM_SELL (1.0)
+  LIVE_FLOOR_SLIPPAGE_BPS: z.coerce.number().default(900), // banking into strength — wide enough to fill a fast mover, not a panic dump
 });
 
-export type HermesConfig = z.infer<typeof envSchema> & { rpcUrl: string };
+export type HermesConfig = z.infer<typeof envSchema> & { rpcUrl: string; rpcUrls: string[] };
+
+// Keyless public fallbacks — genuinely keyless + reachable. NOTE: rpc.ankr.com
+// (403) and solana.drpc.org (400) require API keys and were removed — they were
+// dead weight. For real redundancy configure a working second RPC via RPC_URLS
+// (Helius/Triton/paid). On a DPI-filtered host, mainnet-beta may only answer via
+// curl, not Node's fetch — so on such hosts the pool is effectively the primary.
+const PUBLIC_RPC_FALLBACKS = [
+  "https://solana-rpc.publicnode.com",
+  "https://api.mainnet-beta.solana.com",
+];
 
 let cached: HermesConfig | null = null;
 
@@ -559,6 +882,10 @@ export function loadConfig(): HermesConfig {
     env.HELIUS_API_KEY && env.HELIUS_RPC_ENABLED
       ? `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`
       : env.SOLANA_RPC_URL;
-  cached = { ...env, rpcUrl };
+  const extra = env.RPC_URLS.split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const rpcUrls = [...new Set([rpcUrl, ...extra, ...PUBLIC_RPC_FALLBACKS])]; // primary first, deduped
+  cached = { ...env, rpcUrl, rpcUrls };
   return cached;
 }

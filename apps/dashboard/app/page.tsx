@@ -1,5 +1,6 @@
-import { loadConfig } from "@hermes/core";
+import { loadConfig, harvestClock, type TradeDna } from "@hermes/core";
 import { AccountingLedger } from "@/components/AccountingLedger";
+import { HarvestClock } from "@/components/HarvestClock";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ControlTerminal } from "@/components/ControlTerminal";
 import { EquityChart } from "@/components/EquityChart";
@@ -11,6 +12,10 @@ import { KillSwitch } from "@/components/KillSwitch";
 import { ManagementBoard } from "@/components/ManagementBoard";
 import { RecorderBoard } from "@/components/RecorderBoard";
 import { PondRadar } from "@/components/PondRadar";
+import { AnticipationForecast } from "@/components/AnticipationForecast";
+import { WinningFormula } from "@/components/WinningFormula";
+import { WalletDrawer } from "@/components/WalletDrawer";
+import { LaneComparison } from "@/components/LaneComparison";
 import { TimingGrid } from "@/components/TimingGrid";
 import { MintLink, ScoreBadge, StatTile, fmtTs, fmtTsFull, timeAgo, usd } from "@/components/ui";
 import {
@@ -27,7 +32,12 @@ import {
   getNews,
   getManagedPositions,
   getPondRadar,
+  getAnticipation,
+  getWinningFormula,
   getHourlyWindows,
+  getWalletStatus,
+  getLaneComparison,
+  getWalletIntel,
   getTimingGrid,
   getRecentSignals,
   getRecentTrades,
@@ -63,6 +73,11 @@ export default async function Overview() {
     controlTerminal,
     ponds,
     hourWindows,
+    walletStatus,
+    laneComparison,
+    walletIntel,
+    anticipation,
+    winningFormula,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -85,9 +100,25 @@ export default async function Overview() {
     getControlTerminal(),
     getPondRadar(),
     getHourlyWindows(),
+    getWalletStatus(),
+    getLaneComparison(),
+    getWalletIntel(),
+    getAnticipation(),
+    getWinningFormula(),
   ]);
 
   const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
+
+  // Harvest clock — book-average moonshot clock across all open trades right now.
+  const harvest = harvestClock(
+    managed
+      .map((p) => p.dna)
+      .filter((d): d is NonNullable<typeof d> => d != null)
+      .map((d) => ({ clockPct: d.clockPct, pastPrime: d.pastPrime })),
+  );
+  // mint→DNA map — reused by the Timing Grid (open bars) and Wallet matrix (live = paper twin).
+  const dnaByMint: Record<string, TradeDna> = {};
+  for (const p of managed) if (p.dna) dnaByMint[p.mint] = p.dna;
 
   // Live float read for the Intel Report — realizable (post-slippage) unrealized P&L.
   const greenPositions = managed.filter((p) => p.unrealizedNetUsd > 0);
@@ -173,7 +204,7 @@ export default async function Overview() {
         <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
           Trade matrix — live positions, price locked in as they rise · click a bar to close
         </h2>
-        <TimingGrid view={timingGrid} />
+        <TimingGrid view={timingGrid} dnaByMint={dnaByMint} />
       </section>
 
       {/* Control terminal — the live trading desk. Every tunable exit/size knob
@@ -204,9 +235,12 @@ export default async function Overview() {
       {/* Position Command — the ride-vs-cut classifier, live and interactive */}
       <section>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
-            Position Command · ride vs cut
-          </h2>
+          <div className="flex items-center gap-4">
+            <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+              Position Command · ride vs cut
+            </h2>
+            <HarvestClock view={harvest} />
+          </div>
           <div className="flex items-center gap-3">
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
               classifier {cfg.CLASSIFIER_ENABLED ? cfg.CLASSIFIER_MODE : "off"} · override any call
@@ -238,8 +272,20 @@ export default async function Overview() {
         />
       </section>
 
+      {/* Winning Formula — real-time paper-vs-live per-trade divergence gauge */}
+      <WinningFormula view={winningFormula} />
+
+      {/* Live wallet + paper-vs-live divergence — the go-live command row */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <WalletDrawer wallet={walletStatus} dnaByMint={dnaByMint} />
+        <LaneComparison cmp={laneComparison} />
+      </div>
+
+      {/* Anticipation Forecast — the forward-looking brain: when / where / tail odds */}
+      <AnticipationForecast view={anticipation} />
+
       {/* Pond Radar — venue R&D lifecycle: discovery → watchlist → promotion */}
-      <PondRadar ponds={ponds} hours={hourWindows} />
+      <PondRadar ponds={ponds} hours={hourWindows} walletIntel={walletIntel} />
 
       {/* Accounting ledger — reconciled closed-trade truth + forecaster + portfolio */}
       <AccountingLedger

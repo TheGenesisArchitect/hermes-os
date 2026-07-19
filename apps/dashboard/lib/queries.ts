@@ -17,13 +17,16 @@ import {
   OVERRIDE_KNOBS,
   classify,
   convexSlippagePct,
+  fetchJupiterPrice,
   loadConfig,
   resilientFetch,
   resolveOverrides,
   runForecast,
   tickFrom,
+  tradeDna,
   type ForecastResult,
   type ManagementCall,
+  type TradeDna,
   type OverrideGroup,
   type OverrideKnob,
   type RegimeState,
@@ -88,7 +91,7 @@ export async function getStats() {
   const [openCount] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(positions)
-    .where(eq(positions.status, "open"));
+    .where(and(eq(positions.lane, "paper"), eq(positions.status, "open")));
   const [realized] = await db
     .select({ total: sql<string>`coalesce(sum(${positions.realizedPnlUsd}), 0)` })
     .from(positions)
@@ -193,12 +196,12 @@ export interface FillsSummary {
 export async function getFillsSummary(): Promise<FillsSummary> {
   const rows = await db.execute(sql`
     WITH f AS (
-      SELECT coalesce(sum(qty_tokens*price_usd) FILTER (WHERE side='sell'),0)::float sg,
-        coalesce(sum(fee_usd) FILTER (WHERE side='sell'),0)::float sf,
-        coalesce(sum(qty_tokens*price_usd) FILTER (WHERE side='buy'),0)::float bv,
-        coalesce(sum(fee_usd) FILTER (WHERE side='buy'),0)::float bf,
+      SELECT coalesce(sum(fl.qty_tokens*fl.price_usd) FILTER (WHERE fl.side='sell'),0)::float sg,
+        coalesce(sum(fl.fee_usd) FILTER (WHERE fl.side='sell'),0)::float sf,
+        coalesce(sum(fl.qty_tokens*fl.price_usd) FILTER (WHERE fl.side='buy'),0)::float bv,
+        coalesce(sum(fl.fee_usd) FILTER (WHERE fl.side='buy'),0)::float bf,
         count(*)::int n
-      FROM fills),
+      FROM fills fl JOIN positions pf ON pf.id = fl.position_id WHERE pf.lane='paper'),
     p AS (SELECT coalesce(sum(realized_pnl_usd),0)::float realized,
         coalesce(sum(size_usd*qty_remaining/NULLIF(qty_tokens,0)) FILTER (WHERE status='open'),0)::float oc
       FROM positions WHERE lane='paper')
@@ -340,6 +343,7 @@ export interface ManagedPosition {
   drawdownFromPeakPct: number;
   openedAt: Date;
   call: ManagementCall | null; // live classifier verdict, recomputed for full factors
+  dna: TradeDna | null; // fused health state + moonshot clock (docs/trade-dna-health.md)
   spark: { i: number; mm: number }[]; // markMultiple trajectory
   pendingIntent: "ride" | "cut" | null;
   ticks: number;
@@ -383,7 +387,7 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
     })
     .from(positions)
     .innerJoin(tokens, eq(tokens.mint, positions.mint))
-    .where(eq(positions.status, "open"))
+    .where(and(eq(positions.lane, "paper"), eq(positions.status, "open")))
     .orderBy(desc(positions.openedAt));
 
   const out: ManagedPosition[] = [];
@@ -436,6 +440,8 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
     const unrealizedNetUsd = realizableUsd - costBasisRemaining;
     const unrealizedNetPct = costBasisRemaining > 0 ? (unrealizedNetUsd / costBasisRemaining) * 100 : 0;
 
+    const peakMultiple = last ? num(last.peakMultiple) : 1;
+    const dna = call ? tradeDna(call, last ? num(last.ageMinutes) : 0, markMultiple, peakMultiple) : null;
     out.push({
       id: p.id,
       mint: p.mint,
@@ -444,10 +450,11 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
       sizeUsd,
       entryPriceUsd: entryPrice,
       markMultiple,
-      peakMultiple: last ? num(last.peakMultiple) : 1,
+      peakMultiple,
       drawdownFromPeakPct: last ? num(last.drawdownFromPeakPct) : 0,
       openedAt: p.openedAt,
       call,
+      dna,
       spark: series.map((t, i) => ({ i, mm: t.markMultiple })),
       pendingIntent: intent ? (intent.intent === "cut" ? "cut" : "ride") : null,
       ticks: series.length,
@@ -552,7 +559,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       .from(positions)
       .innerJoin(tokens, eq(tokens.mint, positions.mint))
       .leftJoin(candidateOutcomes, eq(candidateOutcomes.mint, positions.mint))
-      .where(eq(positions.status, "open")),
+      .where(and(eq(positions.lane, "paper"), eq(positions.status, "open"))),
     db
       .select({
         id: positions.id,
@@ -573,7 +580,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       .from(positions)
       .innerJoin(tokens, eq(tokens.mint, positions.mint))
       .leftJoin(candidateOutcomes, eq(candidateOutcomes.mint, positions.mint))
-      .where(and(eq(positions.status, "closed"), gte(positions.closedAt, closedSince)))
+      .where(and(eq(positions.lane, "paper"), eq(positions.status, "closed"), gte(positions.closedAt, closedSince)))
       .orderBy(desc(positions.closedAt))
       .limit(TIMING_CLOSED_MAX_BARS),
   ]);
@@ -914,11 +921,11 @@ export async function getAccountingLedger(): Promise<AccountingLedger> {
   const reconRows = await db.execute(sql`
     WITH f AS (
       SELECT
-        coalesce(sum(qty_tokens*price_usd) FILTER (WHERE side='sell'),0)::float sell_gross,
-        coalesce(sum(fee_usd) FILTER (WHERE side='sell'),0)::float sell_fees,
-        coalesce(sum(qty_tokens*price_usd) FILTER (WHERE side='buy'),0)::float buy_val,
-        coalesce(sum(fee_usd) FILTER (WHERE side='buy'),0)::float buy_fees
-      FROM fills),
+        coalesce(sum(fl.qty_tokens*fl.price_usd) FILTER (WHERE fl.side='sell'),0)::float sell_gross,
+        coalesce(sum(fl.fee_usd) FILTER (WHERE fl.side='sell'),0)::float sell_fees,
+        coalesce(sum(fl.qty_tokens*fl.price_usd) FILTER (WHERE fl.side='buy'),0)::float buy_val,
+        coalesce(sum(fl.fee_usd) FILTER (WHERE fl.side='buy'),0)::float buy_fees
+      FROM fills fl JOIN positions pf ON pf.id = fl.position_id WHERE pf.lane='paper'),
     p AS (
       SELECT coalesce(sum(realized_pnl_usd),0)::float realized,
         coalesce(sum(size_usd * qty_remaining / NULLIF(qty_tokens,0)) FILTER (WHERE status='open'),0)::float open_cost
@@ -1071,7 +1078,12 @@ export interface WatchingCandidate {
   // What the trader actually DID with this candidate — the armed-vs-traded
   // transparency chip. null = not armed/triggered (nothing to explain).
   disposition: string | null;
-  spark: { i: number; mm: number }[];
+  // Wallet-graph signal (the creme-rises layer): edge ∈ [0,1] and the raw
+  // presence counts. null edge = not yet scored (no holder sample).
+  walletEdge: number | null;
+  walletWinnerHits: number;
+  walletRugHits: number;
+  spark: { i: number; mm: number; t: number }[]; // t = age (watch minutes) for time-rung alignment
 }
 
 /** Candidates currently inside their watch window — the live trajectory feed. */
@@ -1089,6 +1101,9 @@ export async function getWatchingNow(): Promise<WatchingCandidate[]> {
       triggerMultiple: candidateOutcomes.triggerMultiple,
       armed: candidateOutcomes.armed,
       entered: candidateOutcomes.entered,
+      walletEdge: candidateOutcomes.walletEdge,
+      walletWinnerHits: candidateOutcomes.walletWinnerHits,
+      walletRugHits: candidateOutcomes.walletRugHits,
     })
     .from(candidateOutcomes)
     .innerJoin(tokens, eq(tokens.mint, candidateOutcomes.mint))
@@ -1186,7 +1201,10 @@ export async function getWatchingNow(): Promise<WatchingCandidate[]> {
             : o.triggeredAt != null
               ? "disarmed"
               : null,
-      spark: view.map((r, i) => ({ i, mm: num(r.markMultiple) })),
+      walletEdge: o.walletEdge == null ? null : num(o.walletEdge),
+      walletWinnerHits: o.walletWinnerHits ?? 0,
+      walletRugHits: o.walletRugHits ?? 0,
+      spark: view.map((r, i) => ({ i, mm: num(r.markMultiple), t: num(r.watchMinutes) })),
     });
   }
   return out;
@@ -1839,19 +1857,24 @@ export interface PumpPortalHealthView {
   migrationsSeen: number;
   reconnects: number;
 }
-// The live EXIT path — distinct from the "Jupiter" data feed above. A live
-// position can only be sold if BOTH the swap host (quote+build) and the RPC
-// (send+confirm) are reachable; this watchdog probes the real execution route
-// so a mid-session DPI regression is caught BEFORE a position needs to exit.
+// The live EXIT path — now a FAILOVER STACK. A live position can be sold as long
+// as ≥1 swap provider (Jupiter hosted/self-hosted, Fluxbeam, PumpPortal) AND ≥1
+// RPC endpoint are reachable. The watchdog probes every provider so a single
+// vendor outage (like Jupiter's) reads as "degraded, failing over" — NOT "down,
+// live blocked". Live is only truly blocked when the whole stack is dark.
+export interface RouteProbe {
+  name: string;
+  ok: boolean;
+  latencyMs: number | null;
+  note: string;
+  dormant?: boolean; // configured-off (e.g. self-hosted with no URL) — not a failure
+}
 export interface SellRouteHealth {
-  ok: boolean; // both legs up
-  liveEnabled: boolean; // LIVE_TRADING_ENABLED — decides alarm severity
-  swapOk: boolean;
-  swapLatencyMs: number | null;
-  swapNote: string;
-  rpcOk: boolean;
-  rpcLatencyMs: number | null;
-  rpcNote: string;
+  ok: boolean; // ≥1 swap provider up AND ≥1 RPC up
+  liveEnabled: boolean;
+  providers: RouteProbe[]; // swap providers, priority order
+  rpcs: RouteProbe[]; // RPC pool endpoints
+  activeProvider: string | null; // first healthy provider — what live would use now
 }
 export interface SystemHealthView {
   at: string;
@@ -1909,57 +1932,98 @@ const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
  * Both use resilientFetch (curl-through-GoodbyeDPI fallback), so the panel
  * reports the same reachability the live executor would actually get.
  */
+const SELL_PROBE_AMT = "10000000"; // 0.01 SOL
+
+/** Probe a quote-style route (Jupiter / Fluxbeam) — checkFn reads the body. */
+async function probeQuoteRoute(
+  name: string,
+  url: string,
+  checkFn: (body: unknown) => { ok: boolean; note: string },
+): Promise<RouteProbe> {
+  const t = Date.now();
+  try {
+    const res = await resilientFetch(url, { headers: { accept: "application/json" }, timeoutMs: 4000 });
+    if (!res.ok) return { name, ok: false, latencyMs: null, note: `HTTP ${res.status}` };
+    const { ok, note } = checkFn(await res.json().catch(() => null));
+    return { name, ok, latencyMs: ok ? Date.now() - t : null, note };
+  } catch (err) {
+    return { name, ok: false, latencyMs: null, note: err instanceof Error && err.name === "TimeoutError" ? "timeout" : "unreachable" };
+  }
+}
+
+/** Probe host reachability (PumpPortal is build-only — no quote to check). */
+async function probeReach(name: string, url: string, okNote: string): Promise<RouteProbe> {
+  const t = Date.now();
+  try {
+    const res = await resilientFetch(url, { timeoutMs: 4000 });
+    // any HTTP response (even 4xx) = the host is reachable
+    return { name, ok: res.status < 500, latencyMs: Date.now() - t, note: res.status < 500 ? okNote : `HTTP ${res.status}` };
+  } catch (err) {
+    return { name, ok: false, latencyMs: null, note: err instanceof Error && err.name === "TimeoutError" ? "timeout" : "unreachable" };
+  }
+}
+
 async function probeSellRoute(cfg: ReturnType<typeof loadConfig>): Promise<SellRouteHealth> {
-  const swapBase = cfg.JUPITER_BASE_URL.replace(/\/$/, "");
-  const swapUrl =
-    `${swapBase}/quote?inputMint=${WSOL}&outputMint=${USDC_MINT}` +
-    `&amount=10000000&slippageBps=${cfg.LIVE_SLIPPAGE_BPS}&restrictIntermediateTokens=true`;
+  const jupBase = cfg.JUPITER_BASE_URL.replace(/\/$/, "");
+  const fluxBase = cfg.FLUXBEAM_API_URL.replace(/\/$/, "");
+  const qs = `inputMint=${WSOL}&outputMint=${USDC_MINT}&amount=${SELL_PROBE_AMT}&slippageBps=${cfg.LIVE_SLIPPAGE_BPS}`;
 
-  const swapProbe = (async () => {
-    const t = Date.now();
+  const providerProbes: Promise<RouteProbe>[] = [
+    probeQuoteRoute("jupiter-hosted", `${jupBase}/quote?${qs}&restrictIntermediateTokens=true`, (b) => {
+      const body = b as { outAmount?: string; error?: string } | null;
+      return body?.outAmount ? { ok: true, note: "route ok" } : { ok: false, note: body?.error ?? "no route" };
+    }),
+    cfg.JUPITER_SELFHOSTED_URL
+      ? probeQuoteRoute("jupiter-selfhosted", `${cfg.JUPITER_SELFHOSTED_URL.replace(/\/$/, "")}/quote?${qs}`, (b) => {
+          const body = b as { outAmount?: string; error?: string } | null;
+          return body?.outAmount ? { ok: true, note: "route ok (self-hosted)" } : { ok: false, note: body?.error ?? "no route" };
+        })
+      : Promise.resolve<RouteProbe>({ name: "jupiter-selfhosted", ok: false, latencyMs: null, note: "dormant (no URL)", dormant: true }),
+    cfg.FLUXBEAM_ENABLED
+      ? probeQuoteRoute("fluxbeam", `${fluxBase}/quote?${qs}`, (b) => {
+          const body = b as { quote?: { outAmount?: string }; error?: string } | null;
+          return body?.quote?.outAmount ? { ok: true, note: "route ok (fluxbeam pools)" } : { ok: false, note: body?.error ?? "no route" };
+        })
+      : Promise.resolve<RouteProbe>({ name: "fluxbeam", ok: false, latencyMs: null, note: "disabled", dormant: true }),
+    probeReach("pumpportal", "https://pumpportal.fun/", "reachable · build-only (pump.fun/pumpswap)"),
+  ];
+
+  // RPC pool — every configured endpoint (curl-fallback reflects true reachability).
+  const rpcProbes: Promise<RouteProbe>[] = cfg.rpcUrls.slice(0, 5).map((url) => {
+    let host = url;
     try {
-      const res = await resilientFetch(swapUrl, { headers: { accept: "application/json" }, timeoutMs: 4000 });
-      if (!res.ok) return { swapOk: false, swapLatencyMs: null, swapNote: `HTTP ${res.status}` };
-      const body = (await res.json()) as { outAmount?: string; error?: string };
-      if (!body.outAmount) return { swapOk: false, swapLatencyMs: null, swapNote: body.error ?? "no route" };
-      return { swapOk: true, swapLatencyMs: Date.now() - t, swapNote: "route ok" };
-    } catch (err) {
-      return {
-        swapOk: false,
-        swapLatencyMs: null,
-        swapNote: err instanceof Error && err.name === "TimeoutError" ? "timeout" : "unreachable",
-      };
+      host = new URL(url).host;
+    } catch {
+      /* keep */
     }
-  })();
+    return (async (): Promise<RouteProbe> => {
+      const t = Date.now();
+      try {
+        const res = await resilientFetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestBlockhash", params: [{ commitment: "processed" }] }),
+          timeoutMs: 4000,
+        });
+        if (!res.ok) return { name: host, ok: false, latencyMs: null, note: `HTTP ${res.status}` };
+        const body = (await res.json().catch(() => null)) as { result?: { value?: { blockhash?: string } } } | null;
+        return body?.result?.value?.blockhash
+          ? { name: host, ok: true, latencyMs: Date.now() - t, note: "blockhash ok" }
+          : { name: host, ok: false, latencyMs: null, note: "no blockhash" };
+      } catch (err) {
+        return { name: host, ok: false, latencyMs: null, note: err instanceof Error && err.name === "TimeoutError" ? "timeout" : "unreachable" };
+      }
+    })();
+  });
 
-  const rpcProbe = (async () => {
-    const t = Date.now();
-    try {
-      const res = await resilientFetch(cfg.rpcUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getLatestBlockhash", params: [{ commitment: "processed" }] }),
-        timeoutMs: 4000,
-      });
-      if (!res.ok) return { rpcOk: false, rpcLatencyMs: null, rpcNote: `HTTP ${res.status}` };
-      const body = (await res.json()) as { result?: { value?: { blockhash?: string } }; error?: { message?: string } };
-      if (!body.result?.value?.blockhash) return { rpcOk: false, rpcLatencyMs: null, rpcNote: body.error?.message ?? "no blockhash" };
-      return { rpcOk: true, rpcLatencyMs: Date.now() - t, rpcNote: "blockhash ok" };
-    } catch (err) {
-      return {
-        rpcOk: false,
-        rpcLatencyMs: null,
-        rpcNote: err instanceof Error && err.name === "TimeoutError" ? "timeout" : "unreachable",
-      };
-    }
-  })();
-
-  const [swap, rpc] = await Promise.all([swapProbe, rpcProbe]);
+  const [providers, rpcs] = await Promise.all([Promise.all(providerProbes), Promise.all(rpcProbes)]);
+  const activeProvider = providers.find((p) => p.ok)?.name ?? null;
   return {
-    ...swap,
-    ...rpc,
     liveEnabled: cfg.LIVE_TRADING_ENABLED,
-    ok: swap.swapOk && rpc.rpcOk,
+    providers,
+    rpcs,
+    activeProvider,
+    ok: providers.some((p) => p.ok) && rpcs.some((r) => r.ok), // ≥1 route + ≥1 RPC = sellable
   };
 }
 
@@ -2066,7 +2130,7 @@ export async function getSystemHealth(): Promise<SystemHealthView> {
   const [openCount] = await db
     .select({ n: sql<number>`count(*)::int` })
     .from(positions)
-    .where(eq(positions.status, "open"));
+    .where(and(eq(positions.lane, "paper"), eq(positions.status, "open")));
   const [equitySnap] = await db
     .select({ equity: pnlSnapshots.equityUsd })
     .from(pnlSnapshots)
@@ -2107,6 +2171,549 @@ export async function getSystemHealth(): Promise<SystemHealthView> {
       killSwitch,
     },
     overall,
+  };
+}
+
+// ── Live wallet status ───────────────────────────────────────────────────────
+// The Wallet Drawer's data: derived address (dependency-free from the .env
+// secret — the dashboard never imports the trader's wallet module), on-chain SOL
+// balance via RPC, code-enforced caps, kill state, and the live lane's own P&L.
+// The secret is READ from env only to derive the public address; it is never
+// returned, logged, or serialized.
+
+const B58_ALPHA = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+function base58Decode(s: string): Uint8Array {
+  const map = new Map([...B58_ALPHA].map((c, i) => [c, BigInt(i)]));
+  let x = 0n;
+  for (const c of s) {
+    const v = map.get(c);
+    if (v === undefined) return new Uint8Array();
+    x = x * 58n + v;
+  }
+  const bytes: number[] = [];
+  while (x > 0n) {
+    bytes.unshift(Number(x & 0xffn));
+    x >>= 8n;
+  }
+  for (const c of s) {
+    if (c !== "1") break;
+    bytes.unshift(0);
+  }
+  return new Uint8Array(bytes);
+}
+function base58Encode(buf: Uint8Array): string {
+  let x = 0n;
+  for (const b of buf) x = x * 256n + BigInt(b);
+  let out = "";
+  while (x > 0n) {
+    out = B58_ALPHA[Number(x % 58n)] + out;
+    x /= 58n;
+  }
+  for (const b of buf) {
+    if (b !== 0) break;
+    out = "1" + out;
+  }
+  return out;
+}
+/** Solana address from the .env secret (64B = seed||pubkey → last 32 = pubkey). */
+function liveWalletAddressFromEnv(): string | null {
+  const raw = (process.env.TRADER_WALLET_SECRET_KEY ?? "").trim();
+  if (!raw) return null;
+  try {
+    const secret = base58Decode(raw);
+    if (secret.length !== 64) return null;
+    return base58Encode(secret.slice(32));
+  } catch {
+    return null;
+  }
+}
+
+export interface LiveTrade {
+  mint: string;
+  symbol: string | null;
+  sizeUsd: number;
+  status: string;
+  pnlUsd: number;
+  markUsd: number | null; // open positions: realizable sell value (mark-to-market)
+  exitReason: string | null;
+  openedAt: string;
+  // Mini-matrix geometry: how far the token ran vs where we ended.
+  peakMult: number; // peak_price / entry_price — the bar height (the high it reached)
+  resultMult: number; // where it landed: 1 + pnl/size (closed) or mark/cost (open) — the notch
+}
+export interface WalletStatus {
+  configured: boolean; // a key exists in .env
+  address: string | null;
+  liveEnabled: boolean; // LIVE_TRADING_ENABLED
+  premiumOnly: boolean;
+  balanceSol: number | null; // null = RPC unreachable
+  balanceUsd: number | null;
+  solPrice: number | null;
+  // The SIZER model (not flat hard-caps): position = balance × sizeFrac × regime.
+  sizer: { sizeFracPct: number; minPositionUsd: number; maxPositionFracPct: number; exposureFracPct: number };
+  caps: { dailyLossCapUsd: number; killLossUsd: number; maxConcurrent: number };
+  // Bleeding-regime gate: live stands down when paper (the regime sensor) bleeds.
+  // Mirror mode judges by EDGE% (net ÷ gross deployed) on the mirrored venues.
+  regime: {
+    gate: boolean;
+    bleeding: boolean;
+    mirror: boolean;
+    scope: string;
+    windowPnlUsd: number;
+    windowGrossUsd: number;
+    windowEdgePct: number | null;
+    windowMin: number;
+    maxLossUsd: number;
+    maxLossPct: number;
+    minGrossUsd: number;
+  };
+  kill: { engaged: boolean; reason: string | null };
+  live: {
+    openPositions: number;
+    openExposureUsd: number; // cost basis of open positions
+    openMarkUsd: number; // realizable (mark-to-market) value of open positions
+    unrealizedUsd: number; // openMarkUsd − cost basis
+    todayRealizedUsd: number;
+    cumRealizedUsd: number;
+    closes: number;
+  };
+  recentTrades: LiveTrade[]; // trade-for-trade, most recent first
+  /** funded enough to open at least one position + fees */
+  funded: boolean;
+}
+
+export async function getWalletStatus(): Promise<WalletStatus> {
+  const cfg = loadConfig();
+  const address = liveWalletAddressFromEnv();
+
+  // On-chain SOL balance (getBalance) + SOL price → USD. Both best-effort.
+  let balanceSol: number | null = null;
+  let solPrice: number | null = null;
+  if (address) {
+    try {
+      const res = await resilientFetch(cfg.rpcUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [address] }),
+        timeoutMs: 4000,
+      });
+      const body = (await res.json()) as { result?: { value?: number } };
+      if (typeof body.result?.value === "number") balanceSol = body.result.value / 1e9;
+    } catch {
+      /* RPC unreachable — balance stays null */
+    }
+  }
+  solPrice = await fetchJupiterPrice(cfg.JUPITER_PRICE_URL, WSOL).catch(() => null);
+  const balanceUsd = balanceSol !== null && solPrice !== null ? balanceSol * solPrice : null;
+
+  // Live-lane P&L (live positions live in the same table, lane='live').
+  const [liveAgg] = (await db
+    .select({
+      openPositions: sql<number>`count(*) filter (where ${positions.status} = 'open')`,
+      openExposure: sql<number>`coalesce(sum(${positions.sizeUsd}::float) filter (where ${positions.status} = 'open'), 0)`,
+      cumRealized: sql<number>`coalesce(sum(${positions.realizedPnlUsd}::float) filter (where ${positions.status} = 'closed'), 0)`,
+      todayRealized: sql<number>`coalesce(sum(${positions.realizedPnlUsd}::float) filter (where ${positions.status} = 'closed' and ${positions.closedAt} >= date_trunc('day', now())), 0)`,
+      closes: sql<number>`count(*) filter (where ${positions.status} = 'closed')`,
+    })
+    .from(positions)
+    .where(eq(positions.lane, "live"))) as {
+    openPositions: number;
+    openExposure: number;
+    cumRealized: number;
+    todayRealized: number;
+    closes: number;
+  }[];
+
+  // Kill state.
+  const killRows = (await db.execute(
+    sql`select value from config where key = 'live_kill'`,
+  )) as unknown as { value: { enabled?: boolean; reason?: string } }[];
+  const killVal = killRows[0]?.value;
+
+  // Bleeding-regime sensor — MUST match the trader's gate exactly (executor.ts):
+  // mirror mode scopes to the mirrored venues and judges by EDGE (net ÷ gross
+  // deployed), not a whole-book dollar sum. Reading it the old (whole-book,
+  // dollar) way made the drawer scream "REGIME BLEEDING" while the trader was
+  // trading happily — the damm-v2 churn alone drags the whole-book window past a
+  // few dollars every window.
+  const mirrorVenues = cfg.LIVE_MIRROR_PAPER
+    ? cfg.LIVE_MIRROR_VENUES.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+  const [regimeRow] = (
+    mirrorVenues.length > 0
+      ? ((await db.execute(sql`
+          select coalesce(sum(p.realized_pnl_usd::float), 0) as pnl, coalesce(sum(p.size_usd::float), 0) as gross
+          from positions p join tokens t on t.mint = p.mint
+          where p.lane = 'paper' and p.status = 'closed'
+            and p.closed_at >= now() - make_interval(mins => ${cfg.LIVE_REGIME_WINDOW_MIN})
+            and t.dex in (${sql.join(mirrorVenues.map((v) => sql`${v}`), sql`, `)})
+        `)) as unknown as { pnl: number; gross: number }[])
+      : ((await db.execute(sql`
+          select coalesce(sum(realized_pnl_usd::float), 0) as pnl, 0 as gross from positions
+          where lane = 'paper' and status = 'closed'
+            and closed_at >= now() - make_interval(mins => ${cfg.LIVE_REGIME_WINDOW_MIN})
+        `)) as unknown as { pnl: number; gross: number }[])
+  );
+  const windowPnlUsd = Number(regimeRow?.pnl ?? 0);
+  const windowGrossUsd = Number(regimeRow?.gross ?? 0);
+  const windowEdgePct = windowGrossUsd > 0 ? (windowPnlUsd / windowGrossUsd) * 100 : null;
+  const regimeBleeding =
+    cfg.LIVE_REGIME_GATE &&
+    (cfg.LIVE_MIRROR_PAPER
+      ? windowGrossUsd >= cfg.LIVE_MIRROR_REGIME_MIN_GROSS_USD &&
+        windowEdgePct !== null &&
+        windowEdgePct <= -cfg.LIVE_MIRROR_REGIME_MAX_LOSS_PCT * 100
+      : windowPnlUsd <= -cfg.LIVE_REGIME_MAX_LOSS_USD);
+
+  // Trade-for-trade: most recent live positions.
+  const tradeRows = await db
+    .select({
+      mint: positions.mint,
+      symbol: tokens.symbol,
+      sizeUsd: positions.sizeUsd,
+      qtyRemaining: positions.qtyRemaining,
+      status: positions.status,
+      pnlUsd: positions.realizedPnlUsd,
+      exitReason: positions.exitReason,
+      openedAt: positions.openedAt,
+      entryPriceUsd: positions.entryPriceUsd,
+      peakPriceUsd: positions.peakPriceUsd,
+    })
+    .from(positions)
+    .leftJoin(tokens, eq(tokens.mint, positions.mint))
+    .where(eq(positions.lane, "live"))
+    .orderBy(desc(positions.openedAt))
+    .limit(16);
+
+  // MARK-TO-MARKET the open live positions (A+ accounting: never show a dead
+  // position at cost). Realizable value = qty_remaining × live token price; a
+  // rugged/unroutable token prices to ~0, so it reads its true worth, not cost.
+  const markByMint = new Map<string, number>();
+  let openMarkUsd = 0;
+  let openCostUsd = 0;
+  for (const t of tradeRows) {
+    if (t.status !== "open") continue;
+    openCostUsd += Number(t.sizeUsd);
+    const px = await fetchJupiterPrice(cfg.JUPITER_PRICE_URL, t.mint).catch(() => null);
+    const mark = px != null && px > 0 ? Number(t.qtyRemaining) * px : 0;
+    markByMint.set(t.mint, mark);
+    openMarkUsd += mark;
+  }
+  const unrealizedUsd = openMarkUsd - openCostUsd;
+
+  const maxExposureUsd = (balanceUsd ?? 0) * cfg.LIVE_MAX_EXPOSURE_FRAC;
+
+  return {
+    configured: !!address,
+    address,
+    liveEnabled: cfg.LIVE_TRADING_ENABLED,
+    premiumOnly: cfg.LIVE_PREMIUM_ONLY,
+    balanceSol,
+    balanceUsd,
+    solPrice,
+    sizer: {
+      sizeFracPct: cfg.LIVE_SIZE_FRAC * 100,
+      minPositionUsd: cfg.LIVE_MIN_POSITION_USD,
+      maxPositionFracPct: cfg.LIVE_MAX_POSITION_FRAC * 100,
+      exposureFracPct: cfg.LIVE_MAX_EXPOSURE_FRAC * 100,
+    },
+    caps: {
+      dailyLossCapUsd: cfg.LIVE_DAILY_LOSS_CAP_USD,
+      killLossUsd: cfg.LIVE_KILL_LOSS_USD,
+      maxConcurrent: cfg.LIVE_MAX_CONCURRENT,
+    },
+    regime: {
+      gate: cfg.LIVE_REGIME_GATE,
+      bleeding: regimeBleeding,
+      mirror: cfg.LIVE_MIRROR_PAPER,
+      scope: mirrorVenues.length > 0 ? "mirror-venues" : "paper",
+      windowPnlUsd,
+      windowGrossUsd,
+      windowEdgePct,
+      windowMin: cfg.LIVE_REGIME_WINDOW_MIN,
+      maxLossUsd: cfg.LIVE_REGIME_MAX_LOSS_USD,
+      maxLossPct: cfg.LIVE_MIRROR_REGIME_MAX_LOSS_PCT * 100,
+      minGrossUsd: cfg.LIVE_MIRROR_REGIME_MIN_GROSS_USD,
+    },
+    kill: { engaged: killVal?.enabled === true, reason: killVal?.reason ?? null },
+    live: {
+      openPositions: Number(liveAgg?.openPositions ?? 0),
+      openExposureUsd: Number(liveAgg?.openExposure ?? 0),
+      openMarkUsd,
+      unrealizedUsd,
+      todayRealizedUsd: Number(liveAgg?.todayRealized ?? 0),
+      cumRealizedUsd: Number(liveAgg?.cumRealized ?? 0),
+      closes: Number(liveAgg?.closes ?? 0),
+    },
+    recentTrades: tradeRows.map((t) => {
+      const size = Number(t.sizeUsd);
+      const entry = Number(t.entryPriceUsd) || 0;
+      const peak = Number(t.peakPriceUsd) || 0;
+      const mark = t.status === "open" ? (markByMint.get(t.mint) ?? 0) : null;
+      const peakMult = entry > 0 && peak > 0 ? peak / entry : 1;
+      // Where it landed: open → current value vs cost; closed → realized multiple.
+      const resultMult =
+        t.status === "open"
+          ? size > 0 && mark != null
+            ? mark / size
+            : 1
+          : size > 0
+            ? 1 + Number(t.pnlUsd) / size
+            : 1;
+      return {
+        mint: t.mint,
+        symbol: t.symbol,
+        sizeUsd: size,
+        status: t.status,
+        pnlUsd: Number(t.pnlUsd),
+        markUsd: mark,
+        exitReason: t.exitReason,
+        openedAt: t.openedAt.toISOString(),
+        peakMult: Math.max(1, peakMult),
+        resultMult: Math.max(0, resultMult),
+      };
+    }),
+    funded: balanceUsd !== null && balanceUsd >= cfg.LIVE_MIN_POSITION_USD,
+  };
+}
+
+// ── Paper vs Live comparison ─────────────────────────────────────────────────
+// The "are there differences" surface. Live takes FEWER trades than paper by
+// design (premium-venue gate + hard caps), so the story is DIVERGENCE, not two
+// P&L curves: paper opened N → live mirrored M → skipped K (with reasons). The
+// skip breakdown is the gold — it explains exactly why live is more selective.
+
+export interface LaneComparison {
+  window: string;
+  paper: LaneStats;
+  live: LaneStats;
+  funnel: {
+    paperOpens: number;
+    liveOpens: number;
+    liveSkips: number;
+    liveFails: number;
+    skipReasons: { reason: string; count: number }[];
+  };
+}
+export interface LaneStats {
+  opens: number;
+  closes: number;
+  realizedUsd: number;
+  winners: number;
+  winRate: number | null;
+  bestPeakX: number | null;
+}
+
+async function laneStats(lane: string): Promise<LaneStats> {
+  const [row] = (await db
+    .select({
+      opens: sql<number>`count(*) filter (where ${positions.openedAt} >= now() - interval '24 hours')`,
+      closes: sql<number>`count(*) filter (where ${positions.status} = 'closed' and ${positions.closedAt} >= now() - interval '24 hours')`,
+      realized: sql<number>`coalesce(sum(${positions.realizedPnlUsd}::float) filter (where ${positions.status} = 'closed' and ${positions.closedAt} >= now() - interval '24 hours'), 0)`,
+      winners: sql<number>`count(*) filter (where ${positions.status} = 'closed' and ${positions.closedAt} >= now() - interval '24 hours' and ${positions.realizedPnlUsd}::float > 0)`,
+      bestPeak: sql<number>`max(${positions.peakPriceUsd}::float / nullif(${positions.entryPriceUsd}::float, 0)) filter (where ${positions.openedAt} >= now() - interval '24 hours')`,
+    })
+    .from(positions)
+    .where(eq(positions.lane, lane))) as {
+    opens: number;
+    closes: number;
+    realized: number;
+    winners: number;
+    bestPeak: number | null;
+  }[];
+  const closes = Number(row?.closes ?? 0);
+  const winners = Number(row?.winners ?? 0);
+  return {
+    opens: Number(row?.opens ?? 0),
+    closes,
+    realizedUsd: Number(row?.realized ?? 0),
+    winners,
+    winRate: closes > 0 ? winners / closes : null,
+    bestPeakX: row?.bestPeak ?? null,
+  };
+}
+
+export async function getLaneComparison(): Promise<LaneComparison> {
+  const [paper, live] = await Promise.all([laneStats("paper"), laneStats("live")]);
+
+  const skipRows = (await db.execute(sql`
+    select coalesce(details->>'reason', 'unknown') as reason, count(*)::int as n
+    from audit_log
+    where action = 'live_buy_skipped' and created_at >= now() - interval '24 hours'
+    group by 1 order by 2 desc
+  `)) as unknown as { reason: string; n: number }[];
+  const [failRow] = (await db.execute(sql`
+    select count(*)::int as n from audit_log
+    where action = 'live_buy_failed' and created_at >= now() - interval '24 hours'
+  `)) as unknown as { n: number }[];
+
+  return {
+    window: "24h",
+    paper,
+    live,
+    funnel: {
+      paperOpens: paper.opens,
+      liveOpens: live.opens,
+      liveSkips: skipRows.reduce((s, r) => s + Number(r.n), 0),
+      liveFails: Number(failRow?.n ?? 0),
+      skipReasons: skipRows.map((r) => ({ reason: r.reason, count: Number(r.n) })),
+    },
+  };
+}
+
+// ── Investor curve (three-layer: models · paper · live) ──────────────────────
+// The investor-facing deliverable: measured edge (validated models) → proven at
+// scale (paper track record) → executing with real capital (live wallet). Each
+// layer honest — paper is strategy validation, not realized cash; live is the
+// small-sample real-money execution under hard caps.
+
+export interface InvestorCurve {
+  paper: { series: { at: string; equity: number }[]; bankroll: number; realizedUsd: number; closes: number; winRatePct: number };
+  live: {
+    series: { at: string; equity: number }[];
+    baselineUsd: number | null; // first live equity snapshot (inception)
+    currentEquity: number | null;
+    realizedUsd: number;
+    closes: number;
+    winRatePct: number | null;
+    openPositions: number;
+  };
+  models: {
+    walletLiftX: number;
+    walletWithPct: number;
+    walletBasePct: number;
+    rugAuc: number;
+    premiumVenue: { name: string; realized: number };
+    bleederVenue: { name: string; realized: number };
+    smartWallets: number;
+    rugWallets: number;
+  };
+  generatedAt: string;
+}
+
+export async function getInvestorCurve(): Promise<InvestorCurve> {
+  const cfg = loadConfig();
+  const [paperSeries, liveSeries] = await Promise.all([
+    db.select({ at: pnlSnapshots.snappedAt, equity: pnlSnapshots.equityUsd }).from(pnlSnapshots).where(eq(pnlSnapshots.lane, "paper")).orderBy(pnlSnapshots.snappedAt).limit(1000),
+    db.select({ at: pnlSnapshots.snappedAt, equity: pnlSnapshots.equityUsd }).from(pnlSnapshots).where(eq(pnlSnapshots.lane, "live")).orderBy(pnlSnapshots.snappedAt).limit(1000),
+  ]);
+
+  const laneAgg = async (lane: string) => {
+    const [r] = (await db
+      .select({
+        realized: sql<number>`coalesce(sum(${positions.realizedPnlUsd}::float) filter (where ${positions.status} = 'closed'), 0)`,
+        closes: sql<number>`count(*) filter (where ${positions.status} = 'closed')`,
+        winners: sql<number>`count(*) filter (where ${positions.status} = 'closed' and ${positions.realizedPnlUsd}::float > 0)`,
+        open: sql<number>`count(*) filter (where ${positions.status} = 'open')`,
+      })
+      .from(positions)
+      .where(eq(positions.lane, lane))) as { realized: number; closes: number; winners: number; open: number }[];
+    return r;
+  };
+  const [paperAgg, liveAgg] = await Promise.all([laneAgg("paper"), laneAgg("live")]);
+
+  // Model layer — validated venue contrast + wallet-graph coverage.
+  const venueRows = (await db.execute(sql`
+    select venue, realized_24h::float as realized from venue_intel where venue in ('pumpswap','meteora-damm-v2')
+  `)) as unknown as { venue: string; realized: number }[];
+  const pump = venueRows.find((v) => v.venue === "pumpswap");
+  const bleeder = venueRows.find((v) => v.venue === "meteora-damm-v2");
+  const [wr] = (await db.execute(sql`
+    select count(*) filter (where tokens>=2 and wins>=1 and rugs=0)::int as smart,
+      count(*) filter (where tokens>=2 and rugs>=2 and wins=0)::int as rug from wallet_reputation
+  `)) as unknown as { smart: number; rug: number }[];
+
+  const num2 = (v: unknown) => Number(v);
+  const liveClose = Number(liveAgg?.closes ?? 0);
+  const paperClose = Number(paperAgg?.closes ?? 0);
+
+  return {
+    paper: {
+      series: paperSeries.map((p) => ({ at: p.at.toISOString(), equity: num2(p.equity) })),
+      bankroll: cfg.PAPER_BANKROLL_USD,
+      realizedUsd: Number(paperAgg?.realized ?? 0),
+      closes: paperClose,
+      winRatePct: paperClose > 0 ? (Number(paperAgg?.winners ?? 0) / paperClose) * 100 : 0,
+    },
+    live: {
+      series: liveSeries.map((p) => ({ at: p.at.toISOString(), equity: num2(p.equity) })),
+      baselineUsd: liveSeries.length > 0 ? num2(liveSeries[0]!.equity) : null,
+      currentEquity: liveSeries.length > 0 ? num2(liveSeries[liveSeries.length - 1]!.equity) : null,
+      realizedUsd: Number(liveAgg?.realized ?? 0),
+      closes: liveClose,
+      winRatePct: liveClose > 0 ? (Number(liveAgg?.winners ?? 0) / liveClose) * 100 : null,
+      openPositions: Number(liveAgg?.open ?? 0),
+    },
+    models: {
+      walletLiftX: 2.2,
+      walletWithPct: 27,
+      walletBasePct: 12.4,
+      rugAuc: 0.79,
+      premiumVenue: { name: "pumpswap", realized: pump ? Number(pump.realized) : 0 },
+      bleederVenue: { name: "meteora-damm-v2", realized: bleeder ? Number(bleeder.realized) : 0 },
+      smartWallets: Number(wr?.smart ?? 0),
+      rugWallets: Number(wr?.rug ?? 0),
+    },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+// ── Wallet reputation intel (the wallet graph) ───────────────────────────────
+// The radar's behavioral layer: smart-money and serial-rug wallets mined from
+// the holder graph × labeled outcomes. VALIDATED leak-free (winner-rep holder =
+// 2.2× winner lift). This surfaces the graph the "creme rises" scoring runs on.
+
+export interface WalletRow {
+  wallet: string;
+  tokens: number;
+  wins: number;
+  rugs: number;
+  score: number;
+}
+export interface WalletIntel {
+  qualified: number; // wallets with ≥2 labeled tokens
+  winnerWallets: number; // clean winners (wins≥1, rugs=0, ≥2 tokens)
+  rugWallets: number; // serial rugs (rugs≥2, wins=0, ≥2 tokens)
+  topWinners: WalletRow[];
+  topRugs: WalletRow[];
+  liveWinnerHits: number; // in-window candidates currently carrying a winner-rep holder
+}
+
+export async function getWalletIntel(): Promise<WalletIntel> {
+  const [cov] = (await db.execute(sql`
+    select
+      count(*) filter (where tokens >= 2)::int as qualified,
+      count(*) filter (where tokens >= 2 and wins >= 1 and rugs = 0)::int as winner_wallets,
+      count(*) filter (where tokens >= 2 and rugs >= 2 and wins = 0)::int as rug_wallets
+    from wallet_reputation
+  `)) as unknown as { qualified: number; winner_wallets: number; rug_wallets: number }[];
+
+  const top = (await db.execute(sql`
+    select wallet, tokens, wins, rugs, score::float as score from wallet_reputation
+    where tokens >= 3 and wins >= 1 and rugs = 0
+    order by wins desc, tokens desc limit 6
+  `)) as unknown as WalletRow[];
+
+  const bottom = (await db.execute(sql`
+    select wallet, tokens, wins, rugs, score::float as score from wallet_reputation
+    where tokens >= 3 and rugs >= 2 and wins = 0
+    order by rugs desc, tokens desc limit 6
+  `)) as unknown as WalletRow[];
+
+  const [live] = (await db.execute(sql`
+    select count(*)::int as n from candidate_outcomes
+    where label = 'open' and coalesce(wallet_winner_hits, 0) > 0
+  `)) as unknown as { n: number }[];
+
+  return {
+    qualified: Number(cov?.qualified ?? 0),
+    winnerWallets: Number(cov?.winner_wallets ?? 0),
+    rugWallets: Number(cov?.rug_wallets ?? 0),
+    topWinners: top.map((r) => ({ wallet: r.wallet, tokens: Number(r.tokens), wins: Number(r.wins), rugs: Number(r.rugs), score: Number(r.score) })),
+    topRugs: bottom.map((r) => ({ wallet: r.wallet, tokens: Number(r.tokens), wins: Number(r.wins), rugs: Number(r.rugs), score: Number(r.score) })),
+    liveWinnerHits: Number(live?.n ?? 0),
   };
 }
 
@@ -2418,4 +3025,227 @@ export async function getHourlyWindows(): Promise<HourWindow[]> {
   } catch {
     return [];
   }
+}
+
+// ── Anticipation Forecast — the FORWARD-looking brain ────────────────────────
+// Not a backward Monte Carlo (that's getForecast). This answers "what's coming":
+// WHEN the next high-expectancy window is (hour_policy + measured hourly P&L),
+// WHERE the flow is heating vs cooling (venue momentum, recent vs prior), and the
+// TAIL ODDS for the current window (historical 3×+ rate for this hour-of-day).
+// Every number is measured — no placeholders. Anticipation over reaction.
+export interface AnticipationHour {
+  etHour: number; // 0-23 America/New_York
+  inHours: number; // hours from now (0 = current)
+  policy: string; // prime | probe | unmeasured
+  realizedHist: number | null; // measured realized this hour-of-day (current run)
+  watchedHist: number; // candidate flow this hour-of-day (all history)
+  tailHist: number; // 3×+ candidates this hour-of-day (all history)
+}
+export interface AnticipationVenue {
+  venue: string;
+  state: string; // venue_intel lifecycle: promoted | watchlist | observed | blocked | core
+  recentPnl: number; // last 3h realized (paper sensor)
+  priorPnl: number; // prior 3-6h realized
+  recentN: number;
+  winPct: number | null;
+  momentum: "heating" | "cooling" | "steady";
+}
+export interface AnticipationView {
+  nowEtHour: number;
+  nowPolicy: string;
+  nextPrime: { inHours: number; etHour: number } | null;
+  timeline: AnticipationHour[]; // next 12 hours
+  venues: AnticipationVenue[]; // ranked by recent momentum
+  tail: {
+    last24h: number; // 3×+ events in the last 24h
+    ratePerHr: number;
+    thisWindowExpected: number; // historical 3×+ count for the current ET hour
+    odds: "elevated" | "normal" | "low"; // this window vs the 24h average
+    bestHourEt: number | null; // the historically hottest tail hour
+  };
+}
+
+export async function getAnticipation(): Promise<AnticipationView> {
+  const TAIL_MULT = 3; // a 3×+ candidate is a "tail event"
+  const empty: AnticipationView = {
+    nowEtHour: 0, nowPolicy: "unmeasured", nextPrime: null, timeline: [], venues: [],
+    tail: { last24h: 0, ratePerHr: 0, thisWindowExpected: 0, odds: "normal", bestHourEt: null },
+  };
+  try {
+    // current ET hour
+    const [nowRow] = (await db.execute(
+      sql`select extract(hour from now() at time zone 'America/New_York')::int as h`,
+    )) as unknown as { h: number }[];
+    const nowH = Number(nowRow?.h ?? 0);
+
+    // per-ET-hour history: flow, tail count, current-run realized
+    const runStart = (await db.select().from(config).where(eq(config.key, "paper_run_start")))[0]?.value as
+      | { startedAt?: string }
+      | undefined;
+    const runFilter = runStart?.startedAt ? sql`and p.opened_at >= ${runStart.startedAt}` : sql``;
+    const hourRows = (await db.execute(sql`
+      with hrs as (select generate_series(0,23) as h),
+      cand as (
+        select extract(hour from first_seen_at at time zone 'America/New_York')::int as h,
+          count(*)::int as watched,
+          count(*) filter (where peak_multiple >= ${TAIL_MULT})::int as tails
+        from candidate_outcomes where label in ('winner','dud','rug') group by 1
+      ),
+      trades as (
+        select extract(hour from p.opened_at at time zone 'America/New_York')::int as h,
+          sum(p.realized_pnl_usd::float) as pnl
+        from positions p where p.status='closed' and p.lane='paper' ${runFilter} group by 1
+      )
+      select hrs.h, coalesce(cand.watched,0) as watched, coalesce(cand.tails,0) as tails, trades.pnl
+      from hrs left join cand on cand.h=hrs.h left join trades on trades.h=hrs.h order by hrs.h
+    `)) as unknown as { h: number; watched: number; tails: number; pnl: number | null }[];
+    const byHour = new Map(hourRows.map((r) => [Number(r.h), r]));
+
+    const [policyRow] = (await db.execute(sql`select value from config where key='hour_policy'`)) as unknown as {
+      value: { hours?: Record<string, string> };
+    }[];
+    const policy = policyRow?.value?.hours ?? {};
+    const classOf = (h: number) => policy[String(h)] ?? "unmeasured";
+
+    // next 12 hours, rotating from now
+    const timeline: AnticipationHour[] = [];
+    let nextPrime: { inHours: number; etHour: number } | null = null;
+    for (let i = 0; i < 12; i++) {
+      const h = (nowH + i) % 24;
+      const r = byHour.get(h);
+      const cls = classOf(h);
+      if (cls === "prime" && i > 0 && nextPrime === null) nextPrime = { inHours: i, etHour: h };
+      timeline.push({
+        etHour: h,
+        inHours: i,
+        policy: cls,
+        realizedHist: r?.pnl == null ? null : Number(r.pnl),
+        watchedHist: Number(r?.watched ?? 0),
+        tailHist: Number(r?.tails ?? 0),
+      });
+    }
+
+    // venue momentum: recent 3h vs prior 3-6h (paper is the sensor)
+    const venueRows = (await db.execute(sql`
+      select t.dex as venue,
+        coalesce(sum(p.realized_pnl_usd::float) filter (where p.closed_at > now()-interval '3 hours'),0) as recent_pnl,
+        coalesce(sum(p.realized_pnl_usd::float) filter (where p.closed_at between now()-interval '6 hours' and now()-interval '3 hours'),0) as prior_pnl,
+        count(*) filter (where p.closed_at > now()-interval '3 hours')::int as recent_n,
+        count(*) filter (where p.closed_at > now()-interval '3 hours' and p.realized_pnl_usd>0)::int as recent_wins
+      from positions p join tokens t on t.mint=p.mint
+      where p.lane='paper' and p.status='closed' and p.closed_at > now()-interval '6 hours' and t.dex is not null
+      group by 1 having count(*) filter (where p.closed_at > now()-interval '3 hours') > 0
+      order by recent_pnl desc limit 8
+    `)) as unknown as { venue: string; recent_pnl: number; prior_pnl: number; recent_n: number; recent_wins: number }[];
+    const stateRows = (await db.execute(sql`select venue, state from venue_intel`)) as unknown as {
+      venue: string; state: string;
+    }[];
+    const stateOf = new Map(stateRows.map((r) => [r.venue, r.state]));
+    const venues: AnticipationVenue[] = venueRows.map((v) => {
+      const recent = Number(v.recent_pnl);
+      const prior = Number(v.prior_pnl);
+      const delta = recent - prior;
+      const momentum: AnticipationVenue["momentum"] =
+        Math.abs(delta) < 2 ? "steady" : delta > 0 ? "heating" : "cooling";
+      return {
+        venue: v.venue,
+        state: stateOf.get(v.venue) ?? "observed",
+        recentPnl: recent,
+        priorPnl: prior,
+        recentN: Number(v.recent_n),
+        winPct: v.recent_n > 0 ? (100 * Number(v.recent_wins)) / Number(v.recent_n) : null,
+        momentum,
+      };
+    });
+
+    // tail odds: last-24h rate vs this window's historical expectation
+    const [tail24] = (await db.execute(sql`
+      select count(*)::int as n from candidate_outcomes
+      where label in ('winner','dud','rug') and peak_multiple >= ${TAIL_MULT}
+        and first_seen_at > now()-interval '24 hours'
+    `)) as unknown as { n: number }[];
+    const last24h = Number(tail24?.n ?? 0);
+    const ratePerHr = last24h / 24;
+    const thisWindowExpected = Number(byHour.get(nowH)?.tails ?? 0);
+    // rank hours by historical tail count for the "hottest hour"
+    let bestHourEt: number | null = null;
+    let bestTails = -1;
+    for (const [h, r] of byHour) if (Number(r.tails) > bestTails) { bestTails = Number(r.tails); bestHourEt = h; }
+    // odds = this hour's share of tail flow vs a flat 1/24 expectation
+    const totalTails = hourRows.reduce((s, r) => s + Number(r.tails), 0) || 1;
+    const share = thisWindowExpected / totalTails;
+    const odds: AnticipationView["tail"]["odds"] = share >= 1.5 / 24 ? "elevated" : share <= 0.5 / 24 ? "low" : "normal";
+
+    return { nowEtHour: nowH, nowPolicy: classOf(nowH), nextPrime, timeline, venues, tail: { last24h, ratePerHr, thisWindowExpected, odds, bestHourEt } };
+  } catch {
+    return empty;
+  }
+}
+
+// ── Winning Formula — the real-time Paper-vs-Live divergence gauge ────────────
+// The per-trade expectancy anatomy that we were diagnosing by hand. Now it's a
+// live readout: win rate, avg win/loss %, expectancy, the tail, and the blow-up
+// rate — both lanes, side by side, so the divergence is READ in real time and the
+// winning formula is tuned continuously, never autopsied after the fact.
+export interface LaneFormula {
+  lane: string;
+  n: number;
+  winPct: number;
+  avgWinPct: number; // avg return of winning trades, % of size
+  avgLossPct: number; // avg return of losing trades, % of size
+  expectancyPct: number; // win% × avgWin − loss% × |avgLoss|
+  bestPct: number; // the tail
+  blowupPct: number; // share of trades losing ≥50%
+  fullLossPct: number; // share losing ≥90%
+  netUsd: number;
+}
+export interface WinningFormulaView {
+  windowHours: number;
+  paper: LaneFormula;
+  live: LaneFormula;
+  leak: string; // the biggest live leak vs paper, named
+}
+
+export async function getWinningFormula(windowHours = 24): Promise<WinningFormulaView> {
+  const rows = (await db.execute(sql`
+    select lane,
+      count(*)::int as n,
+      round(100.0*count(*) filter(where realized_pnl_usd>0)/nullif(count(*),0),1) as win_pct,
+      round(avg(100.0*realized_pnl_usd/nullif(size_usd,0)) filter(where realized_pnl_usd>0)::numeric,1) as avg_win,
+      round(avg(100.0*realized_pnl_usd/nullif(size_usd,0)) filter(where realized_pnl_usd<=0)::numeric,1) as avg_loss,
+      round(max(100.0*realized_pnl_usd/nullif(size_usd,0))::numeric,0) as best,
+      round(100.0*count(*) filter(where realized_pnl_usd/nullif(size_usd,0)<=-0.5)/nullif(count(*),0),0) as blowup,
+      round(100.0*count(*) filter(where realized_pnl_usd/nullif(size_usd,0)<=-0.9)/nullif(count(*),0),0) as fullloss,
+      round(sum(realized_pnl_usd)::numeric,2) as net
+    from positions
+    where status='closed' and closed_at > now() - make_interval(hours => ${windowHours})
+    group by lane
+  `)) as unknown as {
+    lane: string; n: number; win_pct: number; avg_win: number; avg_loss: number;
+    best: number; blowup: number; fullloss: number; net: number;
+  }[];
+  const mk = (lane: string): LaneFormula => {
+    const r = rows.find((x) => x.lane === lane);
+    const winPct = Number(r?.win_pct ?? 0);
+    const avgWin = Number(r?.avg_win ?? 0);
+    const avgLoss = Number(r?.avg_loss ?? 0);
+    return {
+      lane, n: Number(r?.n ?? 0), winPct, avgWinPct: avgWin, avgLossPct: avgLoss,
+      expectancyPct: (winPct / 100) * avgWin + (1 - winPct / 100) * avgLoss,
+      bestPct: Number(r?.best ?? 0), blowupPct: Number(r?.blowup ?? 0),
+      fullLossPct: Number(r?.fullloss ?? 0), netUsd: Number(r?.net ?? 0),
+    };
+  };
+  const paper = mk("paper");
+  const live = mk("live");
+  // Name the biggest leak — the metric where live diverges most from paper, so the
+  // panel doesn't just show numbers, it points at what to fix.
+  let leak = "on track";
+  if (live.n >= 5) {
+    if (live.bestPct < paper.bestPct * 0.2 && paper.bestPct > 200) leak = "NO TAIL — live isn't catching movers (presence)";
+    else if (live.avgLossPct < paper.avgLossPct - 8) leak = "LOSERS TOO BIG — execution bleed (sweep/strand)";
+    else if (live.winPct < paper.winPct - 12) leak = "WIN RATE — live trading the losers (selection)";
+    else if (live.avgWinPct < paper.avgWinPct - 8) leak = "CAPTURE — winners banked too early (trail/ladder)";
+  }
+  return { windowHours, paper, live, leak };
 }

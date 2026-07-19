@@ -224,47 +224,43 @@ export function SystemHealth() {
               </h3>
               {(() => {
                 const sr = health.sellRoute;
-                // Severity: down while LIVE = critical (a position can't exit);
-                // down while PAPER = warning (go-live blocker); up = good.
+                // Failover stack: healthy if ANY swap provider + ANY RPC is up.
+                // Only "critical/blocked" when the WHOLE stack is dark AND live.
                 const critical = !sr.ok && sr.liveEnabled;
                 const bannerColor = sr.ok ? "var(--status-good)" : critical ? "var(--status-critical)" : "var(--status-warning)";
-                const bannerBg = sr.ok
-                  ? "rgba(63,185,80,0.10)"
-                  : critical
-                    ? "rgba(208,59,59,0.14)"
-                    : "rgba(210,153,34,0.12)";
+                const bannerBg = sr.ok ? "rgba(63,185,80,0.10)" : critical ? "rgba(208,59,59,0.14)" : "rgba(210,153,34,0.12)";
                 const bannerText = sr.ok
-                  ? "Exit path clear — quote + RPC both reachable"
+                  ? `Exit path clear — failing over via ${sr.activeProvider ?? "a route"}`
                   : critical
-                    ? "⚠ SELL ROUTE DARK WHILE LIVE — open positions may be unsellable"
-                    : "Sell route down — go-live blocked until it clears";
-                const leg = (label: string, ok: boolean, latency: number | null, note: string) => (
+                    ? "⚠ ALL SELL ROUTES DARK WHILE LIVE — open positions may be unsellable"
+                    : "All sell routes down — go-live blocked until one clears";
+                const row = (p: { name: string; ok: boolean; latencyMs: number | null; note: string; dormant?: boolean }) => (
                   <div
-                    className="flex items-center justify-between rounded-md px-3 py-2"
+                    key={p.name}
+                    className="flex items-center justify-between rounded-md px-3 py-1.5"
                     style={{ background: "var(--surface-1)", border: "1px solid var(--gridline)" }}
                   >
                     <div className="flex items-center gap-2">
-                      <Dot ok={ok} warn={!ok && !sr.liveEnabled} />
-                      <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{label}</span>
+                      <Dot ok={p.ok} warn={!p.ok && (p.dormant || !sr.liveEnabled)} />
+                      <span className="tabular text-[11px] font-medium" style={{ color: "var(--text-primary)" }}>{p.name}</span>
+                      {p.name === sr.activeProvider ? (
+                        <span className="rounded px-1 py-px text-[8px]" style={{ color: "var(--status-good)", border: "1px solid var(--status-good)" }}>ACTIVE</span>
+                      ) : null}
                     </div>
-                    <span
-                      className="tabular text-[11px]"
-                      style={{ color: ok ? "var(--text-muted)" : sr.liveEnabled ? "var(--status-critical)" : "var(--status-warning)" }}
-                    >
-                      {ok ? `${latency}ms · ${note}` : note}
+                    <span className="tabular text-[10.5px]" style={{ color: p.ok ? "var(--text-muted)" : p.dormant ? "var(--text-muted)" : "var(--status-warning)" }}>
+                      {p.ok ? `${p.latencyMs}ms · ${p.note}` : p.note}
                     </span>
                   </div>
                 );
                 return (
                   <div className="space-y-1.5">
-                    <div
-                      className="rounded-md px-3 py-2 text-[11px] font-medium"
-                      style={{ background: bannerBg, border: `1px solid ${bannerColor}`, color: bannerColor }}
-                    >
+                    <div className="rounded-md px-3 py-2 text-[11px] font-medium" style={{ background: bannerBg, border: `1px solid ${bannerColor}`, color: bannerColor }}>
                       {bannerText}
                     </div>
-                    {leg("Jupiter swap (quote+build)", sr.swapOk, sr.swapLatencyMs, sr.swapNote)}
-                    {leg("Solana RPC (send+confirm)", sr.rpcOk, sr.rpcLatencyMs, sr.rpcNote)}
+                    <div className="pt-1 text-[9px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Swap providers (priority order)</div>
+                    {sr.providers.map(row)}
+                    <div className="pt-1 text-[9px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>RPC pool (send + confirm)</div>
+                    {sr.rpcs.map(row)}
                   </div>
                 );
               })()}

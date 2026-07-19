@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { setManagementIntent } from "@/app/actions";
+import type { TradeDna } from "@hermes/core";
+import { TradeDNA } from "@/components/TradeDNA";
 import type { TimingGridView, TimingTrade } from "@/lib/queries";
 
 // The vertical Trade Matrix: one heat-bar per trade, height = how high it rose
@@ -68,10 +70,12 @@ function ValueSpark({ t }: { t: TimingTrade }) {
 
 function Card({
   t,
+  dna,
   onClose,
   closing,
 }: {
   t: TimingTrade;
+  dna: TradeDna | null;
   onClose: (id: number) => void;
   closing: boolean;
 }) {
@@ -109,6 +113,13 @@ function Card({
           ? `OPEN · ${t.state} · ${fmtSec(t.ageSec)} · since ${fmtClock(t.openedAtIso)}`
           : `CLOSED · ${t.exit?.reason ?? "closed"} · held ${fmtSec(t.ageSec)} · opened ${fmtClock(t.openedAtIso)}`}
       </div>
+
+      {isOpen && dna && (
+        <div className="mb-2 flex items-center gap-2">
+          <span className="text-[9px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>DNA</span>
+          <TradeDNA dna={dna} />
+        </div>
+      )}
 
       {/* value-over-time — the card's centerpiece */}
       <ValueSpark t={t} />
@@ -156,7 +167,7 @@ function Card({
 }
 
 // ── the matrix ───────────────────────────────────────────────────────────────
-export function TimingGrid({ view }: { view: TimingGridView }) {
+export function TimingGrid({ view, dnaByMint }: { view: TimingGridView; dnaByMint?: Record<string, TradeDna> }) {
   const [card, setCard] = useState<{ id: number; x: number; y: number } | null>(null);
   const [closing, setClosing] = useState<Set<number>>(new Set());
   const [, startTransition] = useTransition();
@@ -384,7 +395,7 @@ export function TimingGrid({ view }: { view: TimingGridView }) {
           onMouseEnter={cancelHide}
           onMouseLeave={scheduleHide}
         >
-          <Card t={cardTrade} onClose={closePosition} closing={closing.has(cardTrade.id)} />
+          <Card t={cardTrade} dna={dnaByMint?.[cardTrade.mint] ?? null} onClose={closePosition} closing={closing.has(cardTrade.id)} />
         </div>
       )}
     </div>

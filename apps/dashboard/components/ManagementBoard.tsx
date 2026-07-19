@@ -6,6 +6,7 @@ import { Line, LineChart, ReferenceLine, ResponsiveContainer, YAxis } from "rech
 import type { ManagementFeature } from "@hermes/core";
 import { setManagementIntent } from "@/app/actions";
 import { fmtTs, fmtTsFull } from "@/components/ui";
+import { TradeDNA } from "@/components/TradeDNA";
 import type { ManagedPosition } from "@/lib/queries";
 
 /** Serialized shape passed from the server page (Date → ISO). */
@@ -223,6 +224,11 @@ function Card({ p }: { p: ManagedPositionView }) {
         <span className="tabular text-xs" style={{ color: "var(--text-muted)" }}>
           {score}/100 continuation
         </span>
+      </div>
+
+      <div className="mt-2 flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>DNA</span>
+        <TradeDNA dna={p.dna} />
       </div>
 
       <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--text-secondary)" }}>

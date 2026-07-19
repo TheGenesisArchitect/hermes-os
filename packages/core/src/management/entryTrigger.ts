@@ -38,6 +38,9 @@ export interface EntryTriggerConfig {
   maxDrawdownPct: number;
   minBuyShare: number;
   minVolAccel: number;
+  /** Neutral-churn dead zone [lo, hi): symmetric bot ping-pong flow, not demand. */
+  deadBuyShareLo: number;
+  deadBuyShareHi: number;
 }
 
 export interface EntryTrigger {
@@ -80,6 +83,16 @@ export function evaluateEntryTrigger(
   if (last.markMultiple < cfg.minMult) return no(`not green enough (${last.markMultiple.toFixed(2)}x < ${cfg.minMult}x)`);
   if (last.drawdownFromPeakPct > cfg.maxDrawdownPct) return no(`rolled off peak (${last.drawdownFromPeakPct.toFixed(0)}% > ${cfg.maxDrawdownPct}%)`);
   if (last.buyShareM5 < cfg.minBuyShare) return no(`buy flow faded (${(last.buyShareM5 * 100).toFixed(0)}% < ${(cfg.minBuyShare * 100).toFixed(0)}%)`);
+  // Neutral-churn dead zone (calibrated 2026-07-19 on liquidity-collapse-clean
+  // labels, n=5988 triggers): buy share in [0.50, 0.55) at the confirm tick =
+  // symmetric wash flow (avg ~800 txns/5m of bot ping-pong), 7.9% winners vs
+  // 31-43% in every band on either side — the ragoon bait signature (price
+  // pinned green on 51/49 flow, then the LP yank). NOT a floor: 0.45-0.50
+  // (sell-pressure-absorbed) wins 33%, so only the dead zone is excluded.
+  if (last.buyShareM5 >= cfg.deadBuyShareLo && last.buyShareM5 < cfg.deadBuyShareHi)
+    return no(
+      `neutral churn (${(last.buyShareM5 * 100).toFixed(0)}% buys in dead zone [${(cfg.deadBuyShareLo * 100).toFixed(0)},${(cfg.deadBuyShareHi * 100).toFixed(0)})% — wash flow, not demand)`,
+    );
   // Volume must be ACCELERATING — the last 5m carrying a real slice of the hour's
   // flow (vol_m5/vol_h1). The one clean positive edge vs rugs. Skip the check when
   // vol_h1 is unusable (young token, degenerate ratio) so a real igniter isn't cut.
@@ -103,6 +116,8 @@ export function entryTriggerConfigFrom(cfg: {
   CONFIRM_MAX_DD_PCT: number;
   CONFIRM_MIN_BUYSHARE: number;
   CONFIRM_MIN_VOLACCEL: number;
+  CONFIRM_DEAD_BUYSHARE_LO: number;
+  CONFIRM_DEAD_BUYSHARE_HI: number;
 }): EntryTriggerConfig {
   return {
     enabled: cfg.CONFIRM_ENTRY_ENABLED,
@@ -113,5 +128,7 @@ export function entryTriggerConfigFrom(cfg: {
     maxDrawdownPct: cfg.CONFIRM_MAX_DD_PCT,
     minBuyShare: cfg.CONFIRM_MIN_BUYSHARE,
     minVolAccel: cfg.CONFIRM_MIN_VOLACCEL,
+    deadBuyShareLo: cfg.CONFIRM_DEAD_BUYSHARE_LO,
+    deadBuyShareHi: cfg.CONFIRM_DEAD_BUYSHARE_HI,
   };
 }

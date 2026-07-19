@@ -10,6 +10,7 @@ import {
   fetchTokenMarket,
   fetchTokenMarkets,
   loadConfig,
+  scoreConviction,
   scoreRugProb,
   tickFrom,
   type Tick,
@@ -23,8 +24,9 @@ import {
   positions,
   signals,
 } from "@hermes/db";
-import { asc, eq, gte, sql } from "drizzle-orm";
+import { asc, desc, eq, gte, sql } from "drizzle-orm";
 import { scanPonds } from "./pondScanner.js";
+import { refreshWalletReputation, scoreCandidateWalletEdge } from "./walletReputation.js";
 
 const cfg = loadConfig();
 const triggerCfg = entryTriggerConfigFrom(cfg);
@@ -90,17 +92,40 @@ async function closeOutcome(mint: string, delisted: boolean): Promise<void> {
     .where(eq(positions.mint, mint))
     .limit(1);
   const entered = !!pos;
+  // Liquidity-collapse override (the ragoon lesson, 2026-07-19): an LP yank can
+  // leave the pool at ~$15 with the DexScreener price still pinned green. The
+  // mark-freeze guard (correct — a drained pool cannot pump) then holds
+  // finalMult at last-good, so the corpse graded "dud at 1.25x" — 1,830 of
+  // 7,367 duds (25%) were rugs wearing that coat. A window that ENDS with the
+  // pool drained (last 3 reads < REF_MIN_LIQ) after having had a real pool is a
+  // rug no matter what the frozen mark says. Three reads, not one, so a single
+  // pool-flip flicker at close can't mislabel a live token.
+  const lastTicks = await db
+    .select({ liquidityUsd: candidateTicks.liquidityUsd })
+    .from(candidateTicks)
+    .where(eq(candidateTicks.mint, mint))
+    .orderBy(desc(candidateTicks.snappedAt))
+    .limit(3);
+  const liqCollapsed =
+    lastTicks.length > 0 &&
+    lastTicks.every((r) => num(r.liquidityUsd) < REF_MIN_LIQ) &&
+    num(o.peakLiquidityUsd) >= REF_MIN_LIQ;
   // Label by TERMINAL OUTCOME, not by peak — raw magnitudes are stored, so this is
   // re-derivable. The old `delisted && peak < 1.2` rule labeled a rug only if it
   // never pumped, so every pump-then-rug (peak 1.35x → final 0.001x, the -$17
   // killers) fell through to "dud" — 726 real rugs hid in the dud class and the
   // classifier could learn nothing about them. Now: winner takes precedence (a 2x+
   // move existed → the TP ladder banks it before any rug), else a terminal collapse
-  // to <= RUG_FINAL (or a delisting) is a rug, else a dud. This CASE is byte-identical
-  // to the 2026-07-14 SQL backfill that relabeled all history — keep them in lockstep.
+  // to <= RUG_FINAL (or a delisting, or a drained pool) is a rug, else a dud. This
+  // CASE matches the 2026-07-14 and 2026-07-19 SQL backfills that relabeled all
+  // history — keep them in lockstep.
   let label: string;
   if (won) label = "winner";
-  else if (delisted || (o.ticks > 0 && finalMult > 0 && finalMult <= cfg.RECORDER_RUG_FINAL_MULT))
+  else if (
+    delisted ||
+    liqCollapsed ||
+    (o.ticks > 0 && finalMult > 0 && finalMult <= cfg.RECORDER_RUG_FINAL_MULT)
+  )
     label = "rug";
   else label = "dud";
 
@@ -120,7 +145,7 @@ async function closeOutcome(mint: string, delisted: boolean): Promise<void> {
   await db.insert(auditLog).values({
     actor: "recorder",
     action: "candidate_labeled",
-    details: { mint, label, peakMultiple: peak, finalMultiple: num(o.finalMultiple), entered, delisted },
+    details: { mint, label, peakMultiple: peak, finalMultiple: num(o.finalMultiple), entered, delisted, liqCollapsed },
   });
   missStreak.delete(mint);
   const tag = label === "winner" ? "🏆" : label === "rug" ? "☠️ " : "· ";
@@ -308,6 +333,28 @@ async function observe(
         })
       : null;
 
+    // Wallet-reputation edge: score this candidate's holder set against the graph
+    // (VALIDATED — winner-rep wallet in holders = 2.2× winner lift). Scored while
+    // ARMED (refreshed each poll for the entry decision) AND once early for every
+    // WATCHING candidate (walletEdge still null) — that early score is the
+    // smart-money DISCOVERY signal, surfaced before a candidate ever arms.
+    const wallet = armed || o.walletEdge == null ? await scoreCandidateWalletEdge(o.mint) : null;
+
+    // CONVICTION — fuse the high-performance factors into one score (wallet-
+    // dominant) that drives entry priority + live sizing. Point-in-time at arm.
+    const convScore =
+      armed && cfg.CONVICTION_ENABLED
+        ? scoreConviction(
+            {
+              walletEdge: wallet ? wallet.edge : o.walletEdge != null ? Number(o.walletEdge) : null,
+              rugProb,
+              triggerMultiple: trig.markMultiple,
+              buyShare: trig.buyShare,
+            },
+            { wallet: cfg.CONVICTION_W_WALLET, rugSafe: cfg.CONVICTION_W_RUGSAFE, gate: cfg.CONVICTION_W_GATE },
+          )
+        : null;
+
     // First time it arms: stamp the trigger context (for news/analytics) and
     // announce. Re-arms after a disarm keep the original triggeredAt as the
     // "first confirmed demand" mark.
@@ -320,6 +367,15 @@ async function observe(
         // sizing), so it must reflect the tick it will actually enter into, not
         // the first-arm snapshot from minutes ago.
         ...(armed ? { triggerBuyShare: String(trig.buyShare), rugProb: String(rugProb) } : {}),
+        ...(wallet
+          ? {
+              walletEdge: String(wallet.edge),
+              walletWinnerHits: wallet.winnerHits,
+              walletRugHits: wallet.rugHits,
+              walletKnown: wallet.known,
+            }
+          : {}),
+        ...(convScore !== null ? { convictionScore: String(convScore) } : {}),
         ...(firstArm
           ? {
               triggeredAt: new Date(),
@@ -347,7 +403,10 @@ async function observe(
           reason: trig.reason,
         },
       });
-      console.log(`⚡ ARMED ${short(o.mint)} — ${trig.reason} · rug ${rugProb === null ? "n/a" : (rugProb * 100).toFixed(0) + "%"}`);
+      const wsig = wallet
+        ? ` · wallet ${wallet.winnerHits > 0 ? `🟢${wallet.winnerHits}w` : ""}${wallet.rugHits > 0 ? ` 🔴${wallet.rugHits}r` : ""}${wallet.known === 0 ? "fresh" : ""} (edge ${(wallet.edge * 100).toFixed(0)})`
+        : "";
+      console.log(`⚡ ARMED ${short(o.mint)} — ${trig.reason} · rug ${rugProb === null ? "n/a" : (rugProb * 100).toFixed(0) + "%"}${wsig}${convScore !== null ? ` · conviction ${(convScore * 100).toFixed(0)}` : ""}`);
     }
   }
 
@@ -359,6 +418,9 @@ async function tick(): Promise<void> {
   // Pond Radar: venue lifecycle from rolling 24h evidence (self-throttled to
   // POND_SCAN_MS; own try/catch — R&D must never stall the recording loop).
   void scanPonds(cfg);
+  // Wallet reputation: recompute the behavioral graph from holders × outcomes
+  // (self-throttled; own try/catch — must never stall the recording loop).
+  void refreshWalletReputation(cfg);
   const open = await db
     .select()
     .from(candidateOutcomes)

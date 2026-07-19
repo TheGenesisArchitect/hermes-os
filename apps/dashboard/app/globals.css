@@ -33,20 +33,46 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Trade Matrix history scroller — thin terminal-styled scrollbar, not the OS default */
+/* GLOBAL custom scrollbar — terminal-styled, themed, never the raw OS default.
+   Applies everywhere (page, drawers, tables, code blocks); thin, translucent
+   track, rounded thumb that brightens on hover. Firefox via scrollbar-*; Chromium
+   via ::-webkit-scrollbar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--gridline) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--gridline);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Trade Matrix history scroller — a touch wider/tighter accent than the global */
 .matrix-scroll {
-  scrollbar-width: thin; /* firefox */
   scrollbar-color: var(--border) transparent;
 }
 .matrix-scroll::-webkit-scrollbar {
   height: 8px;
 }
-.matrix-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
 .matrix-scroll::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 4px;
+  border: 0;
 }
 .matrix-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);

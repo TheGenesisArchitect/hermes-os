@@ -12,7 +12,7 @@ const LABEL_COLOR: Record<string, string> = {
   rug: "var(--status-critical)",
 };
 
-type SortKey = "peakMultiple" | "finalMultiple" | "maxDrawdownFromPeakPct" | "minutesToPeak" | "earlyScore";
+type SortKey = "peakMultiple" | "finalMultiple" | "maxDrawdownFromPeakPct" | "minutesToPeak" | "earlyScore" | "walletEdge";
 type LabelFilter = "all" | "live" | "winner" | "dud" | "rug";
 
 const COLUMNS: { key: SortKey; label: string }[] = [
@@ -21,7 +21,27 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "maxDrawdownFromPeakPct", label: "Max DD" },
   { key: "minutesToPeak", label: "→Peak" },
   { key: "earlyScore", label: "Score" },
+  { key: "walletEdge", label: "Wallet" },
 ];
+
+/** Smart-money chip from the wallet graph — the creme-rises signal. */
+function WalletChip({ row }: { row: Row }) {
+  if (row.walletWinnerHits > 0)
+    return (
+      <span className="rounded px-1 py-0.5 text-[10px] font-bold" style={{ background: "rgba(12,163,12,0.15)", color: "var(--status-good)" }} title={`${row.walletWinnerHits} smart-money wallet(s) in holders — validated 2.2× winner lift`}>
+        🟢{row.walletWinnerHits}
+      </span>
+    );
+  if (row.walletRugHits > 0)
+    return (
+      <span className="rounded px-1 py-0.5 text-[10px] font-bold" style={{ background: "rgba(208,59,59,0.12)", color: "var(--status-critical)" }} title={`${row.walletRugHits} serial-rug wallet(s) in holders`}>
+        🔴{row.walletRugHits}
+      </span>
+    );
+  if (row.walletEdge != null)
+    return <span className="tabular text-[11px]" style={{ color: "var(--text-muted)" }} title="wallet-graph edge (neutral holders)">{Math.round(row.walletEdge * 100)}</span>;
+  return <span style={{ color: "var(--text-muted)" }}>—</span>;
+}
 
 const fmtMult = (m: number) => (m >= 10 ? m.toFixed(0) : m.toFixed(2)) + "×";
 
@@ -39,6 +59,9 @@ interface Row {
   entered: boolean;
   armed: boolean;
   earlyScore: number | null; // live rows: current continuation score
+  walletEdge: number | null; // wallet-graph edge (live rows)
+  walletWinnerHits: number; // smart-money holders
+  walletRugHits: number; // serial-rug holders
 }
 
 /**
@@ -94,10 +117,13 @@ export function RecorderDrawer({ outcomes, watching = [] }: { outcomes: Recorder
       entered: w.entered,
       armed: w.armed,
       earlyScore: w.continuationScore,
+      walletEdge: w.walletEdge,
+      walletWinnerHits: w.walletWinnerHits,
+      walletRugHits: w.walletRugHits,
     }));
     const closedRows: Row[] = outcomes
       .filter((o) => !liveMints.has(o.mint))
-      .map((o) => ({ ...o, label: o.label, armed: false }));
+      .map((o) => ({ ...o, label: o.label, armed: false, walletEdge: null, walletWinnerHits: 0, walletRugHits: 0 }));
     return [...liveRows, ...closedRows];
   }, [outcomes, watching]);
 
@@ -241,6 +267,9 @@ export function RecorderDrawer({ outcomes, watching = [] }: { outcomes: Recorder
                     </td>
                     <td className="tabular py-2 text-right font-semibold" style={{ color: "var(--text-secondary)" }}>
                       {o.earlyScore === null ? "—" : o.earlyScore.toFixed(0)}
+                    </td>
+                    <td className="py-2 text-right">
+                      <WalletChip row={o} />
                     </td>
                     <td className="py-2 text-right">
                       <span className="text-xs font-semibold uppercase" style={{ color: LABEL_COLOR[o.label] ?? "var(--text-muted)" }}>

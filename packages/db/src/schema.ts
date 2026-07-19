@@ -266,6 +266,38 @@ export const candidateOutcomes = pgTable("candidate_outcomes", {
   armed: boolean("armed").notNull().default(false),
   category: text("category"), // news desk narrative category (controlled enum); backfilled by newsdesk
   narrative: text("narrative"), // news desk free-text hook phrase
+  // Wallet-reputation edge at arm time (see wallet_reputation + the wallet graph).
+  // VALIDATED leak-free: a winner-rep wallet in the holder set = 2.2× winner lift
+  // (27% vs 12.4% base), −36% rug, out-of-sample. Point-in-time — the holders'
+  // reputation AS OF this arm. walletEdge ∈ [0,1] composite; hits are the raw
+  // presence counts the validation keyed on.
+  walletEdge: numeric("wallet_edge"),
+  walletWinnerHits: integer("wallet_winner_hits"),
+  walletRugHits: integer("wallet_rug_hits"),
+  walletKnown: integer("wallet_known"),
+  // Conviction score ∈ [0,1] at arm — the fused high-performance model (wallet-
+  // dominant): wallet-graph edge + rug-safety + microstructure gate strength.
+  // Drives entry PRIORITY (creme rises) and live conviction-scaled sizing.
+  convictionScore: numeric("conviction_score"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * WALLET REPUTATION — the persistent behavioral layer across one-shot tokens.
+ * Holder wallet addresses (safety_checks holder_concentration → holdersSampled)
+ * recur across launches; this table aggregates each wallet's realized outcome
+ * history (from candidate_outcomes labels) into a reputation the radar scores
+ * new candidates against. Recomputed on a cadence by the recorder. A moat: built
+ * from our own labeled outcome set. score = winRate − rugRate ∈ [−1,1].
+ */
+export const walletReputation = pgTable("wallet_reputation", {
+  wallet: text("wallet").primaryKey(),
+  tokens: integer("tokens").notNull().default(0), // distinct labeled tokens this wallet held
+  wins: integer("wins").notNull().default(0),
+  rugs: integer("rugs").notNull().default(0),
+  duds: integer("duds").notNull().default(0),
+  score: numeric("score").notNull().default("0"), // winRate − rugRate, [−1,1]
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

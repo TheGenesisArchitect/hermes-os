@@ -4,9 +4,9 @@ loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
 import { loadConfig } from "@hermes/core";
 import { config, db } from "@hermes/db";
 import { eq } from "drizzle-orm";
-import { managePositions, openConfirmedPositions, openNewPositions, snapshotEquity } from "./paper.js";
+import { fastFloorSweep, managePositions, openConfirmedPositions, openNewPositions, snapshotEquity } from "./paper.js";
 import { readEffectiveConfig, refreshAdaptivePolicy } from "./adaptive.js";
-import { liveLaneStatus, sweepLiveBook } from "./live/executor.js";
+import { guardLiveBook, liveLaneStatus, snapshotLiveEquity, sweepLiveBook } from "./live/executor.js";
 
 async function killSwitchEngaged(): Promise<boolean> {
   const [row] = await db.select().from(config).where(eq(config.key, "kill_switch"));
@@ -132,8 +132,13 @@ while (true) {
     // twin is gone. No-op unless the live lane is armed; internally guarded
     // against overlapping runs (chain confirms can outlast a tick).
     void sweepLiveBook(eff);
+    // Live protective guard (M5): the live lane's own downside exit — cut a
+    // pool-collapsing / catastrophe-drawdown position independent of the paper
+    // twin, before it's swept to zero. Self-throttled to LIVE_GUARD_MS.
+    void guardLiveBook(eff);
     if (Date.now() - lastSnapshot >= cfg.PNL_SNAPSHOT_MS) {
       await snapshotEquity(eff);
+      void snapshotLiveEquity(eff); // real live wallet value → the investor curve
       lastSnapshot = Date.now();
     }
     if (Date.now() - lastPolicy >= ADAPTIVE_REFRESH_MS) {
@@ -144,5 +149,13 @@ while (true) {
   } catch (err) {
     console.error(`trader tick failed: ${err instanceof Error ? err.message : err}`);
   }
-  await new Promise((r) => setTimeout(r, cfg.MANAGE_POLL_MS));
+  // Fast-floor sub-poll between manage cycles — block-level Jupiter mark on lifted positions,
+  // enforced at ~1s resolution so a rollover is caught near the floor instead of gapping through
+  // it. SINGLE loop → serial with managePositions, so no double-sell race. When the fast floor is
+  // disabled (default), this collapses to one MANAGE_POLL_MS sleep, unchanged from before.
+  const subPolls = cfg.FAST_FLOOR_ENABLED ? Math.max(1, Math.round(cfg.MANAGE_POLL_MS / Math.max(250, cfg.FAST_FLOOR_MS))) : 1;
+  for (let i = 0; i < subPolls; i++) {
+    await new Promise((r) => setTimeout(r, cfg.MANAGE_POLL_MS / subPolls));
+    if (cfg.FAST_FLOOR_ENABLED) await fastFloorSweep(cfg);
+  }
 }

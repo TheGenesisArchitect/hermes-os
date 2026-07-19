@@ -43,6 +43,15 @@ export {
   type Action,
 } from "./management/classifier.js";
 export {
+  tradeDna,
+  harvestClock,
+  MOONSHOT_HORIZON_SEC,
+  CLOCK_DECAY_START_SEC,
+  type DnaState,
+  type TradeDna,
+  type HarvestClockView,
+} from "./management/dna.js";
+export {
   evaluateEntryTrigger,
   entryTriggerConfigFrom,
   type EntryTrigger,
@@ -62,6 +71,20 @@ export {
   RUG_FEATURE_NAMES,
   type RugModelInput,
 } from "./management/rugModel.js";
+export {
+  walletEdgeFrom,
+  isWinnerRep,
+  isRugRep,
+  WALLET_MIN_SAMPLE,
+  type WalletRep,
+  type WalletEdge,
+} from "./management/walletReputation.js";
+export {
+  scoreConviction,
+  convictionBand,
+  type ConvictionInput,
+  type ConvictionWeights,
+} from "./management/conviction.js";
 export { canonicalVenue } from "./market/venue.js";
 export { ollamaJson, ollamaUp, OLLAMA_MODEL } from "./llm/ollama.js";
 export {

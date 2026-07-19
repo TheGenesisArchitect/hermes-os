@@ -442,6 +442,9 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       triggerBuyShare: candidateOutcomes.triggerBuyShare,
       rugProb: candidateOutcomes.rugProb,
       triggerMultiple: candidateOutcomes.triggerMultiple,
+      walletWinnerHits: candidateOutcomes.walletWinnerHits,
+      walletRugHits: candidateOutcomes.walletRugHits,
+      convictionScore: candidateOutcomes.convictionScore,
     })
     .from(candidateOutcomes)
     .innerJoin(signals, eq(signals.id, candidateOutcomes.signalId))
@@ -456,9 +459,15 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
         gte(candidateOutcomes.updatedAt, freshCutoff),
       ),
     )
-    // Highest-conviction first: when the book can't take everyone, the biggest
-    // confirmed movers get the slots, not whichever row sorted first.
-    .orderBy(desc(candidateOutcomes.triggerMultiple));
+    // CONVICTION-FIRST: when the book can't take everyone, the highest-conviction
+    // confirmed candidates get the scarce slots (creme rises) — the fused
+    // wallet-dominant model, not raw trigger multiple. Null conviction (pre-
+    // migration/unscored) falls to the back via COALESCE, then trigger multiple
+    // breaks ties.
+    .orderBy(
+      desc(sql`coalesce(${candidateOutcomes.convictionScore}::float, -1)`),
+      desc(candidateOutcomes.triggerMultiple),
+    );
 
   if (armed.length === 0) return;
 
@@ -535,7 +544,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     return;
   }
 
-  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple } of armed) {
+  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits } of armed) {
     if (total() >= cfg.PAPER_MAX_CONCURRENT) break; // global cap hit — leave the rest armed
 
     // Open-only duplicate guard — a CLOSED prior position no longer blocks
@@ -547,6 +556,18 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       .limit(1);
     if (held) continue; // already in it — recorder will disarm on its next poll
     if (signal.status === "traded_paper" || signal.status === "dismissed") continue;
+
+    // WALLET-GRAPH GATE (don't bleed for the sake of being busy): a bleeder venue
+    // like meteora-damm-v2 (13% win venue-wide) is really two populations — a
+    // winner-wallet slice (44% win, 0% rug) and a rug-wallet slice (0% win, 54%
+    // rug). Skip OPENING a position on the rug-wallet slice (serial-rugger holders
+    // with no smart-money offset); the recorder still WATCHES it (the graph keeps
+    // learning free). Exploration ≠ execution. Validated leak-free (rug-rep holder
+    // → 7.7% win vs 12.4% base). Missing score = no data → don't block.
+    if (cfg.PAPER_WALLET_GATE && (walletRugHits ?? 0) > 0 && (walletWinnerHits ?? 0) === 0) {
+      await audit("entry_filtered", { mint, reason: "wallet: serial-rugger holders, no smart-money" });
+      continue;
+    }
 
     // Confirm-quality sizing: fading buy-share at the freshest armed read = the
     // instant-death signature (hard_stops confirm at median 0.765 buys vs 0.925
@@ -643,6 +664,26 @@ function trailWidthPct(
     w = Math.min(w, banked ? cfg.POST_BANK_TRAIL_PCT : cfg.TRAIL_TIGHT_PCT);
   }
   return w;
+}
+
+// GAIN-BASED trail floor (bracketed): lock (1−giveback) of the gain in each zone
+// slice. Monotonic in peak by construction — every slice only adds as the peak
+// rises, so the floor never drops at a zone boundary (no wick-out on the seam).
+// Locks far more of a small winner's rise than a %-of-price trail while still
+// giving a parabolic runner room. Result is a PRICE floor, same units as the
+// legacy trail, so the caller's ratchet/stop math is unchanged.
+export function gainTrailFloor(cfg: HermesConfig, entry: number, peak: number): number {
+  const mult = entry > 0 ? peak / entry : 1;
+  if (mult <= 1) return entry;
+  const spike = Math.min(mult - 1, RUNNER_MULT - 1); // 1 .. 2.5
+  const runner = Math.max(0, Math.min(mult, PARABOLIC_MULT) - RUNNER_MULT); // 2.5 .. 6
+  const para = Math.max(0, mult - PARABOLIC_MULT); // 6+
+  const lockMult =
+    1 +
+    (1 - cfg.TRAIL_GAIN_GB_TIGHT) * spike +
+    (1 - cfg.TRAIL_GAIN_GB_MID) * runner +
+    (1 - cfg.TRAIL_GAIN_GB_WIDE) * para;
+  return entry * lockMult;
 }
 
 export function decideExit(
@@ -748,8 +789,15 @@ export function decideExit(
     // gate inside trailWidthPct) now uses entryRel × triggerMult; the stop
     // PRICE math stays on the real entry-relative peak.
     const provenMult = peakMult * Math.max(1, n(position.triggerMult) || 1);
-    const trailPct = trailWidthPct(cfg, provenMult, drawdownPct, call, bankedRunner);
-    const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, peak * (1 - trailPct / 100));
+    // 'gain' locks a consistent fraction of the RISE (bracketed, monotonic — the
+    // smooth-scaling trail); 'price' is the legacy %-below-peak. Both floored by
+    // the never-red profit lock. Trail uses the entry-relative peak for the price
+    // math; provenMult only picks the price-mode zone width.
+    const trailFloor =
+      cfg.TRAIL_MODE === "gain"
+        ? gainTrailFloor(cfg, entry, peak)
+        : peak * (1 - trailWidthPct(cfg, provenMult, drawdownPct, call, bankedRunner) / 100);
+    const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, trailFloor);
     if (price <= stop) return { reason: "profit_trail", fraction: 1 };
   } else {
     // Not yet in profit — the pre-profit hard stop is the only floor.
@@ -829,11 +877,18 @@ async function sell(
   });
 
   const newRealized = n(position.realizedPnlUsd) + pnl;
+  // Selling AT a price is proof the position reached it — bump the peak so exit
+  // paths that bypass the per-position peak-tracker (basket_harvest sweeps the
+  // whole green book at once) still record the true high-water mark. Display
+  // honesty only: realized P&L is unaffected, but a 53.9× close no longer reads
+  // back as peak 1.0× on the scorecard.
+  const newPeak = Math.max(n(position.peakPriceUsd), market.priceUsd);
   await db
     .update(positions)
     .set({
       qtyRemaining: String(Math.max(remaining, 0)),
       realizedPnlUsd: String(newRealized),
+      peakPriceUsd: String(newPeak),
       ...(closing
         ? {
             status: "closed",
@@ -1249,6 +1304,77 @@ async function writeOffAtZero(position: Position, reason: string): Promise<void>
   console.log(`🔴 CLOSE  ${short(position.mint)} ${reason} — wrote off $${(-loss).toFixed(2)}`);
 }
 
+// FAST-FLOOR (config FAST_FLOOR_*) — sub-polled between the 5s manage cycles. Enforces the
+// trailing floor on LIFTED positions at block-level Jupiter resolution so a rollover is caught
+// NEAR the floor instead of gapping through it (the SX runner / 1.10 give-back). READ-ONLY on
+// peak (never ratchets from the fast mark — that's the thin-pool mirage); divergence-guarded vs
+// the last DexScreener read; last-good liquidity for an honest paper fill. Serial with the manage
+// loop (same single loop), so no double-sell race; the flag guards overlapping fast sweeps.
+let fastFlooring = false;
+const floorLogged = new Set<number>(); // log-only dedup: armed would sell ONCE; don't re-log the same position every 1s
+export async function fastFloorSweep(cfg: HermesConfig): Promise<void> {
+  if (!cfg.FAST_FLOOR_ENABLED || fastFlooring) return;
+  fastFlooring = true;
+  try {
+    const lifted = await db
+      .select()
+      .from(positions)
+      .where(
+        and(
+          eq(positions.lane, "paper"),
+          eq(positions.status, "open"),
+          sql`${positions.peakPriceUsd}::numeric >= ${positions.entryPriceUsd}::numeric * ${cfg.FAST_FLOOR_ARM_MULT}`,
+        ),
+      );
+    if (lifted.length === 0) { floorLogged.clear(); return; }
+    // prune the log-only dedup set to currently-lifted positions (bounded, and lets a re-entry re-log)
+    const liftedIds = new Set(lifted.map((p) => p.id));
+    for (const id of floorLogged) if (!liftedIds.has(id)) floorLogged.delete(id);
+    // last-good DexScreener price + liquidity per position (divergence guard + honest fill)
+    const idList = sql.join(lifted.map((p) => sql`${p.id}`), sql`, `);
+    const lastRows = (await db.execute(sql`
+      select distinct on (position_id) position_id, price_usd::float px, liquidity_usd::float liq
+      from position_ticks where position_id in (${idList}) order by position_id, snapped_at desc
+    `)) as unknown as { position_id: number; px: number; liq: number }[];
+    const last = new Map(lastRows.map((r) => [Number(r.position_id), r]));
+    const jup = await fetchJupiterPrices(cfg.JUPITER_PRICE_URL, lifted.map((p) => p.mint));
+    for (const p of lifted) {
+      const px = jup.get(p.mint);
+      if (px == null || px <= 0) continue; // no Jupiter route (bonding-curve) → the 5s loop owns it
+      const entry = n(p.entryPriceUsd), peak = n(p.peakPriceUsd);
+      if (entry <= 0 || peak <= 0) continue;
+      const lg = last.get(p.id);
+      // divergence guard — never fire on a disputed price (SX read 2.8x on one feed vs 611x on the other)
+      if (lg && lg.px > 0 && Math.max(px, lg.px) / Math.min(px, lg.px) > cfg.MARK_FEED_DIVERGENCE) continue;
+      const floor = peak * (1 - cfg.FAST_FLOOR_TRAIL_PCT / 100);
+      if (px > floor) continue;
+      const markMult = px / entry;
+      if (cfg.FAST_FLOOR_LOG_ONLY) {
+        if (floorLogged.has(p.id)) continue; // already logged the first cross — armed would have sold here
+        floorLogged.add(p.id);
+        console.log(
+          `🛰️  FAST-FLOOR ${short(p.mint)} — would bank ${markMult >= 1 ? "+" : ""}${((markMult - 1) * 100).toFixed(1)}% at block-mark (floor ${(floor / entry).toFixed(2)}x, peak ${(peak / entry).toFixed(2)}x) [first cross — armed sells here, 5s loop rides it down]`,
+        );
+        continue;
+      }
+      console.log(
+        `🛰️  FAST-FLOOR ${short(p.mint)} — banking ${markMult >= 1 ? "+" : ""}${((markMult - 1) * 100).toFixed(1)}% at block-mark (floor ${(floor / entry).toFixed(2)}x, peak ${(peak / entry).toFixed(2)}x)`,
+      );
+      if (!lg || !(lg.liq > 0)) continue; // no last-good liquidity → fall back to the 5s loop (no frictionless fill)
+      // re-check status (belt+suspenders; the single loop is already serial with manage)
+      const [fresh] = await db.select().from(positions).where(and(eq(positions.id, p.id), eq(positions.status, "open"))).limit(1);
+      if (!fresh) continue;
+      const market = { priceUsd: px, liquidityUsd: lg.liq } as TokenMarket;
+      await sell(fresh, market, 1, "fast_floor");
+      void mirrorLiveSell(cfg, p.mint, 1, "fast_floor");
+    }
+  } catch (err) {
+    console.error(`fast-floor sweep: ${err instanceof Error ? err.message : err}`);
+  } finally {
+    fastFlooring = false;
+  }
+}
+
 /** Mark open positions to market and execute the exit rules. */
 export async function managePositions(cfg: HermesConfig): Promise<void> {
   await refreshAutoFarm(cfg); // keep the adaptive farm list current (no-op inside refresh window)
@@ -1357,7 +1483,14 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
       console.log(
         `💰 ${manualHarvest ? "MANUAL" : "BASKET"} HARVEST — ${green.length} green positions net +$${greenUpl.toFixed(2)} → banking all, recycling${skipped.length > 0 ? ` (${skipped.length} skipped: pool read dust/no-pair this cycle — they re-qualify next poll)` : ""}`,
       );
-      for (const g of green) await sell(g.position, g.market, 1, manualHarvest ? "manual_harvest" : "basket_harvest");
+      for (const g of green) {
+        const hReason = manualHarvest ? "manual_harvest" : "basket_harvest";
+        await sell(g.position, g.market, 1, hReason);
+        // Direct-mirror the profit engine (129% of paper's P&L) in the SAME cycle
+        // instead of leaning on sweepLiveBook's next-cycle backstop. The sweep still
+        // covers a failed mirror; a closed live twin is skipped, so no double-sell.
+        void mirrorLiveSell(cfg, g.position.mint, 1, hReason);
+      }
       if (manualHarvest) await clearHarvestRequest();
       return; // book swept; the rest recycles on the next scan
     }
@@ -1484,6 +1617,19 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
         .where(eq(positions.id, position.id));
     }
 
+    // TELEMETRY (measurement-only): ratchet the live twin's peak off THIS same
+    // mark, so live_peakx is comparable to paper_peakx apples-to-apples (any gap
+    // is then real entry-lag, not a price-source artifact). peak_price_usd is
+    // write-only on the live path — this changes no live behavior. GREATEST keeps
+    // the entry seed until the mark exceeds it. No extra fetch: paper already has
+    // the price here; the live manage loop never marks (it mirrors paper).
+    if (cfg.LIVE_TRADING_ENABLED) {
+      await db
+        .update(positions)
+        .set({ peakPriceUsd: sql`greatest(${positions.peakPriceUsd}::numeric, ${market.priceUsd}::numeric)` })
+        .where(and(eq(positions.lane, "live"), eq(positions.mint, position.mint), eq(positions.status, "open")));
+    }
+
     // Trajectory + classifier call (persisted for the dashboard and audit).
     const call = cfg.CLASSIFIER_ENABLED ? await recordTickAndClassify(position, market, peak) : null;
 
@@ -1496,6 +1642,25 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
       await sell(position, market, 1, taken?.source === "displace" ? "slot_displaced" : "user_cut");
       void mirrorLiveSell(cfg, position.mint, 1, "live_mirror_cut");
       continue;
+    }
+
+    // DUD-TP — the divergence micro-take-profit (config DUD_CUT_*, validated 2026-07-19
+    // +$85/48h). A position whose PEAK hasn't cleared DUD_CUT_MARK by DUD_CUT_AGE_MIN never
+    // followed through (winners clear the divergence line by ~2.25m; stallers sit flat).
+    // But the staller is still LIQUID and typically GREEN (~+6%) at 2.25m — so we BANK the
+    // micro-gain before the stall round-trips it. This is a TP, not a loss cut: the cohort
+    // nets POSITIVE (−$48 held → +$36 banked). Peak-based, so a proven lifter is NEVER
+    // banked here (it rides the ladder); a user "ride" override still wins.
+    if (cfg.DUD_CUT_ENABLED && intent !== "ride") {
+      const ageMin = (Date.now() - new Date(position.openedAt).getTime()) / 60_000;
+      const peakMult = peak / n(position.entryPriceUsd);
+      const markMult = market.priceUsd / n(position.entryPriceUsd);
+      if (ageMin >= cfg.DUD_CUT_AGE_MIN && peakMult < cfg.DUD_CUT_MARK) {
+        console.log(`💵 DUD-TP ${short(position.mint)} — banking ${markMult >= 1 ? "+" : ""}${((markMult - 1) * 100).toFixed(1)}% micro at ${ageMin.toFixed(1)}m (no lift past ${cfg.DUD_CUT_MARK}x, peak ${peakMult.toFixed(2)}x)`);
+        await sell(position, market, 1, "dud_tp");
+        void mirrorLiveSell(cfg, position.mint, 1, "dud_tp");
+        continue;
+      }
     }
 
     const armed =

@@ -3,26 +3,26 @@
  * not guessed. This is the flywheel paying out: every safety-passed candidate
  * the recorder watched became a training row.
  *
- * Provenance: fitted 2026-07-15T21:59Z by services/recorder/src/fitRugModel.ts
- * on n=2322 triggered candidates (train 1625 / test 697, TIME-ORDERED split).
- * Held-out validation (most recent 30%, unseen regime): AUC 0.698, quintile
- * rug rates 7.9% / 14.4% / 27.9% / 40.3% / 44.3% against a 27.0% base — the
- * cleanest quintile rugs 5.6x less often than the dirtiest.
+ * Provenance: fitted 2026-07-19T14:57Z by services/recorder/src/fitRugModel.ts
+ * on n=5988 triggered candidates (train 4191 / test 1797, TIME-ORDERED split),
+ * the first fit on liquidity-collapse-corrected labels (see recorder
+ * closeOutcome — 1,709 frozen-mark rugs had been graded "dud"). Held-out
+ * validation (most recent 30%, unseen regime): AUC 0.710, quintile rug rates
+ * 9.5% / 13.9% / 21.1% / 29.5% / 46.4% against a 24.1% base.
  *
  * POINT-IN-TIME HONEST: every feature is knowable at arm time (the last
  * recorder tick at/before the trigger). Nothing from the future leaks in.
  *
- * What the weights say (standardized magnitudes):
- *   fdvMissing +0.89   — no readable FDV at confirm = the strongest rug tell
- *   triggerDd  −0.55   — a token that SURVIVED a dip before confirming is real;
- *                        rugs confirm at fresh highs (the pop IS the exit event)
- *   venueDammV2 −0.38  — controlling for everything else, damm-v2 rugs LESS
- *                        than the long-tail baseline (its bad rep was exit-bug
- *                        losses, not differential rug rate)
+ * What the weights say (standardized magnitudes, clean labels):
+ *   fdvLiq     +0.54   — high FDV piled on thin liquidity = exit-door mismatch
+ *   fdvMissing +0.47   — no readable FDV at confirm remains a strong rug tell
+ *   log10VolM5 −0.44   — real absolute flow reduces rug odds
+ *   triggerMult −0.44  — a higher confirmed multiple is earned, not staged
  *   watchMin   −0.29   — later confirms are realer than 2-minute pops
- *   triggerMult −0.28  — a higher confirmed multiple is earned, not staged
- *   log10VolM5 −0.23   — real absolute flow reduces rug odds
- *   accelDead  +0.17   — vol_m5/vol_h1 < 0.5 (flow already died) leans rug
+ *   log10Liq   −0.23   — deep pools are yanked less often
+ *   venuePump  +0.18   — pump venues lean rug once frozen-mark rugs are counted
+ *   triggerDd  −0.04   — the old −0.55 "survived a dip = real" signal was
+ *                        mostly a labeling artifact; nearly flat on clean labels
  *
  * AUC 0.70 earns SIZING power, not veto power — deployed as a size multiplier
  * per the shrink-don't-veto doctrine. Refit as the dataset grows:
@@ -91,27 +91,31 @@ export function rugFeatureVector(r: RugModelInput): number[] {
 }
 
 /**
- * Raw-space fitted weights. REFIT 2026-07-16T14:31Z on n=3025 triggered
- * candidates (train 2117 / test 908, time-split) — the overnight 1o window
- * grew the dataset ~30% and lifted held-out AUC 0.698 → 0.789; test quintile
- * rug rates 1.1% / 6.1% / 14.8% / 40.3% / 45.1% vs 21.5% base. The overnight
- * dust rugs the old weights scored ~0.25 (below caution) motivated the refit.
+ * Raw-space fitted weights. REFIT 2026-07-19T14:57Z on n=5988 triggered
+ * candidates (train 4191 / test 1797, time-split) — the FIRST fit on the
+ * liquidity-collapse-corrected labels (1,709 frozen-mark rugs had been hiding
+ * in the dud class, so every prior fit learned from a diluted rug signal).
+ * Held-out AUC 0.710; test quintile rug rates 9.5% / 13.9% / 21.1% / 29.5% /
+ * 46.4% vs 24.1% base. Notable on clean labels: triggerDd's dominance
+ * (−10.66 raw) collapsed to −1.54 — "survived a dip = real" was mostly a
+ * labeling artifact; venuePump flipped to rug-leaning; liquidity and absolute
+ * flow became genuinely protective.
  */
 export const RUG_WEIGHTS: Record<(typeof RUG_FEATURE_NAMES)[number], number> = {
-  accelDead: 0.6766,
+  accelDead: -0.076883,
   accelFresh: 0.0,
-  log10Liq: 0.222791,
-  fdvMissing: 1.544922,
-  fdvLiq: 0.031455,
-  venueDammV2: -0.845006,
-  venueDbc: -0.716994,
-  venuePump: -0.296854,
-  triggerMult: -0.716665,
-  triggerDd: -10.661298,
-  watchMin: -1.59994,
-  log10VolM5: -0.173518,
+  log10Liq: -0.402103,
+  fdvMissing: 1.06074,
+  fdvLiq: 0.023169,
+  venueDammV2: 0.076403,
+  venueDbc: -0.228614,
+  venuePump: 0.472117,
+  triggerMult: -1.40479,
+  triggerDd: -1.540626,
+  watchMin: -1.972227,
+  log10VolM5: -0.733458,
 };
-export const RUG_BIAS = -0.474194;
+export const RUG_BIAS = 6.098133;
 
 /** P(rug within the 15-min recorder window | confirmed at these conditions). */
 export function scoreRugProb(input: RugModelInput): number {
