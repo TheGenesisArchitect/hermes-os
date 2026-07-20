@@ -225,9 +225,18 @@ export function AccountingLedger({
                 <tr key={t.id} className="border-t" style={{ borderColor: "var(--gridline)" }}>
                   <td className="py-2 pr-2">
                     <SymbolMint symbol={t.symbol} mint={t.mint} />
-                    {t.qualityMult !== null && t.qualityMult < 1 ? (
-                      <span className="ml-1 text-xs" style={{ color: "var(--status-warning)" }} title={`quality-sized ×${t.qualityMult}`}>
-                        ×{t.qualityMult}
+                    {/* Size multiplier — show BOOSTS as well as shrinks. Showing only
+                        <1 made the ledger read as if every position were penalised and
+                        hid the pool-inflow boost entirely (Jabarkus sized ×1.50 → +$10.89
+                        looked identical to an unsized entry). Rounded: the raw float
+                        rendered as ×0.21599999999999997. */}
+                    {t.qualityMult !== null && Math.abs(t.qualityMult - 1) > 0.005 ? (
+                      <span
+                        className="ml-1 text-xs"
+                        style={{ color: t.qualityMult > 1 ? "var(--status-good)" : "var(--status-warning)" }}
+                        title={t.qualityMult > 1 ? "sized UP on quality/inflow" : "quality-sized down"}
+                      >
+                        ×{t.qualityMult.toFixed(2)}
                       </span>
                     ) : null}
                   </td>
