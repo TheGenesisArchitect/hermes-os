@@ -288,6 +288,13 @@ export const candidateOutcomes = pgTable("candidate_outcomes", {
   // pool FLAT, so this is the one factor a fake move cannot manufacture.
   // Persisted at arm so the trader sizes by it and the edge stays measurable.
   liqGrowth: numeric("liq_growth"),
+  // Timestamp of the most recent CONFIRMING observation — the tick on which the
+  // entry gate actually passed. Distinct from updatedAt, which the recorder
+  // stamps on every poll whether the candidate qualifies or not, and from
+  // triggeredAt, which is pinned to first-ever confirmation. Entry freshness
+  // must be measured against THIS: it is the only field that answers "was this
+  // candidate confirmed moments ago, or are we buying a stale signal?"
+  confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

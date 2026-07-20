@@ -403,6 +403,11 @@ async function observe(
               triggerScore: String(call.continuationScore),
               triggerMultiple: String(trig.markMultiple),
               triggerReason: trig.reason,
+              // Stamp the moment of THIS confirmation — the trader's entry
+              // freshness is measured against it, so a candidate that stays
+              // armed across polls keeps a moving, honest confirmation time
+              // while one that stops qualifying goes stale immediately.
+              confirmedAt: new Date(),
             }
           : {}),
         ...(firstArm ? { triggeredAt: new Date() } : {}),

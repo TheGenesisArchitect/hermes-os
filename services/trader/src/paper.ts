@@ -458,7 +458,13 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
         // re-qualified). The old `entered=false` filter here made every entry
         // one-shot and forfeited the VICE-class re-runs (67 overnight).
         eq(candidateOutcomes.armed, true),
-        gte(candidateOutcomes.updatedAt, freshCutoff),
+        // FRESHNESS measured against the CONFIRMING tick, not the last poll.
+        // updatedAt is stamped every poll regardless of state, so the staleness
+        // cap never actually bit — a candidate could sit armed while the trader
+        // waited on a slot and then be bought on a confirmation minutes old.
+        // confirmedAt moves only when the gate genuinely passes, so a signal
+        // that stops qualifying expires immediately.
+        gte(candidateOutcomes.confirmedAt, freshCutoff),
       ),
     )
     // CONVICTION-FIRST: when the book can't take everyone, the highest-conviction

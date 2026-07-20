@@ -744,7 +744,14 @@ const envSchema = z.object({
   // fills landed 140s after their trigger vs 87s for profitable ones. By fill lag:
   // <15s → 14.2% instant-death, 15–30s → 6.8% (and the best P&L, +$7.50), >60s →
   // 23.9%. Nothing good happens past a minute, so the stale tail is cut.
-  CONFIRM_MAX_TRIGGER_AGE_SEC: z.coerce.number().default(45),
+  // TIGHTENED 45 → 20 (2026-07-20) and re-pointed at confirmedAt. The cap was
+  // measured against updatedAt, which the recorder stamps on EVERY poll whether
+  // the candidate qualifies or not — so it never bit, and positions were bought
+  // on confirmations minutes old while they waited on a slot. Now it measures
+  // time since the gate actually passed. NOTE the recorder polls every ~30s, so
+  // a 20s window deliberately lets some confirmations expire rather than be
+  // filled stale: fewer entries, each on a signal that is genuinely current.
+  CONFIRM_MAX_TRIGGER_AGE_SEC: z.coerce.number().default(20),
   // Refuse to open into a collapsed/near-empty pool: at $17.50 size a 30% convex
   // slip means liquidity < ~$82 (rugged), while a legit thin-pool entry is <1%.
   // This never blocks a real convex candidate — it blocks buying a corpse.
