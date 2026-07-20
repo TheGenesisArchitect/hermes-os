@@ -542,13 +542,21 @@ function livePositionUsd(cfg: HermesConfig, balanceUsd: number, regimeMult: numb
  */
 export async function maybeLiveBuy(cfg: HermesConfig, mint: string, symbol: string | null): Promise<void> {
   try {
+    // LATENCY: live trailed paper's entry by a measured 6–8s, and that lag
+    // propagates straight to the exit (THUNDERCAT: paper out at 1.018×, live 7s
+    // later at $0.00). The SOL price and balance reads are independent of the
+    // gate, so warm them CONCURRENTLY with it instead of serially afterwards —
+    // the gate's own sell-route probe is a network round trip we no longer wait
+    // to finish before the other two have even started.
+    const solP = solPriceUsd(cfg).catch(() => null);
+    const balP = liveBalance(cfg).catch(() => null);
     const gate = await liveBuyGate(cfg, mint);
     if (!gate.ok) {
       if (cfg.LIVE_TRADING_ENABLED && gate.reason !== "disabled")
         await audit("live_buy_skipped", { mint, reason: gate.reason });
       return;
     }
-    const sol = await solPriceUsd(cfg);
+    const sol = await solP;
     if (!sol || sol <= 0) {
       await audit("live_buy_skipped", { mint, reason: "no SOL price" });
       return;
@@ -558,7 +566,7 @@ export async function maybeLiveBuy(cfg: HermesConfig, mint: string, symbol: stri
     // balance, then clamp to what's actually deployable: exposure headroom (leave
     // room for more positions) and the free-SOL reserve (leave fees/rent so buys
     // don't fail mid-session). Many small positions, scaling as the balance grows.
-    const bal = await liveBalance(cfg);
+    const bal = await balP;
     if (!bal || bal.usd <= 0) {
       await audit("live_buy_skipped", { mint, reason: "no balance read" });
       return;
@@ -797,8 +805,24 @@ async function liveSellPosition(
 }
 
 /**
+ * Mints whose mirror sell is IN FLIGHT. The sweep must never race these.
+ *
+ * The race (diagnosed 2026-07-20 from a live-vs-paper trade audit): paper calls
+ * mirrorLiveSell fire-and-forget then closes its own row immediately, so for the
+ * 5–10s the mirror spends on-chain (balance read → quote → build → sign →
+ * confirm) the live position has NO paper twin. The 5s sweep saw exactly that
+ * and fired its own sell — 6 of 13 live exits came out as live_sweep_close /
+ * live_desync_empty instead of the intended profit_trail, at the WORST possible
+ * moment. THUNDERCAT: paper exited at 1.018× (+$0.05), live's contested exit
+ * landed 7s later at $0.00 (−$2.93, a full stake). Mirroring paper's P&L means
+ * mirroring paper's EXIT TIMING; the sweep is a backstop, never the primary path.
+ */
+const mirrorSellInFlight = new Set<string>();
+
+/**
  * Mirror a paper exit onto the live twin (same mint, open, lane='live').
- * Failures are contained — sweepLiveBook() closes any stragglers.
+ * Failures are contained — sweepLiveBook() closes any stragglers, but only
+ * after the grace window proves the mirror really did fail.
  */
 export async function mirrorLiveSell(cfg: HermesConfig, mint: string, fraction: number, reason: string): Promise<void> {
   if (!cfg.LIVE_TRADING_ENABLED || !liveWallet()) return;
@@ -812,7 +836,14 @@ export async function mirrorLiveSell(cfg: HermesConfig, mint: string, fraction: 
     .where(and(eq(positions.lane, "live"), eq(positions.mint, mint), eq(positions.status, "open")))
     .limit(1);
   if (!pos) return;
-  await liveSellPosition(cfg, pos, fraction, reason);
+  // Claim this mint for the duration of the on-chain round trip.
+  if (mirrorSellInFlight.has(mint)) return; // a mirror is already selling it
+  mirrorSellInFlight.add(mint);
+  try {
+    await liveSellPosition(cfg, pos, fraction, reason);
+  } finally {
+    mirrorSellInFlight.delete(mint);
+  }
 }
 
 /**
@@ -838,12 +869,27 @@ async function sweepLiveBookInner(cfg: HermesConfig): Promise<void> {
     .from(positions)
     .where(and(eq(positions.lane, "live"), eq(positions.status, "open")));
   for (const lp of rows) {
+    // GUARD 1 — a mirror sell owns this mint right now. Racing it produces a
+    // contested exit at a worse price (and mislabels the fill).
+    if (mirrorSellInFlight.has(lp.mint)) continue;
     const [twin] = await db
       .select({ id: positions.id })
       .from(positions)
       .where(and(eq(positions.lane, "paper"), eq(positions.mint, lp.mint), eq(positions.status, "open")))
       .limit(1);
-    if (!twin) await liveSellPosition(cfg, lp, 1, "live_sweep_close");
+    if (twin) continue;
+    // GUARD 2 — the twin closed only moments ago, so the mirror is in flight or
+    // about to be. Give it the grace window before the backstop takes over; only
+    // a mirror that genuinely failed should ever exit as live_sweep_close.
+    const [lastTwin] = await db
+      .select({ closedAt: positions.closedAt })
+      .from(positions)
+      .where(and(eq(positions.lane, "paper"), eq(positions.mint, lp.mint), eq(positions.status, "closed")))
+      .orderBy(desc(positions.closedAt))
+      .limit(1);
+    const closedMsAgo = lastTwin?.closedAt ? Date.now() - new Date(lastTwin.closedAt).getTime() : Infinity;
+    if (closedMsAgo < cfg.LIVE_SWEEP_GRACE_SEC * 1000) continue;
+    await liveSellPosition(cfg, lp, 1, "live_sweep_close");
   }
 }
 

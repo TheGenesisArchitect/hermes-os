@@ -731,6 +731,15 @@ const envSchema = z.object({
     .default("true")
     .transform((v) => v !== "false"),
 
+  // SWEEP GRACE (2026-07-20) — how long the reconciliation backstop waits after
+  // a paper twin closes before force-closing the live position. The mirror sell
+  // needs 5–10s on-chain (balance read → quote → build → sign → confirm) and the
+  // twin is already gone the whole time, so a 5s sweep was RACING the mirror and
+  // winning: 6 of 13 live exits closed as live_sweep_close/desync instead of the
+  // intended profit_trail. The sweep must only fire when a mirror genuinely
+  // failed — not while one is still in the air.
+  LIVE_SWEEP_GRACE_SEC: z.coerce.number().default(25),
+
   LIVE_TRADING_ENABLED: z
     .string()
     .default("false")
