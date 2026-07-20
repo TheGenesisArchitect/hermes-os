@@ -472,6 +472,17 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
 
   if (armed.length === 0) return;
 
+  // HOT-TICKER meta-momentum: refresh the family set, then stable-sort hot
+  // families forward BEFORE the prime sort (final order: prime > hot > conviction).
+  await refreshHotTickers(cfg);
+  if (cfg.HOT_TICKER_ENABLED && hotTickers.families.size > 0) {
+    armed.sort((a, b) => {
+      const ah = isHotTicker(cfg, a.token.symbol) ? 1 : 0;
+      const bh = isHotTicker(cfg, b.token.symbol) ? 1 : 0;
+      return bh - ah; // stable: preserves conviction order within each group
+    });
+  }
+
   // PRIME PONDS jump the queue: a fluxbeam-class confirm (measured 15/15
   // winners, 0 rugs) takes a slot before any raw trigger-multiple ordering —
   // the rarest healthy flow must never wait behind mill relaunches. The set is
@@ -613,7 +624,11 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       primeVenue || (tm !== null && Number.isFinite(tm) && tm >= cfg.CONVICTION_MULT_MIN)
         ? cfg.CONVICTION_SIZE_BOOST
         : 1;
-    const qualityMult = buyShareMult * rugMult * convictionMult * walletMult;
+    // HOT-TICKER boost: the family is printing right now (validated 1.5× win
+    // lift) — lean in while it lasts; the rug-model shrink and cost-recoup
+    // ladder price the elevated rug share that comes with the heat.
+    const hotMult = isHotTicker(cfg, token.symbol) ? cfg.HOT_TICKER_SIZE_BOOST : 1;
+    const qualityMult = buyShareMult * rugMult * convictionMult * walletMult * hotMult;
 
     // Consume ONLY on a real fill. A false return (lane reserved / market null /
     // venue / liquidity / slippage) leaves the candidate armed to re-attempt next
@@ -1103,6 +1118,61 @@ async function refreshAutoFarm(cfg: HermesConfig): Promise<void> {
   } catch (err) {
     console.error(`auto-farm refresh failed: ${err instanceof Error ? err.message : err}`);
   }
+}
+
+// HOT-TICKER state — the auto-farm blacklist's MIRROR: symbol families that
+// printed ≥HOT_TICKER_MIN_WINNERS winners in the rolling window (and aren't
+// rug-dominated) run HOT — same-family confirms get a size boost + queue
+// priority while the family is printing, and decay out with the window.
+// Validated leak-free: prior-6h family winners ⇒ 19.6% vs 13.0% base win rate.
+const hotTickers = { families: new Set<string>(), refreshedAt: 0 };
+const tickerFamily = (symbol: string | null | undefined): string =>
+  (symbol ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+async function refreshHotTickers(cfg: HermesConfig): Promise<void> {
+  if (!cfg.HOT_TICKER_ENABLED) return;
+  if (Date.now() - hotTickers.refreshedAt < cfg.HOT_TICKER_REFRESH_MS) return;
+  hotTickers.refreshedAt = Date.now();
+  try {
+    const rows = await db.execute(sql`
+      SELECT lower(regexp_replace(t.symbol, '[^a-zA-Z0-9]', '', 'g')) AS fam,
+        count(*)::int AS n,
+        count(*) FILTER (WHERE co.label='winner')::int AS wins,
+        count(*) FILTER (WHERE co.label='rug')::int AS rugs
+      FROM candidate_outcomes co JOIN tokens t ON t.mint = co.mint
+      WHERE co.label IN ('winner','dud','rug')
+        AND co.first_seen_at >= now() - make_interval(mins => ${cfg.HOT_TICKER_WINDOW_MIN})
+        AND t.symbol IS NOT NULL AND length(t.symbol) > 1
+      GROUP BY 1
+    `);
+    const fams = new Set<string>();
+    for (const r of rows as unknown as Array<Record<string, unknown>>) {
+      const n = Number(r.n) || 0;
+      const wins = Number(r.wins) || 0;
+      const rugs = Number(r.rugs) || 0;
+      if (wins >= cfg.HOT_TICKER_MIN_WINNERS && n > 0 && rugs / n < cfg.HOT_TICKER_MAX_RUG_SHARE)
+        fams.add(String(r.fam));
+    }
+    const changed =
+      fams.size !== hotTickers.families.size || [...fams].some((f) => !hotTickers.families.has(f));
+    hotTickers.families = fams;
+    if (changed) {
+      await audit("hot_ticker_update", { families: [...fams] });
+      console.log(
+        `🔥 HOT TICKERS refreshed — [${[...fams].join(", ") || "none"}] (≥${cfg.HOT_TICKER_MIN_WINNERS} family winners / ${cfg.HOT_TICKER_WINDOW_MIN}m, rug share < ${Math.round(cfg.HOT_TICKER_MAX_RUG_SHARE * 100)}%)`,
+      );
+    }
+  } catch (err) {
+    console.error(`hot-ticker refresh failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/** Hot-family check for a confirm: boosted only if the family is hot AND not farm-blacklisted. */
+function isHotTicker(cfg: HermesConfig, symbol: string | null | undefined): boolean {
+  if (!cfg.HOT_TICKER_ENABLED) return false;
+  const fam = tickerFamily(symbol);
+  if (!fam || !hotTickers.families.has(fam)) return false;
+  return !autoFarm.symbols.has((symbol ?? "").toLowerCase());
 }
 
 // canonicalVenue now lives in @hermes/core (market/venue.ts) so the recorder's

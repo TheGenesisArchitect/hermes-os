@@ -667,6 +667,24 @@ const envSchema = z.object({
   CONVICTION_SIZE_MIN_BAND: z.coerce.number().default(0.6),
   CONVICTION_SIZE_MAX_BAND: z.coerce.number().default(2.2),
 
+  // HOT-TICKER META-MOMENTUM — the auto-farm blacklist's MIRROR (2026-07-20).
+  // Symbol-family momentum is real and was unexploited: 4 distinct "nice" mints
+  // mooned in ~70min, Cola ×3, TEAM ×2. VALIDATED leak-free on 96h (n=2,093):
+  // a candidate whose family printed ≥2 winners in the PRIOR 6h wins 19.6% vs
+  // 13.0% base (1.5× lift) — higher rug share too (46.9% vs 38.3%), the convex
+  // profile the cost-recoup ladder + rug-model sizing already price. Hot-family
+  // candidates get a size boost + queue priority; farm-blacklisted tickers are
+  // never boosted. Key by mint (W26 collision lesson), signal by family.
+  HOT_TICKER_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  HOT_TICKER_WINDOW_MIN: z.coerce.number().default(360), // rolling family window (6h)
+  HOT_TICKER_MIN_WINNERS: z.coerce.number().default(2), // family winners in window to run hot
+  HOT_TICKER_MAX_RUG_SHARE: z.coerce.number().default(0.5), // family rug share that disqualifies
+  HOT_TICKER_SIZE_BOOST: z.coerce.number().default(1.35), // × size for hot-family confirms
+  HOT_TICKER_REFRESH_MS: z.coerce.number().default(120_000),
+
   // SENTINEL — the alert layer (services/sentinel). Pushes kill/breaker
   // transitions, high-conviction arms, runner banks, live fills, and stale
   // heartbeats to the operator's phone via ntfy.sh. Topic empty = idle.
