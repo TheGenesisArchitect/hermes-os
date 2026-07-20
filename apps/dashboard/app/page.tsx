@@ -12,6 +12,7 @@ import { KillSwitch } from "@/components/KillSwitch";
 import { ManagementBoard } from "@/components/ManagementBoard";
 import { RecorderBoard } from "@/components/RecorderBoard";
 import { PondRadar } from "@/components/PondRadar";
+import { TickerRadar } from "@/components/TickerRadar";
 import { AnticipationForecast } from "@/components/AnticipationForecast";
 import { WinningFormula } from "@/components/WinningFormula";
 import { WalletDrawer } from "@/components/WalletDrawer";
@@ -32,6 +33,7 @@ import {
   getNews,
   getManagedPositions,
   getPondRadar,
+  getTickerRadar,
   getAnticipation,
   getWinningFormula,
   getHourlyWindows,
@@ -78,6 +80,7 @@ export default async function Overview() {
     walletIntel,
     anticipation,
     winningFormula,
+    tickerRadar,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -105,6 +108,7 @@ export default async function Overview() {
     getWalletIntel(),
     getAnticipation(),
     getWinningFormula(),
+    getTickerRadar(),
   ]);
 
   const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
@@ -285,6 +289,7 @@ export default async function Overview() {
       <AnticipationForecast view={anticipation} />
 
       {/* Pond Radar — venue R&D lifecycle: discovery → watchlist → promotion */}
+      <TickerRadar radar={tickerRadar} />
       <PondRadar ponds={ponds} hours={hourWindows} walletIntel={walletIntel} />
 
       {/* Accounting ledger — reconciled closed-trade truth + forecaster + portfolio */}

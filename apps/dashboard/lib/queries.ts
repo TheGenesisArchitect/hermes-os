@@ -2961,6 +2961,64 @@ export async function getPondRadar(): Promise<PondRow[]> {
   }
 }
 
+// ── Ticker Radar — hot-winner families (meta-momentum) + farm-ticker blacklist ─
+// Mirrors the trader's live sets: a family with ≥2 winners in the rolling 6h
+// (rug share < 50%) runs HOT (size boost + queue priority); tickers with ≥50%
+// rug share on n≥20 in 24h are farm-blacklisted (no-runner ladder, never boosted).
+export interface HotFamily {
+  fam: string;
+  wins: number;
+  rugs: number;
+  n: number;
+  bestPeak: number | null;
+}
+export interface TickerRadar {
+  hot: HotFamily[];
+  farm: string[];
+}
+
+export async function getTickerRadar(): Promise<TickerRadar> {
+  try {
+    const hotRows = (await db.execute(sql`
+      select lower(regexp_replace(t.symbol, '[^a-zA-Z0-9]', '', 'g')) as fam,
+        count(*)::int as n,
+        count(*) filter (where co.label='winner')::int as wins,
+        count(*) filter (where co.label='rug')::int as rugs,
+        max(co.peak_multiple) as best_peak
+      from candidate_outcomes co join tokens t on t.mint = co.mint
+      where co.label in ('winner','dud','rug')
+        and co.first_seen_at >= now() - interval '6 hours'
+        and t.symbol is not null and length(t.symbol) > 1
+      group by 1
+      having count(*) filter (where co.label='winner') >= 2
+        and count(*) filter (where co.label='rug')::numeric / count(*) < 0.5
+      order by wins desc, best_peak desc
+      limit 24
+    `)) as unknown as { fam: string; n: number; wins: number; rugs: number; best_peak: string | null }[];
+    const farmRows = (await db.execute(sql`
+      select lower(t.symbol) as sym
+      from candidate_outcomes co join tokens t on t.mint = co.mint
+      where co.label in ('winner','dud','rug') and co.updated_at >= now() - interval '24 hours'
+        and t.symbol is not null
+      group by 1
+      having count(*) >= 20 and count(*) filter (where co.label='rug')::numeric / count(*) >= 0.5
+      order by 1 limit 24
+    `)) as unknown as { sym: string }[];
+    return {
+      hot: hotRows.map((r) => ({
+        fam: r.fam,
+        wins: r.wins,
+        rugs: r.rugs,
+        n: r.n,
+        bestPeak: r.best_peak === null ? null : Number(r.best_peak),
+      })),
+      farm: farmRows.map((r) => r.sym),
+    };
+  } catch {
+    return { hot: [], farm: [] };
+  }
+}
+
 // ── Hourly windows — when does flow arrive, when do the best trades show up ─
 export interface HourWindow {
   hour: number; // 0-23 in America/New_York (the operator's clock)
