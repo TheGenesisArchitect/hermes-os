@@ -619,6 +619,9 @@ export async function maybeLiveBuy(cfg: HermesConfig, mint: string, symbol: stri
         if (lg >= cfg.LIQ_INFLOW_STRONG) inflowMult = cfg.LIQ_INFLOW_SIZE_BOOST;
         else if (lg <= cfg.LIQ_FLAT_MAX && tm !== null && tm >= 1.2) inflowMult = cfg.LIQ_FLAT_SIZE_MULT;
       }
+      // Late-entry (buying-the-top) shrink — mirror paper's allocation.
+      if (tm !== null && Number.isFinite(tm) && tm >= cfg.LATE_ENTRY_LO && tm < cfg.LATE_ENTRY_HI)
+        inflowMult *= cfg.LATE_ENTRY_SIZE_MULT;
     }
     convictionMult *= inflowMult;
     // ANTICIPATION — the forecast as a control input: lean in on heating venues in

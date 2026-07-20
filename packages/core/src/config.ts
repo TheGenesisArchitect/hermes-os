@@ -451,7 +451,16 @@ const envSchema = z.object({
   CONFIRM_MIN_WATCH_MIN: z.coerce.number().default(2), // past the t=0 noise floor
   CONFIRM_MAX_WATCH_MIN: z.coerce.number().default(12), // still inside the watch window
   CONFIRM_MIN_TICKS: z.coerce.number().default(2), // need a trajectory, not one snap
-  CONFIRM_MIN_MULT: z.coerce.number().default(1.25), // green and established vs ref
+  // RAISED 1.25 → 1.35 (2026-07-20). Realized P&L by the multiple a token had
+  // ALREADY run at confirm exposed the barely-qualified band as the system's
+  // single largest loss pool: 1.25-1.35× was 45% of all trades (n=342) and lost
+  // −$75.04 (−3.1% on deployed) INCLUDING its winners, while 1.6-2.0× returned
+  // +5.0%. Dead-on-arrival trades are invisible to every quality signal we have
+  // (same pool growth, rug prob, buy share, conviction as winners) — they are a
+  // TIMING artifact, not a quality one, so the fix is a higher proof-of-move bar
+  // rather than another filter. Tokens clearing 1.35× have shown real follow-through,
+  // and the cost-recoup floor banks the basis on the ones that stall.
+  CONFIRM_MIN_MULT: z.coerce.number().default(1.35), // green and established vs ref
   CONFIRM_MAX_DD_PCT: z.coerce.number().default(10), // near the highs, not rolling over
   // Buy-share VETO floor. Was 0.60 — that arm-time veto cost 6.5% of all
   // microstructure-qualified winners (62 of 959, incl. MOOBULL 33x whose heavy
@@ -493,6 +502,15 @@ const envSchema = z.object({
   LIQ_INFLOW_SIZE_BOOST: z.coerce.number().default(1.5),
   LIQ_FLAT_MAX: z.coerce.number().default(1.02), // ≤ this with price up = wash signature
   LIQ_FLAT_SIZE_MULT: z.coerce.number().default(0.6),
+
+  // LATE-ENTRY (BUYING-THE-TOP) SHRINK — the second loss pool. Confirms in the
+  // 2.0-2.5× band ran 27.5% dead-on-arrival and −13.3% on deployed (n=40): the
+  // move had largely finished before we confirmed, so our fill IS the top tick.
+  // Shrink rather than veto — ≥2.5× is positive (+2.0%, the genuine runners that
+  // keep going), so a hard cut there would be over-fitting a small sample.
+  LATE_ENTRY_LO: z.coerce.number().default(2.0),
+  LATE_ENTRY_HI: z.coerce.number().default(2.5),
+  LATE_ENTRY_SIZE_MULT: z.coerce.number().default(0.5),
   // Volume acceleration = vol_m5 / vol_h1, the fraction of the trailing hour's
   // volume packed into the last 5 minutes — a genuine demand BURST. This is the
   // one clean positive edge in the separation study: winner median 0.234 vs rug

@@ -658,7 +658,15 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
           : lg <= cfg.LIQ_FLAT_MAX && tmForFlat !== null && tmForFlat >= 1.2
             ? cfg.LIQ_FLAT_SIZE_MULT
             : 1;
-    const qualityMult = buyShareMult * rugMult * convictionMult * walletMult * hotMult * liqMult;
+    // LATE-ENTRY SHRINK — a confirm in the buying-the-top band (2.0-2.5× already
+    // run) was 27.5% dead-on-arrival at −13.3% on deployed. Half size; the
+    // cost-recoup floor then banks the basis if it stalls, so a late entry that
+    // still ticks up pays for itself instead of bleeding.
+    const lateMult =
+      tm !== null && Number.isFinite(tm) && tm >= cfg.LATE_ENTRY_LO && tm < cfg.LATE_ENTRY_HI
+        ? cfg.LATE_ENTRY_SIZE_MULT
+        : 1;
+    const qualityMult = buyShareMult * rugMult * convictionMult * walletMult * hotMult * liqMult * lateMult;
 
     // Consume ONLY on a real fill. A false return (lane reserved / market null /
     // venue / liquidity / slippage) leaves the candidate armed to re-attempt next
