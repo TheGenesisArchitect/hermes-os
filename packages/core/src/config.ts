@@ -473,7 +473,13 @@ const envSchema = z.object({
     .default("true")
     .transform((v) => v === "true"),
   CONFIRM_MIN_WATCH_MIN: z.coerce.number().default(2), // past the t=0 noise floor
-  CONFIRM_MAX_WATCH_MIN: z.coerce.number().default(12), // still inside the watch window
+  // 12 → 3 (2026-07-20). The 2-2.5min mark is where duds, rugs and real movers
+  // separate — that IS the sort, and it is the whole premise of the entry model.
+  // A 12-minute tail let entries drift far past it: the same trade that qualified
+  // at 2.3m/1.51x was instead filled at 6.1m/1.95x, turning a +44% opportunity
+  // into +11%. Enter inside the sort window or do not enter — a candidate that
+  // only qualifies at minute 8 has already made its move without us.
+  CONFIRM_MAX_WATCH_MIN: z.coerce.number().default(3), // the sort window, not a 12-minute tail
   CONFIRM_MIN_TICKS: z.coerce.number().default(2), // need a trajectory, not one snap
   // RAISED 1.25 → 1.35 (2026-07-20). Realized P&L by the multiple a token had
   // ALREADY run at confirm exposed the barely-qualified band as the system's
