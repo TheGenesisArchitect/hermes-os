@@ -644,6 +644,15 @@ export async function maybeLiveBuy(cfg: HermesConfig, mint: string, symbol: stri
       // Late-entry (buying-the-top) shrink — mirror paper's allocation.
       if (tm !== null && Number.isFinite(tm) && tm >= cfg.LATE_ENTRY_LO && tm < cfg.LATE_ENTRY_HI)
         inflowMult *= cfg.LATE_ENTRY_SIZE_MULT;
+      // MOONSHOT BAND — the live wallet is the one that matters, so it gets the
+      // same concentration paper does. Post-trigger: 1.6-2.0x runs 3.72x at 16%
+      // rug; ≥2.0x runs 3.53x at ZERO observed rugs (n=112) — versus 1.44x and
+      // 28.8% rugs in the low zone. Capital belongs on the bands that produce
+      // the tail, not spread evenly across everything that clears the floor.
+      if (tm !== null && Number.isFinite(tm)) {
+        if (tm >= cfg.BAND_ELITE_MULT) inflowMult *= cfg.BAND_ELITE_SIZE;
+        else if (tm >= cfg.BAND_STRONG_MULT) inflowMult *= cfg.BAND_STRONG_SIZE;
+      }
     }
     convictionMult *= inflowMult;
     // ANTICIPATION — the forecast as a control input: lean in on heating venues in

@@ -685,7 +685,18 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       tm !== null && Number.isFinite(tm) && tm >= cfg.LATE_ENTRY_LO && tm < cfg.LATE_ENTRY_HI
         ? cfg.LATE_ENTRY_SIZE_MULT
         : 1;
-    const qualityMult = buyShareMult * rugMult * convictionMult * walletMult * hotMult * liqMult * lateMult;
+    // MOONSHOT BAND — put the capital where the tail is. Post-trigger runs of
+    // 3.72x (1.6-2.0x band) and 3.53x with ZERO observed rugs (≥2.0x) versus
+    // 1.44x and 29% rugs in the zone we used to fill.
+    const bandMult =
+      tm !== null && Number.isFinite(tm)
+        ? tm >= cfg.BAND_ELITE_MULT
+          ? cfg.BAND_ELITE_SIZE
+          : tm >= cfg.BAND_STRONG_MULT
+            ? cfg.BAND_STRONG_SIZE
+            : 1
+        : 1;
+    const qualityMult = buyShareMult * rugMult * convictionMult * walletMult * hotMult * liqMult * lateMult * bandMult;
 
     // Consume ONLY on a real fill. A false return (lane reserved / market null /
     // venue / liquidity / slippage) leaves the candidate armed to re-attempt next

@@ -68,7 +68,13 @@ export interface EntryTriggerConfig {
    * gate is inverted (a token rising ≥10% at the trigger tick is the worst
    * cohort, −$29.00 over 282 trades — that is buying the top of a spike).
    */
-  minContinuation: number;
+  /**
+   * CEILING on how far price may have risen between the prior qualifying tick
+   * and the confirming one. A vertical is the top of a parabola, not a
+   * confirmation: the ≥100% band lost −0.983/trade, six times worse than any
+   * other, and is where the 41.64×-then-zero class lives. 0 disables.
+   */
+  maxRiseIntoGate: number;
 }
 
 export interface EntryTrigger {
@@ -155,16 +161,32 @@ export function evaluateEntryTrigger(
   // advanced by minContinuation since. A token that clears the bar and stalls
   // (or fades) is refused before a dollar is committed; the tape does the
   // probing that our capital used to pay for.
+  // RISE INTO THE GATE — a CEILING, not a floor. Measured on 540 closed trades
+  // by how far price rose between the prior qualifying tick and the confirming
+  // one:
+  //     <+2%       n=55   +$9.16   (+0.167/trade)  ← the best band
+  //     +2-10%     n=170  −$6.80   (−0.040)
+  //     +10-25%    n=179  −$28.37  (−0.158)
+  //     +25-50%    n=80   −$14.81  (−0.185)
+  //     +50-100%   n=43   +$12.56  (+0.292)
+  //     ≥+100%     n=13   −$12.79  (−0.983)  ← 6× worse than any other band
+  // The original MINIMUM was exactly backwards: it excluded the only reliably
+  // positive band and admitted the verticals unbounded. A token that went 4.03×
+  // → 14.42× in one tick armed at 14.42×, peaked 41.64× and was worth ZERO
+  // ninety seconds later — a parabola we chased to the top. Verticals are only
+  // 23% dead-on-arrival; they move, then they rug. So: no floor on the rise, and
+  // a hard ceiling on it. (Continuation measured AFTER qualification is a
+  // different and genuinely positive signal — it would require delaying entry,
+  // and is not what this check does.)
   const lookback = Math.max(1, Math.round(ctx.continuationLookback ?? 1));
   const prior = series[series.length - 1 - lookback];
-  if (!prior) return no("awaiting a second observation to confirm continuation");
-  if (prior.markMultiple < cfg.minMult)
-    return no(`first tick over the bar (${last.markMultiple.toFixed(2)}x) — waiting for continuation`);
-  const cont = prior.markMultiple > 0 ? last.markMultiple / prior.markMultiple - 1 : 0;
-  if (cont < cfg.minContinuation)
-    return no(
-      `not continuing (${(cont * 100).toFixed(1)}% since last tick, need +${(cfg.minContinuation * 100).toFixed(0)}%)`,
-    );
+  if (prior && prior.markMultiple > 0) {
+    const rise = last.markMultiple / prior.markMultiple - 1;
+    if (cfg.maxRiseIntoGate > 0 && rise >= cfg.maxRiseIntoGate)
+      return no(
+        `vertical spike (+${(rise * 100).toFixed(0)}% in one window) — refusing to buy the top of a parabola`,
+      );
+  }
 
   return {
     triggered: true,
@@ -186,7 +208,7 @@ export function entryTriggerConfigFrom(cfg: {
   CONFIRM_DEAD_BUYSHARE_LO: number;
   CONFIRM_DEAD_BUYSHARE_HI: number;
   CONFIRM_LIQ_GROWTH_EXEMPT: number;
-  CONFIRM_MIN_CONTINUATION: number;
+  CONFIRM_MAX_RISE_INTO_GATE: number;
 }): EntryTriggerConfig {
   return {
     enabled: cfg.CONFIRM_ENTRY_ENABLED,
@@ -200,6 +222,6 @@ export function entryTriggerConfigFrom(cfg: {
     deadBuyShareLo: cfg.CONFIRM_DEAD_BUYSHARE_LO,
     deadBuyShareHi: cfg.CONFIRM_DEAD_BUYSHARE_HI,
     liqGrowthExempt: cfg.CONFIRM_LIQ_GROWTH_EXEMPT,
-    minContinuation: cfg.CONFIRM_MIN_CONTINUATION,
+    maxRiseIntoGate: cfg.CONFIRM_MAX_RISE_INTO_GATE,
   };
 }

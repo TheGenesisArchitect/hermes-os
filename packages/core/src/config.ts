@@ -508,7 +508,15 @@ const envSchema = z.object({
   // Requiring +2% turns −$5.32 into +$29.44 and refuses 248 losing trades with
   // zero capital committed. Inverse warning: momentum INTO the gate is the
   // opposite signal (rising ≥10% at the trigger tick = −$29.00/282 trades).
-  CONFIRM_MIN_CONTINUATION: z.coerce.number().default(0.02),
+  // REPLACED the minimum-continuation floor, which was backwards (2026-07-20).
+  // By rise between the prior qualifying tick and the confirming one, over 540
+  // closed trades: <+2% +$9.16 (+0.167/trade, the best band) · +2-10% −$6.80 ·
+  // +10-25% −$28.37 · +25-50% −$14.81 · +50-100% +$12.56 · ≥+100% −$12.79
+  // (−0.983/trade, 6× worse than any other). The old floor excluded the only
+  // reliably positive band and admitted verticals without limit — it blocked a
+  // 1.26× entry at 2.1m and permitted a 14.42× entry at 3.7m on a token that
+  // peaked 41.64× and was worthless 90 seconds later. Now a ceiling only.
+  CONFIRM_MAX_RISE_INTO_GATE: z.coerce.number().default(1.0), // reject ≥+100% in one window
 
   // ── POOL-INFLOW SIZING — the edge, applied to capital ──────────────────────
   // Pool growth is the one signal a fake move cannot manufacture: wash trading
@@ -591,6 +599,23 @@ const envSchema = z.object({
   LATE_ENTRY_LO: z.coerce.number().default(2.0),
   LATE_ENTRY_HI: z.coerce.number().default(2.5),
   LATE_ENTRY_SIZE_MULT: z.coerce.number().default(0.5),
+
+  // ── MOONSHOT BAND SIZING — where the fat tail actually lives ───────────────
+  // Leak-free, measured on what happens AFTER the trigger (n=1,827, 48h):
+  //   1.20-1.35x : run 1.44x · doubled 6.2%  · 5x+ 0.5% · RUG 28.8%
+  //   1.35-1.6x  : run 1.84x · doubled 22.7% · 5x+ 2.9% · rug 21.6%
+  //   1.6-2.0x   : run 3.72x · doubled 29.3% · 5x+ 4.8% · rug 16.0%
+  //   >=2.0x     : run 3.53x · doubled 33.9% · 5x+ 7.1% · RUG 0.0%
+  // The moonshots are in the HIGH bands and they get SAFER going up — the
+  // opposite of the intuition that chasing a runner is risky. A confirm above
+  // 1.6x runs nearly 4x further and rugs at a third the rate of the zone we
+  // used to fill. These bands previously got no preferential allocation at all;
+  // now they get the capital, in BOTH lanes, so live concentrates on the trades
+  // that actually produce the tail.
+  BAND_STRONG_MULT: z.coerce.number().default(1.6), // ≥ this = the 3.72x-run band
+  BAND_STRONG_SIZE: z.coerce.number().default(1.5),
+  BAND_ELITE_MULT: z.coerce.number().default(2.0), // ≥ this = zero rugs observed
+  BAND_ELITE_SIZE: z.coerce.number().default(2.0),
 
   // Consecutive failed sells that prove a position is unsellable. With the
   // exponential backoff this is ~5 minutes of real attempts — far better than an
