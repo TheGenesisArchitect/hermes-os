@@ -131,7 +131,14 @@ const envSchema = z.object({
     .string()
     .default("dbc,pump,bonding,bags,moonshot,dyn")
     .transform((v) => new Set(v.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean))),
-  TRADER_POLL_MS: z.coerce.number().default(20_000), // cadence for SCANNING/opening new entries
+  // 20s → 5s (2026-07-20). We were sampling a ~20s armed window with a 20s scan
+  // and a 20s freshness cap — alignment was a coin flip, and short-armed
+  // candidates were missed systematically. Short-armed is exactly what a fast
+  // climber looks like: it spikes, dips past the DD gate, disarms. Ballerina
+  // armed at 22:20:00, disarmed ~20s later, peaked 3.49× and was never traded.
+  // The entry scan is three local Postgres queries — no external API — so 12/min
+  // instead of 3/min is free. Matches the manage cadence.
+  TRADER_POLL_MS: z.coerce.number().default(5_000), // cadence for SCANNING/opening new entries
   // Cadence for MANAGING open positions — the exit is where gains are kept or
   // lost, so it runs far tighter than the scan loop. Soly gave back 68% of its
   // move because 20s between looks let it roll 1.78x→1.25x unseen; the deaths
