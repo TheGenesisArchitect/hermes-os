@@ -355,6 +355,13 @@ const envSchema = z.object({
   // Thin = bonding-curve venue (meteora-dbc) OR live liquidity under this floor.
   THIN_STOP_LIQ_USD: z.coerce.number().default(10000),
   MAX_HOLD_HOURS: z.coerce.number().default(6),
+  // RUNNER CLOSE — the last leg of the model: 20% rides after TP2 until it
+  // stalls OR this hard cap, then closes. Six hours was never the intent for a
+  // memecoin runner; the move is decided inside the first fifteen minutes and
+  // holding past that is exposure without thesis. The stall exit still fires
+  // earlier when a position stops making highs; this is the backstop for one
+  // that keeps drifting. Set 0 to disable.
+  RUNNER_MAX_HOLD_SEC: z.coerce.number().default(1000),
   // Flat-position time-box — capital rotation. A position that never established
   // (never cleared FLAT_MULT) after FLAT_MIN minutes is dead weight occupying a
   // slot a live mover could use. Cut it at market to recycle the capital. Any

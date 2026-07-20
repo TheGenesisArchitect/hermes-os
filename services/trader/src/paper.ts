@@ -796,6 +796,15 @@ export function decideExit(
   const peakMult = entry > 0 ? peak / entry : 1;
   const peakProfitUsd = n(position.sizeUsd) * (peakMult - 1);
 
+  // ── RUNNER CLOSE — the model's final leg ──────────────────────────────────
+  // After the TP ladder, 20% rides until it stalls or hits this cap. A memecoin
+  // decides itself inside the first fifteen minutes; holding a runner past ~1000s
+  // is exposure without a thesis. The stall exit fires earlier when the position
+  // stops making highs — this only catches one that keeps drifting sideways.
+  if (cfg.RUNNER_MAX_HOLD_SEC > 0 && ageSec >= cfg.RUNNER_MAX_HOLD_SEC) {
+    return { reason: "runner_timeout", fraction: 1 };
+  }
+
   // ── TIME-BASED FLOOR ──────────────────────────────────────────────────────
   // The operator's model: once a trade has been held ~90s (≈3.5min of watch time
   // after a 2-2.5min entry), a floor goes UNDER IT regardless of how far it has
