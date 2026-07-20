@@ -487,6 +487,14 @@ const envSchema = z.object({
   // a deep bid; pool growth measures capital actually arriving.
   CONFIRM_LIQ_GROWTH_EXEMPT: z.coerce.number().default(1.3),
 
+  // CONTINUATION CONFIRMATION (2026-07-20) — clear the bar, then keep going.
+  // Nothing at entry separates duds from movers; continuation does, monotonically:
+  //   FADED −$28.98 · 0-2% −$5.78 · +2-5% +$2.74 · +5-10% +$5.74 · ≥+10% +$20.96
+  // Requiring +2% turns −$5.32 into +$29.44 and refuses 248 losing trades with
+  // zero capital committed. Inverse warning: momentum INTO the gate is the
+  // opposite signal (rising ≥10% at the trigger tick = −$29.00/282 trades).
+  CONFIRM_MIN_CONTINUATION: z.coerce.number().default(0.02),
+
   // ── POOL-INFLOW SIZING — the edge, applied to capital ──────────────────────
   // Pool growth is the one signal a fake move cannot manufacture: wash trading
   // recycles the same capital and leaves liquidity flat, while a real move pulls

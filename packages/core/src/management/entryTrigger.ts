@@ -49,6 +49,26 @@ export interface EntryTriggerConfig {
    * 25%, and rugged 6.0% vs 26.2%.
    */
   liqGrowthExempt: number;
+  /**
+   * CONTINUATION CONFIRMATION — the token must clear the bar, then keep going.
+   * Nothing observable AT entry separates duds from movers (eleven features
+   * tested: instantaneous rise, sustained rise, time-above-level, watch
+   * duration, pool growth, buy share, rug prob, conviction, wallet reputation,
+   * fill lag — all statistically identical). What separates is what the price
+   * does NEXT. Measured over 474 closed trades, by continuation from the tick
+   * that first qualified to the tick ~30s later:
+   *     FADED   n=203  −$28.98  (−0.143/trade)
+   *     0-2%    n=45   −$5.78   (−0.128)
+   *     +2-5%   n=58   +$2.74   (+0.047)
+   *     +5-10%  n=58   +$5.74   (+0.099)
+   *     ≥+10%   n=110  +$20.96  (+0.191)
+   * Monotonic in P&L. Requiring ≥2% turns −$5.32 into +$29.44 and refuses 248
+   * losing trades outright — no capital donated to learn what the tape will
+   * tell us for free. NOTE the opposite is NOT true: momentum measured INTO the
+   * gate is inverted (a token rising ≥10% at the trigger tick is the worst
+   * cohort, −$29.00 over 282 trades — that is buying the top of a spike).
+   */
+  minContinuation: number;
 }
 
 export interface EntryTrigger {
@@ -116,6 +136,21 @@ export function evaluateEntryTrigger(
   const volAccel = last.volH1 > 0 ? last.volM5 / last.volH1 : null;
   if (volAccel !== null && volAccel < cfg.minVolAccel) return no(`volume not accelerating (${volAccel.toFixed(2)} < ${cfg.minVolAccel} of the hour in last 5m)`);
 
+  // CONTINUATION CONFIRMATION — qualify, then prove it. The previous trusted
+  // observation must ALSO have cleared the multiple bar, and price must have
+  // advanced by minContinuation since. A token that clears the bar and stalls
+  // (or fades) is refused before a dollar is committed; the tape does the
+  // probing that our capital used to pay for.
+  const prior = series[series.length - 2];
+  if (!prior) return no("awaiting a second observation to confirm continuation");
+  if (prior.markMultiple < cfg.minMult)
+    return no(`first tick over the bar (${last.markMultiple.toFixed(2)}x) — waiting for continuation`);
+  const cont = prior.markMultiple > 0 ? last.markMultiple / prior.markMultiple - 1 : 0;
+  if (cont < cfg.minContinuation)
+    return no(
+      `not continuing (${(cont * 100).toFixed(1)}% since last tick, need +${(cfg.minContinuation * 100).toFixed(0)}%)`,
+    );
+
   return {
     triggered: true,
     reason: `confirmed: ${last.markMultiple.toFixed(2)}x green, ${last.drawdownFromPeakPct.toFixed(0)}% off peak, ${(last.buyShareM5 * 100).toFixed(0)}% buys, pool ${ctx.liqGrowth ? `${ctx.liqGrowth.toFixed(2)}×` : "n/a"}${grew ? " 💧INFLOW" : ""}, vol-accel ${volAccel === null ? "n/a" : volAccel.toFixed(2)} at ${ctx.watchMinutes.toFixed(1)}m`,
@@ -136,6 +171,7 @@ export function entryTriggerConfigFrom(cfg: {
   CONFIRM_DEAD_BUYSHARE_LO: number;
   CONFIRM_DEAD_BUYSHARE_HI: number;
   CONFIRM_LIQ_GROWTH_EXEMPT: number;
+  CONFIRM_MIN_CONTINUATION: number;
 }): EntryTriggerConfig {
   return {
     enabled: cfg.CONFIRM_ENTRY_ENABLED,
@@ -149,5 +185,6 @@ export function entryTriggerConfigFrom(cfg: {
     deadBuyShareLo: cfg.CONFIRM_DEAD_BUYSHARE_LO,
     deadBuyShareHi: cfg.CONFIRM_DEAD_BUYSHARE_HI,
     liqGrowthExempt: cfg.CONFIRM_LIQ_GROWTH_EXEMPT,
+    minContinuation: cfg.CONFIRM_MIN_CONTINUATION,
   };
 }
