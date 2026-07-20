@@ -57,22 +57,39 @@ async function saveState(s: SentinelState): Promise<void> {
     .onConflictDoUpdate({ target: config.key, set: { value: s, updatedAt: new Date() } });
 }
 
-/** Push one notification. Priority: 1=min … 5=urgent (ntfy semantics). */
-async function push(title: string, body: string, priority = 3, tags = ""): Promise<void> {
+/**
+ * ALERT TEMPLATE — every push has the same shape so the phone reads at a glance:
+ *   Title:  "CATEGORY · subject"        (plain ASCII — emoji live in ntfy tags)
+ *   Body:   "key: value · key: value"   lines, most important first
+ * Categories: KILL (halts, max priority) · LIVE (real capital moved) ·
+ * RUNNER (tranche banked ≥1.5x) · ARM (high-conviction candidate) ·
+ * HEALTH (service state) · OPS (window/pilot verdicts, pushed by the operator).
+ *
+ * Delivery uses ntfy's JSON publish API (POST to the root with the topic in the
+ * body) — emoji in an HTTP header is not a ByteString and silently killed every
+ * push in v1; JSON bodies are UTF-8 and immune.
+ */
+type Category = "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS";
+
+async function notify(
+  category: Category,
+  subject: string,
+  lines: string[],
+  priority = 3,
+  tags: string[] = [],
+): Promise<void> {
   if (!cfg.SENTINEL_NTFY_TOPIC) return;
+  const title = `${category} · ${subject}`;
+  const message = lines.join("\n");
   try {
-    const res = await resilientFetch(`https://ntfy.sh/${cfg.SENTINEL_NTFY_TOPIC}`, {
+    const res = await resilientFetch("https://ntfy.sh", {
       method: "POST",
-      headers: {
-        Title: title,
-        Priority: String(priority),
-        ...(tags ? { Tags: tags } : {}),
-      },
-      body,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic: cfg.SENTINEL_NTFY_TOPIC, title, message, priority, tags }),
       timeoutMs: 10_000,
     });
     if (!res.ok) console.warn(`sentinel push HTTP ${res.status}: ${title}`);
-    else console.log(`📣 ${title} — ${body}`);
+    else console.log(`📣 ${title} — ${message.replace(/\n/g, " | ")}`);
   } catch (err) {
     console.warn(`sentinel push failed: ${err instanceof Error ? err.message : err}`);
   }
@@ -84,23 +101,27 @@ async function checkKillSwitches(s: SentinelState): Promise<void> {
     const enabled = ((r.value ?? {}) as { enabled?: boolean }).enabled === true;
     if (r.key === "kill_switch") {
       if (s.paperKill !== null && enabled !== s.paperKill) {
-        await push(
-          enabled ? "🛑 PAPER KILL ENGAGED" : "✅ Paper kill cleared",
-          enabled ? "Paper lane halted — breaker or manual stop. Investigate." : "Paper lane trading again.",
+        await notify(
+          "KILL",
+          enabled ? "paper lane ENGAGED" : "paper lane cleared",
+          enabled
+            ? ["state: halted (breaker or manual stop)", "action: investigate before releasing"]
+            : ["state: trading again"],
           enabled ? 5 : 3,
-          enabled ? "rotating_light" : "white_check_mark",
+          enabled ? ["rotating_light"] : ["white_check_mark"],
         );
       }
       s.paperKill = enabled;
     } else if (r.key === "live_kill") {
       if (s.liveKill !== null && enabled !== s.liveKill) {
-        await push(
-          enabled ? "🛑 LIVE KILL ENGAGED" : "🟢 LIVE KILL CLEARED",
+        await notify(
+          "KILL",
+          enabled ? "live lane ENGAGED" : "live lane CLEARED",
           enabled
-            ? `Live lane halted: ${((r.value ?? {}) as { reason?: string }).reason ?? "engaged"}`
-            : "Live lane is armed and will mirror confirmed entries.",
+            ? [`reason: ${((r.value ?? {}) as { reason?: string }).reason ?? "engaged"}`, "state: no new live buys (exits still manage)"]
+            : ["state: live mirror armed — will follow confirmed entries"],
           5,
-          enabled ? "rotating_light" : "rocket",
+          enabled ? ["rotating_light"] : ["rocket"],
         );
       }
       s.liveKill = enabled;
@@ -132,11 +153,15 @@ async function checkArms(s: SentinelState): Promise<void> {
     const conv = c?.conv == null ? null : Number(c.conv);
     const wWin = num(c?.wWin);
     if ((conv !== null && conv >= cfg.SENTINEL_CONV_MIN) || wWin >= 3) {
-      await push(
-        `⚡ ARMED ${c?.symbol ?? short(d.mint)}${conv !== null ? ` · conviction ${(conv * 100).toFixed(0)}` : ""}`,
-        `${c?.dex ?? "?"} · ${wWin > 0 ? `${wWin} winner-wallets · ` : ""}${d.reason ?? ""}`,
+      await notify(
+        "ARM",
+        `${c?.symbol ?? short(d.mint)}${conv !== null ? ` · conviction ${(conv * 100).toFixed(0)}` : ""}`,
+        [
+          `venue: ${c?.dex ?? "?"}${wWin > 0 ? ` · winner-wallets: ${wWin}` : ""}`,
+          `gate: ${d.reason ?? "confirmed"}`,
+        ],
         4,
-        "zap",
+        ["zap"],
       );
     }
   }
@@ -166,18 +191,22 @@ async function checkFills(s: SentinelState): Promise<void> {
     const mult = num(r.entry) > 0 ? num(r.price) / num(r.entry) : 0;
     const usd = num(r.qty) * num(r.price);
     if (r.lane === "live") {
-      await push(
-        `💰 LIVE ${r.side.toUpperCase()} ${r.symbol}`,
-        `$${usd.toFixed(2)}${r.side === "sell" ? ` at ${mult.toFixed(2)}x (${r.reason ?? "exit"})` : ""}`,
+      await notify(
+        "LIVE",
+        `${r.side.toUpperCase()} ${r.symbol} $${usd.toFixed(2)}`,
+        r.side === "sell"
+          ? [`fill: ${mult.toFixed(2)}x entry · exit: ${r.reason ?? "?"}`, `position pnl: ${num(r.pnl) >= 0 ? "+" : ""}$${num(r.pnl).toFixed(2)}`]
+          : [`entry filled — managing`],
         4,
-        "moneybag",
+        ["moneybag"],
       );
     } else if (r.side === "sell" && mult >= cfg.SENTINEL_RUNNER_MULT) {
-      await push(
-        `🏃 Runner banked ${mult.toFixed(2)}x — ${r.symbol}`,
-        `paper · $${usd.toFixed(2)} (${r.reason ?? "exit"})`,
+      await notify(
+        "RUNNER",
+        `${r.symbol} banked ${mult.toFixed(2)}x`,
+        [`lane: paper · exit: ${r.reason ?? "?"} · $${usd.toFixed(2)}`],
         3,
-        "chart_with_upwards_trend",
+        ["chart_with_upwards_trend"],
       );
     }
   }
@@ -189,9 +218,9 @@ async function checkHeartbeat(s: SentinelState): Promise<void> {
   )) as unknown as { stale: boolean | null }[];
   const stale = hb?.stale === true;
   if (stale && !s.heartbeatStale) {
-    await push("⚠️ Trader heartbeat STALE", "No pnl snapshot in 10+ minutes — check services.", 5, "warning");
+    await notify("HEALTH", "trader heartbeat STALE", ["no pnl snapshot in 10+ min — check services"], 5, ["warning"]);
   } else if (!stale && s.heartbeatStale) {
-    await push("✅ Trader heartbeat recovered", "Snapshots flowing again.", 2, "white_check_mark");
+    await notify("HEALTH", "trader heartbeat recovered", ["snapshots flowing again"], 2, ["white_check_mark"]);
   }
   s.heartbeatStale = stale;
 }
