@@ -809,7 +809,15 @@ async function liveSellPosition(
     // total loss, not an open position.
     const ageMin = (Date.now() - new Date(position.openedAt).getTime()) / 60_000;
     const noRoute = /no route|build 400|no pool|NO_ROUTES|routes found|all providers|all RPCs/i.test(msg);
-    if (noRoute && ageMin > cfg.LIVE_STRAND_WRITEOFF_MIN) {
+    // ANY persistently unsellable position must eventually be written off, not
+    // just route-exhausted ones. REBECA (2026-07-20) retried a `simulation
+    // failed: InstructionError` sell every ~7s for 112 MINUTES — the error never
+    // matched the no-route regex, so the write-off never fired and the retry
+    // loop burned RPC budget and cycle time indefinitely. A token we cannot sell
+    // after this long is a total loss whatever the error says; book it honestly
+    // and stop spamming. The no-route fast path keeps its shorter fuse.
+    const hardStuckMin = cfg.LIVE_STRAND_WRITEOFF_MIN * 3;
+    if ((noRoute && ageMin > cfg.LIVE_STRAND_WRITEOFF_MIN) || ageMin > hardStuckMin) {
       const remCost = n(position.sizeUsd) * (n(position.qtyRemaining) / Math.max(n(position.qtyTokens), 1e-9));
       await db
         .update(positions)
