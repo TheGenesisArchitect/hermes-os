@@ -906,10 +906,13 @@ const mirrorSellInFlight = new Set<string>();
  */
 export async function mirrorLiveSell(cfg: HermesConfig, mint: string, fraction: number, reason: string): Promise<void> {
   if (!cfg.LIVE_TRADING_ENABLED || !liveWallet()) return;
-  // The early-fill floor owns the first defensive tranche (take_profit_0) when it is
-  // ACTIVELY banking — skip the mirror's TP0 so the two never double-bank. In log-only
-  // mode (floor doesn't sell) the mirror keeps TP0 so the tranche is still banked.
-  if (cfg.LIVE_FLOOR_ENABLED && !cfg.LIVE_FLOOR_LOG_ONLY && reason.startsWith("take_profit_0")) return;
+  // THE TP0 SKIP IS GONE (2026-07-20). It deferred the first defensive tranche to
+  // the early-fill floor — but the floor never fires: 50 live sells over 6h
+  // produced ZERO take_profit_0 and ZERO floor fills, so live banked nothing
+  // until TP1 at 1.3x while paper banked 40-87% at 1.15x. Every live winner rode
+  // naked through the latency gap and gave the move back. Live now mirrors TP0
+  // like every other tranche; if the floor is ever proven to fire, the cumulative
+  // sold-fraction logic in decideExit already prevents double-banking.
   const [pos] = await db
     .select()
     .from(positions)

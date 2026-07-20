@@ -391,14 +391,21 @@ async function observe(
             }
           : {}),
         ...(convScore !== null ? { convictionScore: String(convScore) } : {}),
-        ...(firstArm
+        // triggeredAt marks FIRST confirmed demand and never moves. But the
+        // multiple/score/reason must track the CURRENT arm: they were first-arm
+        // only, so a mint that armed once at 1.27x kept that value forever even
+        // after re-arming at 1.5x under a higher bar. 95 of 253 armed rows read
+        // below the live 1.35x bar purely as fossils, making the gate impossible
+        // to audit from the ledger (one such row, stored 1.27x, went on to peak
+        // 4.29x). Refresh them on every armed read; keep triggeredAt pinned.
+        ...(armed
           ? {
-              triggeredAt: new Date(),
               triggerScore: String(call.continuationScore),
               triggerMultiple: String(trig.markMultiple),
               triggerReason: trig.reason,
             }
           : {}),
+        ...(firstArm ? { triggeredAt: new Date() } : {}),
         updatedAt: new Date(),
       })
       .where(eq(candidateOutcomes.mint, o.mint));
