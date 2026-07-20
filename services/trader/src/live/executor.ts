@@ -843,8 +843,12 @@ async function liveSellPosition(
     // loop burned RPC budget and cycle time indefinitely. A token we cannot sell
     // after this long is a total loss whatever the error says; book it honestly
     // and stop spamming. The no-route fast path keeps its shorter fuse.
-    const hardStuckMin = cfg.LIVE_STRAND_WRITEOFF_MIN * 3;
-    if ((noRoute && ageMin > cfg.LIVE_STRAND_WRITEOFF_MIN) || ageMin > hardStuckMin) {
+    // EVIDENCE, not a clock: N consecutive failed sells IS the proof the position
+    // is dead — waiting out an age fuse just parks capital and a concurrency slot
+    // on a corpse. With exponential backoff, LIVE_SELL_MAX_FAILS=6 is ~5 minutes
+    // of genuine attempts rather than an arbitrary 24-minute wait.
+    const deadByEvidence = fails >= cfg.LIVE_SELL_MAX_FAILS;
+    if ((noRoute && ageMin > cfg.LIVE_STRAND_WRITEOFF_MIN) || deadByEvidence) {
       const remCost = n(position.sizeUsd) * (n(position.qtyRemaining) / Math.max(n(position.qtyTokens), 1e-9));
       await db
         .update(positions)

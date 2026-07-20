@@ -498,7 +498,13 @@ const envSchema = z.object({
   //   price up on a FLAT pool (the wash signature) → 35.1% rug vs 22.5%
   // So: lean into inflow, shrink the price-up-on-flat-pool case. Sizing, never a
   // veto — the shrink-don't-veto doctrine holds.
-  LIQ_INFLOW_STRONG: z.coerce.number().default(1.20), // ≥ this = strong inflow
+  // RAISED 1.20 → 1.30 (2026-07-20) on the live Inflow Edge readout: the boost
+  // was landing on a LOSING band. Measured over 24h —
+  //   ≥1.30×      : 72.0% win · 0.0% rug · 4.00× peak · +$27.09 realized
+  //   1.20-1.30×  : 35.7% win · 28.6% rug · 2.35× peak · −$7.32 realized
+  // Only ≥1.30 is the edge; 1.20-1.30 was being sized UP while it bled. The
+  // panel that caught this is exactly why the edge is monitored continuously.
+  LIQ_INFLOW_STRONG: z.coerce.number().default(1.30), // ≥ this = strong inflow
   LIQ_INFLOW_SIZE_BOOST: z.coerce.number().default(1.5),
   LIQ_FLAT_MAX: z.coerce.number().default(1.02), // ≤ this with price up = wash signature
   LIQ_FLAT_SIZE_MULT: z.coerce.number().default(0.6),
@@ -511,6 +517,11 @@ const envSchema = z.object({
   LATE_ENTRY_LO: z.coerce.number().default(2.0),
   LATE_ENTRY_HI: z.coerce.number().default(2.5),
   LATE_ENTRY_SIZE_MULT: z.coerce.number().default(0.5),
+
+  // Consecutive failed sells that prove a position is unsellable. With the
+  // exponential backoff this is ~5 minutes of real attempts — far better than an
+  // age fuse, which parked capital and a concurrency slot on a corpse for 24min.
+  LIVE_SELL_MAX_FAILS: z.coerce.number().default(6),
   // Volume acceleration = vol_m5 / vol_h1, the fraction of the trailing hour's
   // volume packed into the last 5 minutes — a genuine demand BURST. This is the
   // one clean positive edge in the separation study: winner median 0.234 vs rug
