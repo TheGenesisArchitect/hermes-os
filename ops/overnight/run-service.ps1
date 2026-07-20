@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("scout", "recorder", "trader", "dashboard")]
+  [ValidateSet("scout", "recorder", "trader", "dashboard", "sentinel")]
   [string]$Name
 )
 # run-service.ps1 — supervise one hermes service for the overnight run.
@@ -13,6 +13,7 @@ $filters = @{
   recorder  = "@hermes/recorder"
   trader    = "@hermes/trader"
   dashboard = "@hermes/dashboard"
+  sentinel  = "@hermes/sentinel"
 }
 $Filter = $filters[$Name]
 

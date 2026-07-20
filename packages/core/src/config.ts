@@ -667,6 +667,27 @@ const envSchema = z.object({
   CONVICTION_SIZE_MIN_BAND: z.coerce.number().default(0.6),
   CONVICTION_SIZE_MAX_BAND: z.coerce.number().default(2.2),
 
+  // SENTINEL — the alert layer (services/sentinel). Pushes kill/breaker
+  // transitions, high-conviction arms, runner banks, live fills, and stale
+  // heartbeats to the operator's phone via ntfy.sh. Topic empty = idle.
+  SENTINEL_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  SENTINEL_NTFY_TOPIC: z.string().default(""),
+  SENTINEL_POLL_MS: z.coerce.number().default(30_000),
+  SENTINEL_CONV_MIN: z.coerce.number().default(0.75), // ⚡ arm push threshold
+  SENTINEL_RUNNER_MULT: z.coerce.number().default(1.5), // runner-bank push threshold
+
+  // SELL-ROUTE PROBE (the KIMI lesson institutionalized, 2026-07-20): before a
+  // live BUY, quote the SELL (mint → WSOL) through the swap router. Exitability
+  // becomes a real-time CHECK, not a venue-list assumption — a token we cannot
+  // route an exit for right now is not entered, whatever its venue label says.
+  LIVE_SELL_ROUTE_PROBE: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+
   LIVE_TRADING_ENABLED: z
     .string()
     .default("false")

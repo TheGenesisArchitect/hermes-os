@@ -326,6 +326,26 @@ async function liveBuyGate(cfg: HermesConfig, mint: string): Promise<LiveGate> {
     }
   }
 
+  // SELL-ROUTE PROBE (the KIMI lesson institutionalized): quote the EXIT before
+  // committing capital to the entry. A token whose sell (mint → WSOL) cannot be
+  // routed RIGHT NOW — across every provider in the failover stack — is a
+  // stranding risk, whatever its venue label says. The probe amount is nominal
+  // (route existence is what's tested, not depth); a probe failure defers the
+  // entry, it does not consume the candidate — the recorder re-arms and the
+  // next cycle re-probes, so a transient Jupiter blip costs one cycle, not the
+  // trade.
+  if (cfg.LIVE_SELL_ROUTE_PROBE) {
+    try {
+      const WSOL = "So11111111111111111111111111111111111111112";
+      await swapRouter.quote(cfg, mint, WSOL, 100_000_000n, cfg.LIVE_SELL_SLIPPAGE_BPS);
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `no sell route (probe: ${err instanceof Error ? err.message.slice(0, 120) : "failed"})`,
+      };
+    }
+  }
+
   return { ok: true };
 }
 

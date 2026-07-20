@@ -12,6 +12,7 @@
     "scout": "pnpm --filter @hermes/scout dev",
     "recorder": "pnpm --filter @hermes/recorder dev",
     "trader": "pnpm --filter @hermes/trader dev",
+    "sentinel": "pnpm --filter @hermes/sentinel dev",
     "dashboard": "pnpm --filter @hermes/dashboard dev",
     "db:push": "pnpm --filter @hermes/db push",
     "db:studio": "pnpm --filter @hermes/db studio",

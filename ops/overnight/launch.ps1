@@ -10,7 +10,7 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 Write-Host "== 1. killing stale hermes processes =="
 # Match only OUR processes by command line: the tsx service entrypoints and the
 # dashboard's next dev. Never touch node processes that aren't clearly ours.
-$patterns = 'hermes-os.*services\\(scout|recorder|trader).*index\.ts|hermes-os.*dev -p 3777|dashboard.*next.*dev -p 3777|run-service\.ps1|keep-awake\.ps1'
+$patterns = 'hermes-os.*services\\(scout|recorder|trader|sentinel).*index\.ts|hermes-os.*dev -p 3777|dashboard.*next.*dev -p 3777|run-service\.ps1|keep-awake\.ps1'
 $stale = Get-CimInstance Win32_Process |
   Where-Object { $_.CommandLine -and ($_.CommandLine -match $patterns) }
 foreach ($p in $stale) {
@@ -25,7 +25,7 @@ Start-Process powershell -WindowStyle Hidden -ArgumentList @(
 )
 
 Write-Host "== 3. services (detached, logged, auto-restart) =="
-foreach ($name in @("scout", "recorder", "trader", "dashboard")) {
+foreach ($name in @("scout", "recorder", "trader", "dashboard", "sentinel")) {
   Start-Process powershell -WindowStyle Hidden -ArgumentList @(
     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $here "run-service.ps1"),
     "-Name", $name

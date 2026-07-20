@@ -4,7 +4,7 @@ $here = $PSScriptRoot
 $logDir = Join-Path $here "logs"
 
 Write-Host "== processes =="
-$patterns = 'services\\(scout|recorder|trader).*index\.ts|dev -p 3777|run-service\.ps1|keep-awake\.ps1'
+$patterns = 'services\\(scout|recorder|trader|sentinel).*index\.ts|dev -p 3777|run-service\.ps1|keep-awake\.ps1'
 $procs = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.CommandLine -match $patterns) }
 if (-not $procs) { Write-Host "  (none running)" }
 foreach ($p in $procs) {
@@ -14,6 +14,7 @@ foreach ($p in $procs) {
     'scout.*index\.ts'    { "scout";     break }
     'recorder.*index\.ts' { "recorder";  break }
     'trader.*index\.ts'   { "trader";     break }
+    'sentinel.*index\.ts' { "sentinel";  break }
     'dev -p 3777' { "dashboard";  break }
     default       { "?" }
   }
