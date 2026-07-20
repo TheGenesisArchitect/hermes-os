@@ -649,14 +649,13 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // wash/ragoon signature and rugs 35% vs 22%. Lean in on inflow, shrink the
     // flat-pool case — sizing only, never a veto.
     const lg = liqGrowth === null ? null : Number(liqGrowth);
-    const tmForFlat = triggerMultiple === null ? null : Number(triggerMultiple);
     const liqMult =
       lg === null || !Number.isFinite(lg)
-        ? 1
+        ? 1 // unmeasured → neutral; absence is not evidence
         : lg >= cfg.LIQ_INFLOW_STRONG
-          ? cfg.LIQ_INFLOW_SIZE_BOOST
-          : lg <= cfg.LIQ_FLAT_MAX && tmForFlat !== null && tmForFlat >= 1.2
-            ? cfg.LIQ_FLAT_SIZE_MULT
+          ? cfg.LIQ_INFLOW_SIZE_BOOST // the band that pays: 72% win, 0% rug
+          : lg < cfg.LIQ_FLAT_MAX
+            ? cfg.LIQ_FLAT_SIZE_MULT // everything short of strong inflow bleeds
             : 1;
     // LATE-ENTRY SHRINK — a confirm in the buying-the-top band (2.0-2.5× already
     // run) was 27.5% dead-on-arrival at −13.3% on deployed. Half size; the

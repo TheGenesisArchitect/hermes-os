@@ -506,8 +506,27 @@ const envSchema = z.object({
   // panel that caught this is exactly why the edge is monitored continuously.
   LIQ_INFLOW_STRONG: z.coerce.number().default(1.30), // ≥ this = strong inflow
   LIQ_INFLOW_SIZE_BOOST: z.coerce.number().default(1.5),
-  LIQ_FLAT_MAX: z.coerce.number().default(1.02), // ≤ this with price up = wash signature
+  // RAISED 1.02 → 1.30 (2026-07-20). The shrink used to catch only DEAD-flat
+  // pools, leaving the whole 1.02-1.30 middle at full size — and that middle is
+  // where the losses live. Measured 24h: ≥1.30× → 72.0% win / 0% rug / +$27.09;
+  // 1.20-1.30× → 35.7% win / 28.6% rug / −$7.32; 1.05-1.20× → 15.8% win /
+  // −$6.15. Confirmed on the live book: 7 of the 8 worst live trades had pool
+  // growth 1.14-1.25 while clearing the price bar at 1.35-1.73×. Price says the
+  // token moved; the pool says somebody actually paid for it. Anything short of
+  // strong inflow now sizes down.
+  LIQ_FLAT_MAX: z.coerce.number().default(1.30), // < STRONG = not enough real inflow
   LIQ_FLAT_SIZE_MULT: z.coerce.number().default(0.6),
+
+  // LIVE INFLOW REQUIREMENT — real capital only mirrors the band that pays.
+  // Live has no frictionless forgiveness: it eats slippage, gas and confirm
+  // latency, so the marginal-inflow trades paper survives are pure bleed live.
+  // Only the ≥LIQ_INFLOW_STRONG band (72% win / 0% rug) clears. FAIL-SAFE: an
+  // unstamped candidate is refused too — if stamping ever breaks, live stops
+  // trading rather than reverting to blind entries. Paper still explores it all.
+  LIVE_REQUIRE_INFLOW: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
 
   // LATE-ENTRY (BUYING-THE-TOP) SHRINK — the second loss pool. Confirms in the
   // 2.0-2.5× band ran 27.5% dead-on-arrival and −13.3% on deployed (n=40): the

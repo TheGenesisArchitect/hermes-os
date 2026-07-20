@@ -326,6 +326,28 @@ async function liveBuyGate(cfg: HermesConfig, mint: string): Promise<LiveGate> {
     }
   }
 
+  // LIVE INFLOW REQUIREMENT — real capital mirrors only the band that pays.
+  // Paper survives marginal-inflow trades because its fills are frictionless;
+  // live eats slippage, gas and confirm latency, so the same trades are pure
+  // bleed. Evidence (24h): pool ≥1.30× at arm → 72.0% win / 0.0% rug / +$27.09
+  // realized, while 1.20-1.30× → 28.6% rug / −$7.32 and 1.05-1.20× → −$6.15.
+  // Confirmed on the live book: 7 of the 8 worst live trades had pool growth
+  // 1.14-1.25 despite clearing the 1.35-1.73× price bar. FAIL-SAFE: unstamped
+  // candidates are refused as well — if stamping breaks, live stands down
+  // rather than falling back to blind entries. Paper keeps exploring everything.
+  if (cfg.LIVE_REQUIRE_INFLOW) {
+    const [io] = await db
+      .select({ lg: candidateOutcomes.liqGrowth })
+      .from(candidateOutcomes)
+      .where(eq(candidateOutcomes.mint, mint))
+      .limit(1);
+    const lg = io?.lg == null ? null : Number(io.lg);
+    if (lg === null || !Number.isFinite(lg))
+      return { ok: false, reason: "inflow unmeasured — live requires a stamped pool read" };
+    if (lg < cfg.LIQ_INFLOW_STRONG)
+      return { ok: false, reason: `weak inflow (pool ${lg.toFixed(2)}× < ${cfg.LIQ_INFLOW_STRONG}×)` };
+  }
+
   // SELL-ROUTE PROBE (the KIMI lesson institutionalized): quote the EXIT before
   // committing capital to the entry. A token whose sell (mint → WSOL) cannot be
   // routed RIGHT NOW — across every provider in the failover stack — is a
