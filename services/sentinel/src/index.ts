@@ -120,7 +120,9 @@ async function checkKillSwitches(s: SentinelState): Promise<void> {
           enabled
             ? [`reason: ${((r.value ?? {}) as { reason?: string }).reason ?? "engaged"}`, "state: no new live buys (exits still manage)"]
             : ["state: live mirror armed — will follow confirmed entries"],
-          5,
+          // Engagement is an emergency (max, breaks DND). Clearance is good news —
+          // audible if awake, never a wake-up (operator: wake me only on NO-GO).
+          enabled ? 5 : 3,
           enabled ? ["rotating_light"] : ["rocket"],
         );
       }
