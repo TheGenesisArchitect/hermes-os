@@ -231,10 +231,18 @@ const envSchema = z.object({
     .string()
     .default("false")
     .transform((v) => v === "true"),
+  // ARMED (2026-07-20). This was shadow-logging the exact loss we spent the day
+  // chasing: it identifies the bank point at block resolution and then watches
+  // the 5s loop ride the position down — its own log says so, "armed sells here,
+  // 5s loop rides it down". Observed live: a position where it would have banked
+  // +26.8% (floor 1.27x off a 1.38x peak) and instead gave it back. The whole
+  // point of a sub-5s sweep is to catch a rollover NEAR the floor rather than
+  // gapping through it, and in log-only mode it delivered none of that. Winners
+  // are given back in the seconds between manage cycles; this closes that window.
   FAST_FLOOR_LOG_ONLY: z
     .string()
-    .default("true")
-    .transform((v) => v !== "false"),
+    .default("false")
+    .transform((v) => v === "true"),
   FAST_FLOOR_MS: z.coerce.number().default(1000), // sub-poll cadence between the 5s manage cycles
   FAST_FLOOR_ARM_MULT: z.coerce.number().default(1.15), // only watch positions lifted past this (in profit)
   FAST_FLOOR_TRAIL_PCT: z.coerce.number().default(8), // fire when the fast mark <= peak * (1 - this/100)
