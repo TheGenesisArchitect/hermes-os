@@ -236,9 +236,12 @@ interface LaneStats {
   best: { sym: string; pnl: number } | null;
   worst: { sym: string; pnl: number } | null;
   deployed: number;
+  /** lane equity at the latest snapshot — the denominator for "% of balance" */
+  balance: number;
 }
 
 const money = (v: number): string => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`;
+const pct = (v: number): string => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}%`;
 
 async function laneStats(lane: string, minutes: number): Promise<LaneStats> {
   const rows = (await db.execute(sql`
@@ -247,7 +250,11 @@ async function laneStats(lane: string, minutes: number): Promise<LaneStats> {
     where p.lane = ${lane} and p.status = 'closed'
       and p.closed_at > now() - make_interval(mins => ${minutes})
   `)) as unknown as { pnl: number; size: number; symbol: string | null }[];
-  const st: LaneStats = { pnl: 0, closes: 0, wins: 0, best: null, worst: null, deployed: 0 };
+  const [eq] = (await db.execute(sql`
+    select coalesce(equity_usd, 0)::float as equity from pnl_snapshots
+    where lane = ${lane} order by snapped_at desc limit 1
+  `)) as unknown as { equity: number }[];
+  const st: LaneStats = { pnl: 0, closes: 0, wins: 0, best: null, worst: null, deployed: 0, balance: num(eq?.equity) };
   for (const r of rows) {
     const pnl = Number(r.pnl);
     st.pnl += pnl;
@@ -261,11 +268,18 @@ async function laneStats(lane: string, minutes: number): Promise<LaneStats> {
   return st;
 }
 
+/**
+ * Two denominators, because they answer different questions:
+ *   "on deployed" = how well the capital that went to work performed (edge)
+ *   "of balance"  = what it did to the account (risk / drawdown felt)
+ * A −$15 hour is a rounding error on a $2,500 book and a catastrophe on $200.
+ */
 function laneLine(tag: string, st: LaneStats, note?: string): string {
   if (st.closes === 0) return `${tag}: no closes${note ? ` (${note})` : ""}`;
   const wr = Math.round((100 * st.wins) / st.closes);
-  const ret = st.deployed > 0 ? ` · ${((100 * st.pnl) / st.deployed).toFixed(1)}% on deployed` : "";
-  return `${tag}: ${money(st.pnl)} · ${st.closes} closes · ${wr}% win${ret}`;
+  const onDep = st.deployed > 0 ? ` · ${pct((100 * st.pnl) / st.deployed)} on deployed` : "";
+  const ofBal = st.balance > 0 ? ` · ${pct((100 * st.pnl) / st.balance)} of bal` : "";
+  return `${tag}: ${money(st.pnl)}${ofBal} · ${st.closes} closes · ${wr}% win${onDep}`;
 }
 
 async function sendTrend(s: SentinelState): Promise<void> {

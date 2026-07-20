@@ -3046,6 +3046,24 @@ export async function getTradeLedger(limit = 200): Promise<TradeRow[]> {
   });
 }
 
+/** Latest equity per lane — the denominator for "% of balance" readouts. */
+export async function getLaneBalances(): Promise<{ paper: number; live: number }> {
+  try {
+    const rows = (await db.execute(sql`
+      select distinct on (lane) lane, coalesce(equity_usd,0)::float as equity
+      from pnl_snapshots order by lane, snapped_at desc
+    `)) as unknown as { lane: string; equity: number }[];
+    const out = { paper: 0, live: 0 };
+    for (const r of rows) {
+      if (r.lane === "paper") out.paper = Number(r.equity);
+      else if (r.lane === "live") out.live = Number(r.equity);
+    }
+    return out;
+  } catch {
+    return { paper: 0, live: 0 };
+  }
+}
+
 // ── Ticker Radar — hot-winner families (meta-momentum) + farm-ticker blacklist ─
 // Mirrors the trader's live sets: a family with ≥2 winners in the rolling 6h
 // (rug share < 50%) runs HOT (size boost + queue priority); tickers with ≥50%

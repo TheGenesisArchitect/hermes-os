@@ -37,6 +37,7 @@ import {
   getPondRadar,
   getTickerRadar,
   getTradeLedger,
+  getLaneBalances,
   getAnticipation,
   getWinningFormula,
   getHourlyWindows,
@@ -85,6 +86,7 @@ export default async function Overview() {
     winningFormula,
     tickerRadar,
     tradeLedger,
+    laneBalances,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -114,6 +116,7 @@ export default async function Overview() {
     getWinningFormula(),
     getTickerRadar(),
     getTradeLedger(),
+    getLaneBalances(),
   ]);
 
   const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
@@ -312,7 +315,7 @@ export default async function Overview() {
       {/* Evidence & Value — one row per closed round trip: capital deployed,
           shares, entry/exit/peak, P&L, hold, and the on-chain tx hashes. Full
           width now that the signal feed lives in the header ticker. */}
-      <TradeLedger trades={tradeLedger} />
+      <TradeLedger trades={tradeLedger} balances={laneBalances} />
 
       {/* Raw fill stream — the per-fill audit trail behind the ledger above. */}
       <FillsTable trades={trades} summaryAll={fillsSummary} />

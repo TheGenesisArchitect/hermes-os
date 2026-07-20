@@ -56,7 +56,7 @@ const REASON_TONE: Record<string, string> = {
 type LaneFilter = "all" | "live" | "paper";
 type SortKey = "closedAt" | "pnlUsd" | "returnPct" | "deployedUsd";
 
-export function TradeLedger({ trades }: { trades: TradeRow[] }) {
+export function TradeLedger({ trades, balances }: { trades: TradeRow[]; balances?: { paper: number; live: number } }) {
   const [query, setQuery] = useState("");
   const [lane, setLane] = useState<LaneFilter>("all");
   const [range, setRange] = useState<RangeKey>("all");
@@ -98,13 +98,18 @@ export function TradeLedger({ trades }: { trades: TradeRow[] }) {
       if ((t.pnlUsd ?? 0) > 0.005) wins++;
       if (t.buySig || t.sellSigs.length) verified++;
     }
+    // Denominator for "% of balance": the lane's equity. With both lanes shown,
+    // use the sum so the figure still describes the book being reported.
+    const bal =
+      lane === "live" ? (balances?.live ?? 0) : lane === "paper" ? (balances?.paper ?? 0) : (balances?.paper ?? 0) + (balances?.live ?? 0);
     return {
-      deployed, pnl, fees, wins, verified,
+      deployed, pnl, fees, wins, verified, bal,
       n: rows.length,
       winPct: rows.length ? (100 * wins) / rows.length : 0,
       retPct: deployed > 0 ? (100 * pnl) / deployed : 0,
+      balPct: bal > 0 ? (100 * pnl) / bal : null,
     };
-  }, [rows]);
+  }, [rows, lane, balances]);
 
   const toggleSort = (k: SortKey) => {
     if (k === sortKey) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
@@ -139,11 +144,16 @@ export function TradeLedger({ trades }: { trades: TradeRow[] }) {
       </div>
 
       {/* Value statement — the filtered view's bottom line */}
-      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-6">
         {[
           { label: "capital deployed", value: usd(tot.deployed, 0), tone: "var(--text-primary)" },
           { label: "realized P&L", value: `${tot.pnl >= 0 ? "+" : ""}${usd(tot.pnl)}`, tone: tot.pnl >= 0 ? "var(--status-good)" : "var(--status-critical)" },
           { label: "return on deployed", value: `${tot.retPct >= 0 ? "+" : ""}${tot.retPct.toFixed(1)}%`, tone: tot.retPct >= 0 ? "var(--status-good)" : "var(--status-critical)" },
+          {
+            label: `% of balance${tot.bal > 0 ? ` (${usd(tot.bal, 0)})` : ""}`,
+            value: tot.balPct === null ? "—" : `${tot.balPct >= 0 ? "+" : ""}${tot.balPct.toFixed(2)}%`,
+            tone: tot.balPct === null ? "var(--text-muted)" : tot.balPct >= 0 ? "var(--status-good)" : "var(--status-critical)",
+          },
           { label: "win rate", value: `${tot.winPct.toFixed(0)}% (${tot.wins}/${tot.n})`, tone: "var(--text-primary)" },
           { label: "on-chain verified", value: `${tot.verified}`, tone: tot.verified > 0 ? "var(--series-1)" : "var(--text-muted)" },
         ].map((s) => (
@@ -178,6 +188,7 @@ export function TradeLedger({ trades }: { trades: TradeRow[] }) {
                 <th className={`${th} text-right`}>Peak</th>
                 <th className={`${th} text-right cursor-pointer`} onClick={() => toggleSort("pnlUsd")}>P&amp;L{arrow("pnlUsd")}</th>
                 <th className={`${th} text-right cursor-pointer`} onClick={() => toggleSort("returnPct")}>Return{arrow("returnPct")}</th>
+                <th className={`${th} text-right`} title="this trade's P&L as a share of that lane's balance — the account impact">% of bal</th>
                 <th className={`${th} text-right`}>Hold</th>
                 <th className={th}>Exit</th>
                 <th className={`${th} text-right cursor-pointer`} onClick={() => toggleSort("closedAt")}>Closed (UTC){arrow("closedAt")}</th>
@@ -217,6 +228,14 @@ export function TradeLedger({ trades }: { trades: TradeRow[] }) {
                     </td>
                     <td className="tabular py-2 pr-3 text-right" style={{ color: tone }}>
                       {t.returnPct === null ? "—" : `${t.returnPct >= 0 ? "+" : ""}${t.returnPct.toFixed(1)}%`}
+                    </td>
+                    <td className="tabular py-2 pr-3 text-right text-xs" style={{ color: "var(--text-muted)" }}>
+                      {(() => {
+                        const bal = live ? (balances?.live ?? 0) : (balances?.paper ?? 0);
+                        if (!bal || t.pnlUsd === null) return "—";
+                        const bp = (100 * t.pnlUsd) / bal;
+                        return `${bp >= 0 ? "+" : ""}${bp.toFixed(2)}%`;
+                      })()}
                     </td>
                     <td className="tabular py-2 pr-3 text-right text-xs" style={{ color: "var(--text-muted)" }}>{fmtHold(t.holdSec)}</td>
                     <td className="py-2 pr-3 text-xs whitespace-nowrap">
