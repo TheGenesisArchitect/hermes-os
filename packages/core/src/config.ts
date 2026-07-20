@@ -622,10 +622,18 @@ const envSchema = z.object({
   // that has not established by the checkpoint. Narrow by construction: it only
   // fires when the position has NEVER printed a green tick above the arm floor,
   // so a real mover that dips is never cut.
+  // DISABLED (2026-07-20). Not part of the model and measurably negative: 19
+  // fires for −$26.24, the second-largest loss pool on the board. It also did
+  // not do what its name implies — on gapping tokens the 30s check fired and
+  // FILLED far below entry (SPEED: peak 1.00×, exit 0.58×), so it behaved as a
+  // delayed stop rather than a scratch. The model already covers this case
+  // twice: the 5% hard stop takes a trade that goes wrong immediately, and the
+  // 90s time floor takes one that drifts. This was a third mechanism competing
+  // with both.
   FAST_SCRATCH_ENABLED: z
     .string()
-    .default("true")
-    .transform((v) => v !== "false"),
+    .default("false")
+    .transform((v) => v === "true"),
   FAST_SCRATCH_AT_SEC: z.coerce.number().default(30), // checkpoint age
   FAST_SCRATCH_MIN_MULT: z.coerce.number().default(1.0), // below this at the checkpoint = scratch
   FAST_SCRATCH_MAX_PEAK: z.coerce.number().default(1.05), // ...and it never established
