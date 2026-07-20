@@ -1013,6 +1013,9 @@ export async function guardLiveBook(cfg: HermesConfig): Promise<void> {
 // Consecutive guard cycles a live position has read below the stop threshold, so a
 // single glitched quote never cuts a winner paper is still riding (2× = confirmed).
 const guardHits = new Map<number, number>();
+// Highest REAL sell-quote value / cost seen per live position — the live lane's
+// own peak, used to arm the profit floor without waiting on the paper mirror.
+const livePeakMark = new Map<number, number>();
 async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
   const wallet = liveWallet();
   if (!wallet) return;
@@ -1083,6 +1086,32 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
             continue; // banked this cycle; the downside check resumes next cycle on fresh state
           }
         }
+      }
+      // ── LIVE PROFIT FLOOR — never hand back a trade that was green ─────────
+      // Measured: paper protects 68.2% of positions reaching its arm, live only
+      // 46.7% on identical rules. The gap is confirm latency — paper's floor
+      // sells at 1.02x instantly, live's same order lands ~5s later THROUGH the
+      // line. So live defends a higher line (LIVE_PROFIT_FLOOR_MULT, default
+      // 1.05 vs paper's 1.02) and its late fill arrives near where paper's got
+      // out. Peak is tracked from the REAL sell-quote value, so both the arm and
+      // the trigger reflect what we could actually have realised. Fires
+      // independently of the mirror: live owns its own profit protection.
+      const markNow = cost > 0 ? value / cost : 1;
+      const peakMark = Math.max(livePeakMark.get(lp.id) ?? 1, markNow);
+      livePeakMark.set(lp.id, peakMark);
+      if (
+        cfg.LIVE_PROFIT_FLOOR_ENABLED &&
+        peakMark >= cfg.LIVE_PROFIT_ARM_MULT &&
+        markNow <= cfg.LIVE_PROFIT_FLOOR_MULT &&
+        markNow > 0
+      ) {
+        console.log(
+          `🛟 LIVE PROFIT FLOOR ${short(lp.mint)} — peaked ${peakMark.toFixed(2)}x, now ${markNow.toFixed(2)}x → banking the win`,
+        );
+        await liveSellPosition(cfg, lp, 1, "live_profit_floor", cfg.LIVE_STOP_SLIPPAGE_BPS);
+        guardHits.delete(lp.id);
+        livePeakMark.delete(lp.id);
+        continue;
       }
       const drawdownPct = cost > 0 ? ((value - cost) / cost) * 100 : 0;
       // Require the real drawdown to PERSIST across 2 guard cycles (~10s) before

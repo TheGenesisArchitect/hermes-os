@@ -1098,6 +1098,21 @@ const envSchema = z.object({
     .string()
     .default("true")
     .transform((v) => v !== "false"), // shadow: log the 🩹 intent, don't sell — flip to false to arm
+  // ── LIVE PROFIT FLOOR (with latency LEAD) ─────────────────────────────────
+  // Paper protects 68.2% of the positions that reach its arm threshold; live
+  // protects 46.7% on identical rules. The 21-point gap is not logic, it is
+  // execution: paper's floor sells at 1.02x instantly, live's identical order
+  // confirms ~5s later and lands THROUGH the line. So live defends a HIGHER
+  // line — the lead — and its late fill arrives at roughly where paper's
+  // exited. The guard values by a REAL sell quote, so this only fires when a
+  // live exit genuinely exists. Independent of the paper mirror: live owns its
+  // own profit protection rather than waiting to be told.
+  LIVE_PROFIT_FLOOR_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  LIVE_PROFIT_ARM_MULT: z.coerce.number().default(1.08), // peak that arms the lock (matches paper)
+  LIVE_PROFIT_FLOOR_MULT: z.coerce.number().default(1.05), // LEAD: paper's floor is 1.02
   LIVE_FLOOR_ARM_MULT: z.coerce.number().default(1.15), // = TP0_MULT; bank the first tranche into the blow-off
   LIVE_FLOOR_FRACTION: z.coerce.number().default(0.4), // = TP0_CUM_SELL; farm tape uses FARM_TP0_CUM_SELL (cost-recoup 0.87)
   LIVE_FLOOR_SLIPPAGE_BPS: z.coerce.number().default(900), // banking into strength — wide enough to fill a fast mover, not a panic dump
