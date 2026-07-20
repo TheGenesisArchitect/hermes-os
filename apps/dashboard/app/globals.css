@@ -77,3 +77,19 @@ body {
 .matrix-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
+
+/* SIGNAL TICKER — CSS marquee for the scout tape (no JS timer). Pauses on
+   hover so a row can be read and clicked; respects reduced-motion. */
+@keyframes signal-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.signal-ticker-track {
+  animation: signal-scroll 90s linear infinite;
+  will-change: transform;
+}
+.signal-ticker:hover .signal-ticker-track { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .signal-ticker-track { animation: none; }
+  .signal-ticker { overflow-x: auto; }
+}

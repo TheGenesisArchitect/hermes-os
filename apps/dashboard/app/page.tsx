@@ -13,6 +13,8 @@ import { ManagementBoard } from "@/components/ManagementBoard";
 import { RecorderBoard } from "@/components/RecorderBoard";
 import { PondRadar } from "@/components/PondRadar";
 import { TickerRadar } from "@/components/TickerRadar";
+import { TradeLedger } from "@/components/TradeLedger";
+import { SignalTicker } from "@/components/SignalTicker";
 import { AnticipationForecast } from "@/components/AnticipationForecast";
 import { WinningFormula } from "@/components/WinningFormula";
 import { WalletDrawer } from "@/components/WalletDrawer";
@@ -34,6 +36,7 @@ import {
   getManagedPositions,
   getPondRadar,
   getTickerRadar,
+  getTradeLedger,
   getAnticipation,
   getWinningFormula,
   getHourlyWindows,
@@ -81,6 +84,7 @@ export default async function Overview() {
     anticipation,
     winningFormula,
     tickerRadar,
+    tradeLedger,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -109,6 +113,7 @@ export default async function Overview() {
     getAnticipation(),
     getWinningFormula(),
     getTickerRadar(),
+    getTradeLedger(),
   ]);
 
   const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
@@ -170,6 +175,10 @@ export default async function Overview() {
           still managed to exit.
         </div>
       ) : null}
+
+      {/* Scout tape — the signal FLOW as a marquee, freeing the page bottom for
+          the trade ledger. Hover pauses it; every entry is clickable. */}
+      <SignalTicker signals={recentSignals} />
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <StatTile
@@ -300,62 +309,13 @@ export default async function Overview() {
         session={{ prime: cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours()), mult: cfg.OFF_HOURS_SIZE_MULT }}
       />
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section className="card p-4">
-          <h2 className="mb-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
-            Signal feed
-          </h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs" style={{ color: "var(--text-muted)" }}>
-                <th className="pb-2 font-normal">Token</th>
-                <th className="pb-2 font-normal">Score</th>
-                <th className="pb-2 font-normal">Liquidity</th>
-                <th className="pb-2 font-normal">Status</th>
-                <th className="pb-2 text-right font-normal">Created (UTC)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentSignals.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="py-6 text-center" style={{ color: "var(--text-muted)" }}>
-                    No signals yet — SCOUT inserts one for every launch that survives all four
-                    safety checks.
-                  </td>
-                </tr>
-              ) : (
-                recentSignals.map((s) => (
-                  <tr key={s.id} className="border-t" style={{ borderColor: "var(--gridline)" }}>
-                    <td className="py-2">
-                      <MintLink mint={s.mint} symbol={s.symbol} />
-                    </td>
-                    <td className="py-2">
-                      <ScoreBadge score={Number(s.score)} />
-                    </td>
-                    <td className="tabular py-2" style={{ color: "var(--text-secondary)" }}>
-                      {usd(s.liquidityUsd, 0)}
-                    </td>
-                    <td className="py-2 text-xs" style={{ color: "var(--text-secondary)" }}>
-                      {s.status}
-                    </td>
-                    <td
-                      className="tabular py-2 text-right text-xs"
-                      style={{ color: "var(--text-muted)" }}
-                      title={`${fmtTsFull(s.createdAt)} · ${timeAgo(s.createdAt)}`}
-                    >
-                      {fmtTs(s.createdAt)}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </section>
+      {/* Evidence & Value — one row per closed round trip: capital deployed,
+          shares, entry/exit/peak, P&L, hold, and the on-chain tx hashes. Full
+          width now that the signal feed lives in the header ticker. */}
+      <TradeLedger trades={tradeLedger} />
 
-        <div className="space-y-6">
-          <FillsTable trades={trades} summaryAll={fillsSummary} />
-        </div>
-      </div>
+      {/* Raw fill stream — the per-fill audit trail behind the ledger above. */}
+      <FillsTable trades={trades} summaryAll={fillsSummary} />
     </div>
   );
 }

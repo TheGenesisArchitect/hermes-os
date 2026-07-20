@@ -2961,6 +2961,91 @@ export async function getPondRadar(): Promise<PondRow[]> {
   }
 }
 
+// ── TRADE LEDGER — the Evidence & Value report ───────────────────────────────
+// One row per POSITION (the round trip), not per fill: capital deployed, shares,
+// entry/exit/peak prices, realized P&L, hold time, and the on-chain tx hashes.
+// Lane is carried explicitly on every row (never mixed silently) per the
+// lane-separation rule; live rows link to Solscan, paper rows are marked
+// simulated so the two can never be mistaken for one another.
+export interface TradeRow {
+  id: number;
+  lane: string;
+  mint: string;
+  symbol: string | null;
+  dex: string | null;
+  tier: string;
+  deployedUsd: number;
+  shares: number;
+  entryPrice: number;
+  exitPrice: number | null;
+  peakPrice: number | null;
+  grossOutUsd: number | null;
+  feesUsd: number | null;
+  pnlUsd: number | null;
+  returnPct: number | null;
+  peakMult: number | null;
+  openedAt: string;
+  closedAt: string | null;
+  holdSec: number | null;
+  exitReason: string | null;
+  fillCount: number;
+  buySig: string | null;
+  sellSigs: string[];
+}
+
+export async function getTradeLedger(limit = 200): Promise<TradeRow[]> {
+  const rows = (await db.execute(sql`
+    select p.id, p.lane, p.mint, t.symbol, t.dex, p.tier, p.status,
+      p.size_usd, p.qty_tokens, p.entry_price_usd, p.exit_price_usd, p.peak_price_usd,
+      p.realized_pnl_usd, p.opened_at, p.closed_at, p.exit_reason,
+      extract(epoch from (p.closed_at - p.opened_at)) as hold_sec,
+      (select count(*) from fills f where f.position_id = p.id)::int as fill_count,
+      (select f.tx_signature from fills f where f.position_id = p.id and f.side='buy'
+        and f.tx_signature is not null order by f.id limit 1) as buy_sig,
+      (select coalesce(array_agg(f.tx_signature order by f.id), '{}')
+        from fills f where f.position_id = p.id and f.side='sell' and f.tx_signature is not null) as sell_sigs,
+      (select coalesce(sum(f.qty_tokens * f.price_usd), 0) from fills f
+        where f.position_id = p.id and f.side='sell') as gross_out,
+      (select coalesce(sum(f.fee_usd), 0) from fills f where f.position_id = p.id) as fees
+    from positions p join tokens t on t.mint = p.mint
+    where p.status = 'closed'
+    order by p.closed_at desc nulls last
+    limit ${limit}
+  `)) as unknown as Record<string, unknown>[];
+  const n = (v: unknown): number => (v === null || v === undefined ? 0 : Number(v));
+  return rows.map((r) => {
+    const deployed = n(r.size_usd);
+    const pnl = r.realized_pnl_usd === null ? null : n(r.realized_pnl_usd);
+    const entry = n(r.entry_price_usd);
+    const peak = r.peak_price_usd === null ? null : n(r.peak_price_usd);
+    return {
+      id: n(r.id),
+      lane: String(r.lane),
+      mint: String(r.mint),
+      symbol: (r.symbol as string) ?? null,
+      dex: (r.dex as string) ?? null,
+      tier: String(r.tier ?? "base"),
+      deployedUsd: deployed,
+      shares: n(r.qty_tokens),
+      entryPrice: entry,
+      exitPrice: r.exit_price_usd === null ? null : n(r.exit_price_usd),
+      peakPrice: peak,
+      grossOutUsd: n(r.gross_out),
+      feesUsd: n(r.fees),
+      pnlUsd: pnl,
+      returnPct: pnl !== null && deployed > 0 ? (100 * pnl) / deployed : null,
+      peakMult: peak !== null && entry > 0 ? peak / entry : null,
+      openedAt: new Date(r.opened_at as string).toISOString(),
+      closedAt: r.closed_at ? new Date(r.closed_at as string).toISOString() : null,
+      holdSec: r.hold_sec === null ? null : n(r.hold_sec),
+      exitReason: (r.exit_reason as string) ?? null,
+      fillCount: n(r.fill_count),
+      buySig: (r.buy_sig as string) ?? null,
+      sellSigs: ((r.sell_sigs as string[]) ?? []).filter(Boolean),
+    };
+  });
+}
+
 // ── Ticker Radar — hot-winner families (meta-momentum) + farm-ticker blacklist ─
 // Mirrors the trader's live sets: a family with ≥2 winners in the rolling 6h
 // (rug share < 50%) runs HOT (size boost + queue priority); tickers with ≥50%
