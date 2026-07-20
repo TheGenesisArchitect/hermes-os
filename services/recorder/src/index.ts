@@ -282,10 +282,17 @@ async function observe(
     // NEVER confirm on an untrusted read — a sub-liquidity poll can only be a
     // death or a pool-flip, neither is enterable. Disarm for this poll; the
     // live armed-state model re-arms on the next trusted read if it qualifies.
+    // POOL GROWTH — current liquidity ÷ the first trusted read. The dead-zone
+    // exemption's input and (measured 2026-07-20) the strongest leak-free
+    // predictor we have: a pool that GREW by trigger ran 2.79× after entry and
+    // rugged 6% vs 26%. Wash churn recycles the same capital and leaves the
+    // pool flat; a real move pulls new capital in.
+    const firstTrustedLiq = trustedRows.length > 0 ? num(trustedRows[0]?.liquidityUsd) : market.liquidityUsd;
+    const liqGrowth = firstTrustedLiq > 0 ? market.liquidityUsd / firstTrustedLiq : null;
     const trig = trusted
       ? evaluateEntryTrigger(
           series,
-          { watchMinutes: watchMin, observationCount: o.ticks + 1, action: call.action },
+          { watchMinutes: watchMin, observationCount: o.ticks + 1, action: call.action, liqGrowth },
           triggerCfg,
         )
       : {

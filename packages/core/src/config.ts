@@ -470,6 +470,13 @@ const envSchema = z.object({
   // ragoon bait signature. An exclusion band, NOT a floor: 0.45-0.50 wins 33%.
   CONFIRM_DEAD_BUYSHARE_LO: z.coerce.number().default(0.50),
   CONFIRM_DEAD_BUYSHARE_HI: z.coerce.number().default(0.55),
+  // POOL-GROWTH EXEMPTION (2026-07-20) — the dead-zone veto's release valve, and
+  // the strongest leak-free signal measured so far. Over 1,826 triggers (48h),
+  // candidates whose pool grew ≥1.3× between first read and trigger ran 2.79×
+  // AFTER entry vs 1.78×, reached ≥1.5× post-entry 51.1% vs 25.4%, and rugged
+  // 6.0% vs 26.2%. Buy-share is a ratio — it cannot distinguish wash churn from
+  // a deep bid; pool growth measures capital actually arriving.
+  CONFIRM_LIQ_GROWTH_EXEMPT: z.coerce.number().default(1.3),
   // Volume acceleration = vol_m5 / vol_h1, the fraction of the trailing hour's
   // volume packed into the last 5 minutes — a genuine demand BURST. This is the
   // one clean positive edge in the separation study: winner median 0.234 vs rug

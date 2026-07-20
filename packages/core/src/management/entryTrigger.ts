@@ -41,6 +41,14 @@ export interface EntryTriggerConfig {
   /** Neutral-churn dead zone [lo, hi): symmetric bot ping-pong flow, not demand. */
   deadBuyShareLo: number;
   deadBuyShareHi: number;
+  /**
+   * Liquidity growth (current ÷ first trusted read) that EXEMPTS a candidate
+   * from the dead-zone veto and marks it a real-inflow confirm. Leak-free
+   * measurement over 1,826 triggers (48h): candidates whose pool grew ≥1.3×
+   * by trigger ran 2.79× after entry vs 1.78×, hit ≥1.5× post-entry 51% vs
+   * 25%, and rugged 6.0% vs 26.2%.
+   */
+  liqGrowthExempt: number;
 }
 
 export interface EntryTrigger {
@@ -63,7 +71,7 @@ export interface EntryTrigger {
  */
 export function evaluateEntryTrigger(
   series: Tick[],
-  ctx: { watchMinutes: number; observationCount: number; action?: Action | null },
+  ctx: { watchMinutes: number; observationCount: number; action?: Action | null; liqGrowth?: number | null },
   cfg: EntryTriggerConfig,
 ): EntryTrigger {
   const last = series[series.length - 1];
@@ -89,9 +97,18 @@ export function evaluateEntryTrigger(
   // 31-43% in every band on either side — the ragoon bait signature (price
   // pinned green on 51/49 flow, then the LP yank). NOT a floor: 0.45-0.50
   // (sell-pressure-absorbed) wins 33%, so only the dead zone is excluded.
-  if (last.buyShareM5 >= cfg.deadBuyShareLo && last.buyShareM5 < cfg.deadBuyShareHi)
+  //
+  // LIQUIDITY-INFLOW EXEMPTION (2026-07-20): the veto was also delaying the
+  // best movers. A 14.59× winner sat at 50-52% buys for its first five minutes
+  // with liquidity climbing $9k → $35k; the dead zone held us out until 3.72×
+  // when it was enterable at ~2.15×. Buy-SHARE is a ratio and cannot tell wash
+  // churn from a deep bid — pool GROWTH can. Wash churn ping-pongs the same
+  // capital (flat pool); a real move pulls new capital in. So a growing pool
+  // overrides the ratio veto, and only flat-pool churn is refused.
+  const grew = (ctx.liqGrowth ?? 0) >= cfg.liqGrowthExempt;
+  if (last.buyShareM5 >= cfg.deadBuyShareLo && last.buyShareM5 < cfg.deadBuyShareHi && !grew)
     return no(
-      `neutral churn (${(last.buyShareM5 * 100).toFixed(0)}% buys in dead zone [${(cfg.deadBuyShareLo * 100).toFixed(0)},${(cfg.deadBuyShareHi * 100).toFixed(0)})% — wash flow, not demand)`,
+      `neutral churn (${(last.buyShareM5 * 100).toFixed(0)}% buys in dead zone [${(cfg.deadBuyShareLo * 100).toFixed(0)},${(cfg.deadBuyShareHi * 100).toFixed(0)})%, pool ${ctx.liqGrowth ? `${ctx.liqGrowth.toFixed(2)}×` : "flat"} — wash flow, not demand)`,
     );
   // Volume must be ACCELERATING — the last 5m carrying a real slice of the hour's
   // flow (vol_m5/vol_h1). The one clean positive edge vs rugs. Skip the check when
@@ -101,7 +118,7 @@ export function evaluateEntryTrigger(
 
   return {
     triggered: true,
-    reason: `confirmed: ${last.markMultiple.toFixed(2)}x green, ${last.drawdownFromPeakPct.toFixed(0)}% off peak, ${(last.buyShareM5 * 100).toFixed(0)}% buys, vol-accel ${volAccel === null ? "n/a" : volAccel.toFixed(2)} at ${ctx.watchMinutes.toFixed(1)}m`,
+    reason: `confirmed: ${last.markMultiple.toFixed(2)}x green, ${last.drawdownFromPeakPct.toFixed(0)}% off peak, ${(last.buyShareM5 * 100).toFixed(0)}% buys, pool ${ctx.liqGrowth ? `${ctx.liqGrowth.toFixed(2)}×` : "n/a"}${grew ? " 💧INFLOW" : ""}, vol-accel ${volAccel === null ? "n/a" : volAccel.toFixed(2)} at ${ctx.watchMinutes.toFixed(1)}m`,
     ...base,
   };
 }
@@ -118,6 +135,7 @@ export function entryTriggerConfigFrom(cfg: {
   CONFIRM_MIN_VOLACCEL: number;
   CONFIRM_DEAD_BUYSHARE_LO: number;
   CONFIRM_DEAD_BUYSHARE_HI: number;
+  CONFIRM_LIQ_GROWTH_EXEMPT: number;
 }): EntryTriggerConfig {
   return {
     enabled: cfg.CONFIRM_ENTRY_ENABLED,
@@ -130,5 +148,6 @@ export function entryTriggerConfigFrom(cfg: {
     minVolAccel: cfg.CONFIRM_MIN_VOLACCEL,
     deadBuyShareLo: cfg.CONFIRM_DEAD_BUYSHARE_LO,
     deadBuyShareHi: cfg.CONFIRM_DEAD_BUYSHARE_HI,
+    liqGrowthExempt: cfg.CONFIRM_LIQ_GROWTH_EXEMPT,
   };
 }
