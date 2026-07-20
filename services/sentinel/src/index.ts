@@ -36,6 +36,12 @@ interface SentinelState {
   paperKill: boolean | null;
   liveKill: boolean | null;
   heartbeatStale: boolean;
+  /** epoch ms of the last 15-min TREND digest and hourly RECAP sent */
+  lastTrendMs: number;
+  lastRecapMs: number;
+  /** previous 15-min window P&L per lane, so TREND can show direction */
+  prevTrendPaper: number;
+  prevTrendLive: number;
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -47,6 +53,10 @@ async function loadState(): Promise<SentinelState> {
     paperKill: v.paperKill ?? null,
     liveKill: v.liveKill ?? null,
     heartbeatStale: v.heartbeatStale ?? false,
+    lastTrendMs: v.lastTrendMs ?? 0,
+    lastRecapMs: v.lastRecapMs ?? 0,
+    prevTrendPaper: v.prevTrendPaper ?? 0,
+    prevTrendLive: v.prevTrendLive ?? 0,
   };
 }
 
@@ -69,7 +79,7 @@ async function saveState(s: SentinelState): Promise<void> {
  * body) — emoji in an HTTP header is not a ByteString and silently killed every
  * push in v1; JSON bodies are UTF-8 and immune.
  */
-type Category = "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS";
+type Category = "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP";
 
 async function notify(
   category: Category,
@@ -214,6 +224,141 @@ async function checkFills(s: SentinelState): Promise<void> {
   }
 }
 
+// ── DIGESTS — the scheduled progress report ──────────────────────────────────
+// TREND every 15 min (light, priority 2) and RECAP + FORECAST on the hour
+// (priority 3). Both are lane-separated: paper is the simulated sensor, live is
+// real capital, and they are never summed together.
+
+interface LaneStats {
+  pnl: number;
+  closes: number;
+  wins: number;
+  best: { sym: string; pnl: number } | null;
+  worst: { sym: string; pnl: number } | null;
+  deployed: number;
+}
+
+const money = (v: number): string => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`;
+
+async function laneStats(lane: string, minutes: number): Promise<LaneStats> {
+  const rows = (await db.execute(sql`
+    select coalesce(p.realized_pnl_usd, 0)::float as pnl, coalesce(p.size_usd,0)::float as size, t.symbol
+    from positions p join tokens t on t.mint = p.mint
+    where p.lane = ${lane} and p.status = 'closed'
+      and p.closed_at > now() - make_interval(mins => ${minutes})
+  `)) as unknown as { pnl: number; size: number; symbol: string | null }[];
+  const st: LaneStats = { pnl: 0, closes: 0, wins: 0, best: null, worst: null, deployed: 0 };
+  for (const r of rows) {
+    const pnl = Number(r.pnl);
+    st.pnl += pnl;
+    st.deployed += Number(r.size);
+    st.closes += 1;
+    if (pnl > 0.005) st.wins += 1;
+    const sym = r.symbol ?? "?";
+    if (!st.best || pnl > st.best.pnl) st.best = { sym, pnl };
+    if (!st.worst || pnl < st.worst.pnl) st.worst = { sym, pnl };
+  }
+  return st;
+}
+
+function laneLine(tag: string, st: LaneStats, note?: string): string {
+  if (st.closes === 0) return `${tag}: no closes${note ? ` (${note})` : ""}`;
+  const wr = Math.round((100 * st.wins) / st.closes);
+  const ret = st.deployed > 0 ? ` · ${((100 * st.pnl) / st.deployed).toFixed(1)}% on deployed` : "";
+  return `${tag}: ${money(st.pnl)} · ${st.closes} closes · ${wr}% win${ret}`;
+}
+
+async function sendTrend(s: SentinelState): Promise<void> {
+  const [paper, live] = await Promise.all([laneStats("paper", 15), laneStats("live", 15)]);
+  const killed = s.liveKill === true;
+  const dir = (now: number, prev: number): string => (now > prev + 0.01 ? "▲" : now < prev - 0.01 ? "▼" : "▬");
+  const [runners] = (await db.execute(sql`
+    select count(*)::int as n from fills f join positions p on p.id = f.position_id
+    where f.side='sell' and f.filled_at > now() - interval '15 minutes'
+      and f.price_usd >= 1.5 * p.entry_price_usd
+  `)) as unknown as { n: number }[];
+  const lines = [
+    laneLine("paper", paper) + ` ${dir(paper.pnl, s.prevTrendPaper)}`,
+    killed ? "live: standing down (kill engaged)" : laneLine("live", live) + ` ${dir(live.pnl, s.prevTrendLive)}`,
+    `runners ≥1.5×: ${num(runners?.n)}` +
+      (paper.best && paper.best.pnl > 0 ? ` · best ${paper.best.sym} ${money(paper.best.pnl)}` : ""),
+  ];
+  await notify("TREND", "15 min", lines, 2, ["chart_with_upwards_trend"]);
+  s.prevTrendPaper = paper.pnl;
+  s.prevTrendLive = live.pnl;
+}
+
+async function sendRecap(s: SentinelState): Promise<void> {
+  const [paper, live] = await Promise.all([laneStats("paper", 60), laneStats("live", 60)]);
+  const killed = s.liveKill === true;
+  // Loss-class mix — where the hour's damage came from.
+  const lossRows = (await db.execute(sql`
+    select coalesce(exit_reason,'?') as reason, round(sum(realized_pnl_usd)::numeric,2)::float as pnl
+    from positions where lane='paper' and status='closed'
+      and closed_at > now() - interval '60 minutes' and realized_pnl_usd < 0
+    group by 1 order by pnl asc limit 3
+  `)) as unknown as { reason: string; pnl: number }[];
+  // FORECAST — this hour historically (all recorded history, same UTC hour),
+  // plus the live tape's current edge and which families are hot.
+  const nextHour = (new Date().getUTCHours() + 1) % 24;
+  const [hist] = (await db.execute(sql`
+    select count(*)::int as n,
+      round(coalesce(avg(realized_pnl_usd),0)::numeric,3)::float as avg_pnl,
+      round((100.0 * count(*) filter (where realized_pnl_usd > 0.005) / nullif(count(*),0))::numeric,0)::float as win_pct
+    from positions where lane='paper' and status='closed'
+      and extract(hour from closed_at at time zone 'UTC') = ${nextHour}
+  `)) as unknown as { n: number; avg_pnl: number; win_pct: number }[];
+  const [edge] = (await db.execute(sql`
+    select case when coalesce(sum(p.size_usd),0) > 0
+      then round((100.0*sum(p.realized_pnl_usd)/sum(p.size_usd))::numeric,1)::float else null end as edge_pct
+    from positions p join tokens t on t.mint = p.mint
+    where p.lane='paper' and p.status='closed' and p.closed_at > now() - interval '45 minutes'
+      and lower(t.dex) = any(string_to_array(${cfg.LIVE_MIRROR_VENUES}, ','))
+  `)) as unknown as { edge_pct: number | null }[];
+  const hotRows = (await db.execute(sql`
+    select lower(regexp_replace(t.symbol,'[^a-zA-Z0-9]','','g')) as fam
+    from candidate_outcomes co join tokens t on t.mint = co.mint
+    where co.label in ('winner','dud','rug') and co.first_seen_at >= now() - interval '6 hours'
+      and t.symbol is not null and length(t.symbol) > 1
+    group by 1 having count(*) filter (where co.label='winner') >= 2
+      and count(*) filter (where co.label='rug')::numeric / count(*) < 0.5
+    order by count(*) filter (where co.label='winner') desc limit 4
+  `)) as unknown as { fam: string }[];
+
+  const lines = [laneLine("paper", paper), killed ? "live: standing down (kill engaged)" : laneLine("live", live)];
+  if (paper.best && paper.best.pnl > 0) lines.push(`best ${paper.best.sym} ${money(paper.best.pnl)}` + (paper.worst ? ` · worst ${paper.worst.sym} ${money(paper.worst.pnl)}` : ""));
+  if (lossRows.length) lines.push(`bleed: ${lossRows.map((r) => `${r.reason} ${money(Number(r.pnl))}`).join(" · ")}`);
+  lines.push("—");
+  const h = hist;
+  lines.push(
+    `forecast ${String(nextHour).padStart(2, "0")}:00Z: ` +
+      (h && h.n >= 10
+        ? `hist ${money(Number(h.avg_pnl))}/trade on ${h.n} (${Math.round(Number(h.win_pct))}% win)`
+        : "no hour history yet"),
+  );
+  lines.push(
+    `mirror edge 45m: ${edge?.edge_pct === null || edge?.edge_pct === undefined ? "n/a" : `${Number(edge.edge_pct).toFixed(1)}%`}` +
+      (hotRows.length ? ` · hot: ${hotRows.map((r) => r.fam).join(", ")}` : " · no hot families"),
+  );
+  await notify("RECAP", "hourly", lines, 3, ["bar_chart"]);
+}
+
+async function checkDigests(s: SentinelState): Promise<void> {
+  if (!cfg.SENTINEL_DIGEST_ENABLED) return;
+  const now = Date.now();
+  const QUARTER = 15 * 60_000;
+  const HOUR = 60 * 60_000;
+  // Fire on wall-clock boundaries (:00 :15 :30 :45) rather than drifting timers.
+  if (Math.floor(now / QUARTER) > Math.floor(s.lastTrendMs / QUARTER)) {
+    await sendTrend(s);
+    s.lastTrendMs = now;
+  }
+  if (Math.floor(now / HOUR) > Math.floor(s.lastRecapMs / HOUR)) {
+    await sendRecap(s);
+    s.lastRecapMs = now;
+  }
+}
+
 async function checkHeartbeat(s: SentinelState): Promise<void> {
   const [hb] = (await db.execute(
     sql`select (max(snapped_at) < now() - interval '10 minutes') as stale from pnl_snapshots where lane='paper'`,
@@ -256,6 +401,7 @@ while (true) {
     await checkArms(state);
     await checkFills(state);
     await checkHeartbeat(state);
+    await checkDigests(state);
     await saveState(state);
   } catch (err) {
     console.error(`sentinel tick failed: ${err instanceof Error ? err.message : err}`);

@@ -707,6 +707,13 @@ const envSchema = z.object({
   SENTINEL_POLL_MS: z.coerce.number().default(30_000),
   SENTINEL_CONV_MIN: z.coerce.number().default(0.75), // ⚡ arm push threshold
   SENTINEL_RUNNER_MULT: z.coerce.number().default(1.5), // runner-bank push threshold
+  // Scheduled progress report: TREND every 15 min (priority 2) + RECAP with
+  // next-hour forecast on the hour (priority 3). Lane-separated — paper is the
+  // simulated sensor, live is real capital, never summed together.
+  SENTINEL_DIGEST_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
 
   // SELL-ROUTE PROBE (the KIMI lesson institutionalized, 2026-07-20): before a
   // live BUY, quote the SELL (mint → WSOL) through the swap router. Exitability
