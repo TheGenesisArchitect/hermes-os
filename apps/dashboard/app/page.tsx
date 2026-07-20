@@ -13,6 +13,7 @@ import { ManagementBoard } from "@/components/ManagementBoard";
 import { RecorderBoard } from "@/components/RecorderBoard";
 import { PondRadar } from "@/components/PondRadar";
 import { TickerRadar } from "@/components/TickerRadar";
+import { InflowEdge } from "@/components/InflowEdge";
 import { TradeLedger } from "@/components/TradeLedger";
 import { SignalTicker } from "@/components/SignalTicker";
 import { AnticipationForecast } from "@/components/AnticipationForecast";
@@ -38,6 +39,7 @@ import {
   getTickerRadar,
   getTradeLedger,
   getLaneBalances,
+  getInflowEdge,
   getAnticipation,
   getWinningFormula,
   getHourlyWindows,
@@ -87,6 +89,7 @@ export default async function Overview() {
     tickerRadar,
     tradeLedger,
     laneBalances,
+    inflowEdge,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -117,6 +120,7 @@ export default async function Overview() {
     getTickerRadar(),
     getTradeLedger(),
     getLaneBalances(),
+    getInflowEdge(),
   ]);
 
   const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
@@ -301,6 +305,8 @@ export default async function Overview() {
       <AnticipationForecast view={anticipation} />
 
       {/* Pond Radar — venue R&D lifecycle: discovery → watchlist → promotion */}
+      {/* THE EDGE — pool inflow, re-measured from realized outcomes every refresh. */}
+      <InflowEdge bands={inflowEdge} />
       <TickerRadar radar={tickerRadar} />
       <PondRadar ponds={ponds} hours={hourWindows} walletIntel={walletIntel} />
 

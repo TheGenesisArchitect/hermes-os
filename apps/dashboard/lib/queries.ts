@@ -3046,6 +3046,59 @@ export async function getTradeLedger(limit = 200): Promise<TradeRow[]> {
   });
 }
 
+// ── INFLOW EDGE MONITOR — is the edge still real? ────────────────────────────
+// Pool growth at arm is the system's core edge (a wash-traded fake cannot add
+// liquidity). This panel re-measures it continuously from realized outcomes so
+// decay is visible immediately rather than assumed away.
+export interface InflowBand {
+  band: string;
+  armed: number;
+  winPct: number | null;
+  rugPct: number | null;
+  avgPeak: number | null;
+  traded: number;
+  realized: number | null;
+  avgSize: number | null;
+}
+
+export async function getInflowEdge(hours = 24): Promise<InflowBand[]> {
+  try {
+    const rows = (await db.execute(sql`
+      select case
+               when o.liq_growth is null then 'z unmeasured'
+               when o.liq_growth >= 1.30 then 'a strong  ≥1.30×'
+               when o.liq_growth >= 1.20 then 'b good    1.20-1.30×'
+               when o.liq_growth >= 1.05 then 'c mild    1.05-1.20×'
+               else 'd flat    <1.05×' end as band,
+             count(*)::int as armed,
+             round(100.0 * count(*) filter (where o.label='winner') / nullif(count(*),0), 1)::float as win_pct,
+             round(100.0 * count(*) filter (where o.label='rug') / nullif(count(*),0), 1)::float as rug_pct,
+             round(avg(o.peak_multiple)::numeric, 2)::float as avg_peak,
+             count(p.id)::int as traded,
+             round(coalesce(sum(p.realized_pnl_usd), 0)::numeric, 2)::float as realized,
+             round(avg(p.size_usd)::numeric, 2)::float as avg_size
+      from candidate_outcomes o
+      left join positions p on p.mint = o.mint and p.lane='paper' and p.status='closed'
+      where o.triggered_at is not null and o.label in ('winner','dud','rug')
+        and o.triggered_at > now() - make_interval(hours => ${hours})
+      group by 1 order by 1
+    `)) as unknown as Record<string, unknown>[];
+    const n = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+    return rows.map((r) => ({
+      band: String(r.band),
+      armed: Number(r.armed),
+      winPct: n(r.win_pct),
+      rugPct: n(r.rug_pct),
+      avgPeak: n(r.avg_peak),
+      traded: Number(r.traded),
+      realized: n(r.realized),
+      avgSize: n(r.avg_size),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /** Latest equity per lane — the denominator for "% of balance" readouts. */
 export async function getLaneBalances(): Promise<{ paper: number; live: number }> {
   try {

@@ -279,6 +279,15 @@ export const candidateOutcomes = pgTable("candidate_outcomes", {
   // dominant): wallet-graph edge + rug-safety + microstructure gate strength.
   // Drives entry PRIORITY (creme rises) and live conviction-scaled sizing.
   convictionScore: numeric("conviction_score"),
+  // POOL GROWTH at arm = liquidity now ÷ liquidity at the first trusted read.
+  // THE EDGE (validated leak-free 2026-07-20, scoring only the run AFTER entry):
+  // pools that grew ≥1.3× by trigger ran 2.79× post-entry vs 1.78×, reached
+  // ≥1.5× post-entry 51.1% vs 25.4%, and rugged 6.0% vs 26.2%. Earlier still,
+  // candidates at ≥1.4× mark with ≥+10% pool by 1.0–1.5min win 80.9% and rug
+  // 10.1% (base ~20%/~35%). Wash-trading recycles the same capital and leaves a
+  // pool FLAT, so this is the one factor a fake move cannot manufacture.
+  // Persisted at arm so the trader sizes by it and the edge stays measurable.
+  liqGrowth: numeric("liq_growth"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -373,7 +373,15 @@ async function observe(
         // Freshest demand read while armed — the trader sizes off THIS (quality
         // sizing), so it must reflect the tick it will actually enter into, not
         // the first-arm snapshot from minutes ago.
-        ...(armed ? { triggerBuyShare: String(trig.buyShare), rugProb: String(rugProb) } : {}),
+        ...(armed
+          ? {
+              triggerBuyShare: String(trig.buyShare),
+              rugProb: String(rugProb),
+              // THE EDGE — pool growth at arm. Persisted on every armed read so
+              // the trader sizes by it and so it stays continuously measurable.
+              ...(liqGrowth !== null && Number.isFinite(liqGrowth) ? { liqGrowth: String(liqGrowth) } : {}),
+            }
+          : {}),
         ...(wallet
           ? {
               walletEdge: String(wallet.edge),

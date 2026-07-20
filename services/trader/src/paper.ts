@@ -446,6 +446,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       walletRugHits: candidateOutcomes.walletRugHits,
       walletKnown: candidateOutcomes.walletKnown,
       convictionScore: candidateOutcomes.convictionScore,
+      liqGrowth: candidateOutcomes.liqGrowth,
     })
     .from(candidateOutcomes)
     .innerJoin(signals, eq(signals.id, candidateOutcomes.signalId))
@@ -471,6 +472,18 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     );
 
   if (armed.length === 0) return;
+
+  // POOL-INFLOW PRIORITY — the edge decides the queue too, not just the size.
+  // When slots are scarce the inflow-confirmed candidate (81% win / 10% rug)
+  // must take the slot ahead of a marginal flat-pool confirm. Sorted first so
+  // the later stable sorts (hot family, prime venue) layer on top.
+  if (cfg.LIQ_INFLOW_STRONG > 0) {
+    armed.sort((a, b) => {
+      const av = a.liqGrowth == null ? 0 : Number(a.liqGrowth) >= cfg.LIQ_INFLOW_STRONG ? 1 : 0;
+      const bv = b.liqGrowth == null ? 0 : Number(b.liqGrowth) >= cfg.LIQ_INFLOW_STRONG ? 1 : 0;
+      return bv - av;
+    });
+  }
 
   // HOT-TICKER meta-momentum: refresh the family set, then stable-sort hot
   // families forward BEFORE the prime sort (final order: prime > hot > conviction).
@@ -556,7 +569,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     return;
   }
 
-  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits, walletKnown } of armed) {
+  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits, walletKnown, liqGrowth } of armed) {
     if (total() >= cfg.PAPER_MAX_CONCURRENT) break; // global cap hit — leave the rest armed
 
     // Open-only duplicate guard — a CLOSED prior position no longer blocks
@@ -628,7 +641,24 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // lift) — lean in while it lasts; the rug-model shrink and cost-recoup
     // ladder price the elevated rug share that comes with the heat.
     const hotMult = isHotTicker(cfg, token.symbol) ? cfg.HOT_TICKER_SIZE_BOOST : 1;
-    const qualityMult = buyShareMult * rugMult * convictionMult * walletMult * hotMult;
+    // POOL-INFLOW SIZING — THE EDGE. New capital arriving in the pool is the one
+    // thing a wash-traded fake cannot manufacture, and it is the strongest
+    // leak-free predictor we have measured: growth ≥1.3× at trigger ran 2.79×
+    // after entry and rugged 6% (vs 1.78× / 26%); the ≥1.4×-mark + ≥+10%-pool
+    // cohort wins 81% and rugs 10%. Conversely price-up-on-a-FLAT-pool is the
+    // wash/ragoon signature and rugs 35% vs 22%. Lean in on inflow, shrink the
+    // flat-pool case — sizing only, never a veto.
+    const lg = liqGrowth === null ? null : Number(liqGrowth);
+    const tmForFlat = triggerMultiple === null ? null : Number(triggerMultiple);
+    const liqMult =
+      lg === null || !Number.isFinite(lg)
+        ? 1
+        : lg >= cfg.LIQ_INFLOW_STRONG
+          ? cfg.LIQ_INFLOW_SIZE_BOOST
+          : lg <= cfg.LIQ_FLAT_MAX && tmForFlat !== null && tmForFlat >= 1.2
+            ? cfg.LIQ_FLAT_SIZE_MULT
+            : 1;
+    const qualityMult = buyShareMult * rugMult * convictionMult * walletMult * hotMult * liqMult;
 
     // Consume ONLY on a real fill. A false return (lane reserved / market null /
     // venue / liquidity / slippage) leaves the candidate armed to re-attempt next

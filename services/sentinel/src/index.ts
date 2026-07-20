@@ -354,6 +354,25 @@ async function sendRecap(s: SentinelState): Promise<void> {
     `mirror edge 45m: ${edge?.edge_pct === null || edge?.edge_pct === undefined ? "n/a" : `${Number(edge.edge_pct).toFixed(1)}%`}` +
       (hotRows.length ? ` · hot: ${hotRows.map((r) => r.fam).join(", ")}` : " · no hot families"),
   );
+  // THE EDGE, monitored: strong-inflow vs flat-pool win rates over 24h. A
+  // collapsing spread means the core signal is decaying — surface it, don't
+  // wait for the P&L to say it later.
+  const [inflow] = (await db.execute(sql`
+    select
+      round(100.0 * count(*) filter (where label='winner' and liq_growth >= 1.30)
+            / nullif(count(*) filter (where liq_growth >= 1.30), 0), 1)::float as strong_win,
+      round(100.0 * count(*) filter (where label='winner' and liq_growth < 1.05)
+            / nullif(count(*) filter (where liq_growth < 1.05), 0), 1)::float as flat_win,
+      count(*) filter (where liq_growth is not null)::int as n
+    from candidate_outcomes
+    where triggered_at > now() - interval '24 hours' and label in ('winner','dud','rug')
+  `)) as unknown as { strong_win: number | null; flat_win: number | null; n: number }[];
+  if (inflow && num(inflow.n) >= 20 && inflow.strong_win !== null && inflow.flat_win !== null) {
+    const sp = Number(inflow.strong_win) - Number(inflow.flat_win);
+    lines.push(
+      `inflow edge: strong ${Number(inflow.strong_win).toFixed(0)}% win vs flat ${Number(inflow.flat_win).toFixed(0)}% · spread ${sp >= 0 ? "+" : ""}${sp.toFixed(0)}pp${sp <= 5 ? " ⚠ DECAYING" : ""}`,
+    );
+  }
   await notify("RECAP", "hourly", lines, 3, ["bar_chart"]);
 }
 

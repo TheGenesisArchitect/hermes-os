@@ -603,6 +603,24 @@ export async function maybeLiveBuy(cfg: HermesConfig, mint: string, symbol: stri
         .limit(1);
       if (cv?.score != null) convictionMult = convictionBand(Number(cv.score), cfg.CONVICTION_SIZE_MIN_BAND, cfg.CONVICTION_SIZE_MAX_BAND);
     }
+    // POOL-INFLOW SIZING — the same edge the paper lane sizes by, so live
+    // mirrors paper's ALLOCATION and not just its entries. Growth ≥1.3× at
+    // trigger: 2.79× post-entry run, 6% rug. Flat pool with price up: 35% rug.
+    let inflowMult = 1;
+    {
+      const [lgRow] = await db
+        .select({ lg: candidateOutcomes.liqGrowth, tm: candidateOutcomes.triggerMultiple })
+        .from(candidateOutcomes)
+        .where(eq(candidateOutcomes.mint, mint))
+        .limit(1);
+      const lg = lgRow?.lg == null ? null : Number(lgRow.lg);
+      const tm = lgRow?.tm == null ? null : Number(lgRow.tm);
+      if (lg !== null && Number.isFinite(lg)) {
+        if (lg >= cfg.LIQ_INFLOW_STRONG) inflowMult = cfg.LIQ_INFLOW_SIZE_BOOST;
+        else if (lg <= cfg.LIQ_FLAT_MAX && tm !== null && tm >= 1.2) inflowMult = cfg.LIQ_FLAT_SIZE_MULT;
+      }
+    }
+    convictionMult *= inflowMult;
     // ANTICIPATION — the forecast as a control input: lean in on heating venues in
     // hot windows, throttle on cold. Bounded; biases within the sizer's clamps.
     const antiMult = await anticipationMult(cfg, mint);

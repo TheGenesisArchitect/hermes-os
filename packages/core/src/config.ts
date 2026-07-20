@@ -477,6 +477,22 @@ const envSchema = z.object({
   // 6.0% vs 26.2%. Buy-share is a ratio — it cannot distinguish wash churn from
   // a deep bid; pool growth measures capital actually arriving.
   CONFIRM_LIQ_GROWTH_EXEMPT: z.coerce.number().default(1.3),
+
+  // ── POOL-INFLOW SIZING — the edge, applied to capital ──────────────────────
+  // Pool growth is the one signal a fake move cannot manufacture: wash trading
+  // recycles the same capital and leaves liquidity flat, while a real move pulls
+  // new capital in. Measured leak-free on the run AFTER entry (n=1,826 triggers)
+  // and on early trajectories (n=4,072 candidates, 72h):
+  //   growth ≥1.3× at trigger → 2.79× post-entry run · 6.0% rug
+  //   growth <1.3×            → 1.78× post-entry run · 26.2% rug
+  //   ≥1.4× mark + ≥1.10 pool by 1.0–1.5min → 80.9% win · 10.1% rug · 4.10× peak
+  //   price up on a FLAT pool (the wash signature) → 35.1% rug vs 22.5%
+  // So: lean into inflow, shrink the price-up-on-flat-pool case. Sizing, never a
+  // veto — the shrink-don't-veto doctrine holds.
+  LIQ_INFLOW_STRONG: z.coerce.number().default(1.20), // ≥ this = strong inflow
+  LIQ_INFLOW_SIZE_BOOST: z.coerce.number().default(1.5),
+  LIQ_FLAT_MAX: z.coerce.number().default(1.02), // ≤ this with price up = wash signature
+  LIQ_FLAT_SIZE_MULT: z.coerce.number().default(0.6),
   // Volume acceleration = vol_m5 / vol_h1, the fraction of the trailing hour's
   // volume packed into the last 5 minutes — a genuine demand BURST. This is the
   // one clean positive edge in the separation study: winner median 0.234 vs rug
