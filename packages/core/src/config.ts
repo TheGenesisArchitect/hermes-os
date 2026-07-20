@@ -493,7 +493,12 @@ const envSchema = z.object({
   RUG_PROB_CAUTION: z.coerce.number().default(0.30), // held-out Q4 boundary → ×RUG_SIZE_CAUTION
   RUG_PROB_HIGH: z.coerce.number().default(0.43), // held-out Q5 boundary → ×RUG_SIZE_HIGH
   RUG_SIZE_CAUTION: z.coerce.number().default(0.6),
-  RUG_SIZE_HIGH: z.coerce.number().default(0.35),
+  // 0.35 → 0.20 (2026-07-20): the ≥RUG_PROB_HIGH band is the only rug-model band
+  // measured reliably NEGATIVE on live paper tape — clean(<0.30) +$5.79/199 and
+  // caution +$4.46/30 vs high −$7.90 over 28 trades (avg −$0.28). The model's
+  // ranking is validated, so shrink harder rather than veto: the band still buys
+  // tail exposure, at ~half the bleed rate. Shrink-don't-veto doctrine intact.
+  RUG_SIZE_HIGH: z.coerce.number().default(0.2),
   // CONVICTION SIZING — a candidate that confirmed at ≥ this market-proven
   // multiple (ARGENTINU armed at 4.94x, ran 11.4x) earns a boosted bet; a
   // 1.26x mill relaunch does not. Quality gets the capital, mills get scraps.
@@ -616,7 +621,13 @@ const envSchema = z.object({
   // A confirmation decays: by the time we consume a trigger older than this the
   // demand it saw may be gone (a backlog or a fast rug can leave a trigger stale).
   // The live 1e backlog opened 3 already-dead W26 pools at 99% slip this way.
-  CONFIRM_MAX_TRIGGER_AGE_SEC: z.coerce.number().default(90),
+  // TIGHTENED 90 → 45 (2026-07-20) on the loss dissection: the whole night's
+  // damage lives in an "instant death" cohort (39 of 257 trades = −$61.38, price
+  // never ticks above entry, dead in ~36s). Its tell is ARRIVAL LATENESS — those
+  // fills landed 140s after their trigger vs 87s for profitable ones. By fill lag:
+  // <15s → 14.2% instant-death, 15–30s → 6.8% (and the best P&L, +$7.50), >60s →
+  // 23.9%. Nothing good happens past a minute, so the stale tail is cut.
+  CONFIRM_MAX_TRIGGER_AGE_SEC: z.coerce.number().default(45),
   // Refuse to open into a collapsed/near-empty pool: at $17.50 size a 30% convex
   // slip means liquidity < ~$82 (rugged), while a legit thin-pool entry is <1%.
   // This never blocks a real convex candidate — it blocks buying a corpse.
