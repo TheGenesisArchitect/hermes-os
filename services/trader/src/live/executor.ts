@@ -711,6 +711,20 @@ export async function maybeLiveBuy(cfg: HermesConfig, mint: string, symbol: stri
  * anchored on the REAL on-chain balance, not the DB row — any drift between
  * ledger and chain self-corrects at the next sell instead of compounding.
  */
+/**
+ * Per-position sell-retry backoff. A position whose sell keeps failing was being
+ * retried on EVERY 5s manage cycle: 43 failed sells in 13 minutes, each costing
+ * an RPC balance read + router quote + simulation. That starved the BUY path and
+ * blew live entry lag out from 6-8s to 72s — live stopped mirroring paper's
+ * entry price and started chasing it. The network was never the problem (RPC
+ * ~500ms, Jupiter ~500ms); our own retry storm was. Failures now back off
+ * exponentially (5s → 10s → 20s … capped) so a stuck position degrades itself
+ * instead of the whole lane. Any success clears the counter immediately.
+ */
+const sellBackoff = new Map<number, { fails: number; nextAttemptMs: number }>();
+const SELL_BACKOFF_BASE_MS = 5_000;
+const SELL_BACKOFF_MAX_MS = 300_000;
+
 async function liveSellPosition(
   cfg: HermesConfig,
   position: typeof positions.$inferSelect,
@@ -720,6 +734,8 @@ async function liveSellPosition(
 ): Promise<boolean> {
   const wallet = liveWallet();
   if (!wallet) return false;
+  const bo = sellBackoff.get(position.id);
+  if (bo && Date.now() < bo.nextAttemptMs) return false; // cooling off — don't burn RPC
   try {
     const { PublicKey } = await import("@solana/web3.js");
     const resp = await rpcPool(cfg).read((c) =>
@@ -801,11 +817,19 @@ async function liveSellPosition(
     console.log(
       `💸 LIVE SELL ${short(position.mint)} ${(f * 100).toFixed(0)}% → $${proceedsUsd.toFixed(2)} (pnl ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}, ${reason})`,
     );
+    sellBackoff.delete(position.id); // it sold — clear any accumulated penalty
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await audit("live_sell_failed", { positionId: position.id, mint: position.mint, reason, error: msg }).catch(() => {});
-    console.error(`live sell failed ${short(position.mint)}: ${msg}`);
+    // Back off before anything else — a failing sell must not be free to retry.
+    const prev = sellBackoff.get(position.id)?.fails ?? 0;
+    const fails = prev + 1;
+    const waitMs = Math.min(SELL_BACKOFF_MAX_MS, SELL_BACKOFF_BASE_MS * 2 ** (fails - 1));
+    sellBackoff.set(position.id, { fails, nextAttemptMs: Date.now() + waitMs });
+    // Audit only the first few failures; a stuck position must not spam the log.
+    if (fails <= 3)
+      await audit("live_sell_failed", { positionId: position.id, mint: position.mint, reason, error: msg, fails, backoffMs: waitMs }).catch(() => {});
+    console.error(`live sell failed ${short(position.mint)} (#${fails}, backoff ${Math.round(waitMs / 1000)}s): ${msg}`);
     // Stranded write-off: if EVERY route is exhausted (no exit exists) and the
     // position is old enough to rule out a transient blip, stop retrying forever
     // and book the honest loss on the remaining tokens. A token we can't sell is a
@@ -828,6 +852,7 @@ async function liveSellPosition(
         .where(and(eq(positions.id, position.id), eq(positions.status, "open")));
       await audit("live_unsellable_writeoff", { positionId: position.id, mint: position.mint, ageMin: Math.round(ageMin), bookedLoss: -remCost, error: msg });
       console.error(`🪦 LIVE WRITE-OFF ${short(position.mint)} — unsellable after ${ageMin.toFixed(0)}min, booked −$${remCost.toFixed(2)}`);
+      sellBackoff.delete(position.id); // terminal — nothing left to retry
     }
     return false;
   }
