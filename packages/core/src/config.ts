@@ -182,7 +182,13 @@ const envSchema = z.object({
   TP0_CUM_SELL: z.coerce.number().default(0.4), // cumulative fraction of ORIGINAL size sold once TP0 is hit
   TP1_MULT: z.coerce.number().default(1.3), // +30% from our entry — bank half here
   TP1_CUM_SELL: z.coerce.number().default(0.5), // cumulative fraction of ORIGINAL size sold once TP1 is hit
-  TP2_MULT: z.coerce.number().default(1.7), // +70% — bank most of the rest
+  // LOWERED 1.70 → 1.58 (2026-07-20): the top rung sat ABOVE where the tape
+  // actually turns. Movers peak at 1.62× on average, so most winners never
+  // reached TP2 at all — they banked 50% at TP1 and rode the other half back
+  // down. Measured capture of the peak move was −0.128 (avg exit 1.19× from an
+  // avg peak of 1.62×): we were giving back 43% of every winner, and on 20
+  // positions that peaked 1.61× and then rugged, all of it.
+  TP2_MULT: z.coerce.number().default(1.58), // bank most of the rest, below the median turn
   TP2_CUM_SELL: z.coerce.number().default(0.8), // total 80% banked by TP2; the remaining 20% rides uncapped
   // DUD CUT — the divergence cull (validated 2026-07-19, +$85/48h fill-realistic). Winners
   // clear the divergence line by ~2.25min (win_p25 crosses above dud_p75); duds sit flat.
