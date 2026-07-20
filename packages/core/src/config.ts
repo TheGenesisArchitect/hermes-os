@@ -563,10 +563,18 @@ const envSchema = z.object({
   // Only the ≥LIQ_INFLOW_STRONG band (72% win / 0% rug) clears. FAIL-SAFE: an
   // unstamped candidate is refused too — if stamping ever breaks, live stops
   // trading rather than reverting to blind entries. Paper still explores it all.
+  // REVERTED TO SIZING-ONLY (2026-07-20). Pool inflow was designed as a SIZE
+  // input and was correct as one; converting it into an entry VETO systematically
+  // DELAYED good trades instead of filtering bad ones, because pool growth LAGS
+  // price. Worked example: a steady climber qualified at 2.3m at 1.51× with 84%
+  // buys, 0% drawdown and rising liquidity — the veto refused it for 3.8 minutes
+  // until the pool reached 1.30× growth, by which time price was 1.95×. We paid
+  // 29% more for the entry and captured +0.8% of a move that ran +44% from where
+  // it first qualified. The veto protected nothing; it just made us late.
   LIVE_REQUIRE_INFLOW: z
     .string()
-    .default("true")
-    .transform((v) => v !== "false"),
+    .default("false")
+    .transform((v) => v === "true"),
 
   // PAPER INFLOW GATE — the same quality bar on the paper book, with one
   // deliberate exception. Paper is the SENSOR: the realized-P&L-by-band figures
@@ -577,8 +585,8 @@ const envSchema = z.object({
   // — enough to keep every band measurable, cheap enough to stop the donation.
   PAPER_REQUIRE_INFLOW: z
     .string()
-    .default("true")
-    .transform((v) => v !== "false"),
+    .default("false")
+    .transform((v) => v === "true"),
   PAPER_INFLOW_EXPLORE_RATE: z.coerce.number().default(0.15), // sample of weak-inflow kept for measurement
   PAPER_INFLOW_EXPLORE_SIZE_MULT: z.coerce.number().default(0.25), // exploration is priced as a probe, not a bet
 
@@ -621,10 +629,20 @@ const envSchema = z.object({
   // used to fill. These bands previously got no preferential allocation at all;
   // now they get the capital, in BOTH lanes, so live concentrates on the trades
   // that actually produce the tail.
-  BAND_STRONG_MULT: z.coerce.number().default(1.6), // ≥ this = the 3.72x-run band
-  BAND_STRONG_SIZE: z.coerce.number().default(1.5),
-  BAND_ELITE_MULT: z.coerce.number().default(2.0), // ≥ this = zero rugs observed
-  BAND_ELITE_SIZE: z.coerce.number().default(2.0),
+  // REVERTED TO NEUTRAL (2026-07-20, same day as shipped). The boost was built
+  // on recorder-frame POTENTIAL (peak ÷ trigger) and on a "0% rug rate" that was
+  // TAUTOLOGICAL — the labeller assigns winner first, so a candidate triggering
+  // ≥2.0× already has peak ≥2.0× and can never be labelled a rug. Realized
+  // result: band-boosted positions averaged $31.79 (2.5× a normal bet) and went
+  // 0-for-4 for −$7.96, the worst cohort on the board, while the biggest single
+  // loss of the session (−$16.34) was an inflated position.
+  // LESSON: size on REALIZED P&L per band, never on recorder-frame potential —
+  // the recorder measures the opportunity, not what we capture. Re-enable only
+  // when realized P&L by band supports it out-of-sample.
+  BAND_STRONG_MULT: z.coerce.number().default(1.6),
+  BAND_STRONG_SIZE: z.coerce.number().default(1.0), // was 1.5 — neutral until realized P&L earns it
+  BAND_ELITE_MULT: z.coerce.number().default(2.0),
+  BAND_ELITE_SIZE: z.coerce.number().default(1.0), // was 2.0 — 0-for-4, −$7.96
 
   // Consecutive failed sells that prove a position is unsellable. With the
   // exponential backoff this is ~5 minutes of real attempts — far better than an
