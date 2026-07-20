@@ -528,6 +528,20 @@ const envSchema = z.object({
     .default("true")
     .transform((v) => v !== "false"),
 
+  // PAPER INFLOW GATE — the same quality bar on the paper book, with one
+  // deliberate exception. Paper is the SENSOR: the realized-P&L-by-band figures
+  // that caught the 1.20-1.30 boost miscalibration come from paper positions,
+  // so a hard gate would blind us to the edge shifting and we would end up
+  // optimising against a belief we could no longer test. Weak-inflow candidates
+  // are therefore skipped EXCEPT for a small random sample kept at minimum size
+  // — enough to keep every band measurable, cheap enough to stop the donation.
+  PAPER_REQUIRE_INFLOW: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  PAPER_INFLOW_EXPLORE_RATE: z.coerce.number().default(0.15), // sample of weak-inflow kept for measurement
+  PAPER_INFLOW_EXPLORE_SIZE_MULT: z.coerce.number().default(0.25), // exploration is priced as a probe, not a bet
+
   // LATE-ENTRY (BUYING-THE-TOP) SHRINK — the second loss pool. Confirms in the
   // 2.0-2.5× band ran 27.5% dead-on-arrival and −13.3% on deployed (n=40): the
   // move had largely finished before we confirmed, so our fill IS the top tick.

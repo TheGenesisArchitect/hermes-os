@@ -649,14 +649,28 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // wash/ragoon signature and rugs 35% vs 22%. Lean in on inflow, shrink the
     // flat-pool case — sizing only, never a veto.
     const lg = liqGrowth === null ? null : Number(liqGrowth);
-    const liqMult =
-      lg === null || !Number.isFinite(lg)
+    // PAPER INFLOW GATE — same quality bar as live, minus the blindness. Weak
+    // inflow is refused, EXCEPT a small random sample held back at probe size so
+    // every band keeps producing realized P&L. Without that carve-out the Inflow
+    // Edge panel would only ever see the band we already believe in, and a shift
+    // in the edge (the 1.20-1.30 miscalibration was caught exactly this way)
+    // would be invisible until it showed up as losses somewhere else.
+    let exploring = false;
+    if (cfg.PAPER_REQUIRE_INFLOW && lg !== null && Number.isFinite(lg) && lg < cfg.LIQ_INFLOW_STRONG) {
+      if (Math.random() < cfg.PAPER_INFLOW_EXPLORE_RATE) {
+        exploring = true; // keep the band measurable — at probe size
+      } else {
+        await audit("entry_filtered", { mint, reason: `weak inflow (pool ${lg.toFixed(2)}× < ${cfg.LIQ_INFLOW_STRONG}×)` });
+        continue;
+      }
+    }
+    const liqMult = exploring
+      ? cfg.PAPER_INFLOW_EXPLORE_SIZE_MULT
+      : lg === null || !Number.isFinite(lg)
         ? 1 // unmeasured → neutral; absence is not evidence
         : lg >= cfg.LIQ_INFLOW_STRONG
           ? cfg.LIQ_INFLOW_SIZE_BOOST // the band that pays: 72% win, 0% rug
-          : lg < cfg.LIQ_FLAT_MAX
-            ? cfg.LIQ_FLAT_SIZE_MULT // everything short of strong inflow bleeds
-            : 1;
+          : cfg.LIQ_FLAT_SIZE_MULT; // (only reachable with the gate disabled)
     // LATE-ENTRY SHRINK — a confirm in the buying-the-top band (2.0-2.5× already
     // run) was 27.5% dead-on-arrival at −13.3% on deployed. Half size; the
     // cost-recoup floor then banks the basis if it stalls, so a late entry that
