@@ -157,7 +157,16 @@ const envSchema = z.object({
   // floor (1.02x ≈ flat after fees) — an ignited trade can dip back to breakeven to
   // breathe/re-run toward a moonshot, but it NEVER returns to a loss. Below +8% it's
   // still a fresh entry on the pre-ignition hard stop.
-  PROFIT_LOCK_ARM_MULT: z.coerce.number().default(1.08),
+  // ARM LOWERED 1.08 → 1.03 (2026-07-20). There was NO floor between 0% and +8%:
+  // a position that rose from a 1.35× entry to 1.40× was green and completely
+  // unprotected, defended only by the 5% hard stop BELOW entry. The downside is
+  // already covered — the hard stop exists precisely for that — so the floor's
+  // job is to make sure a trade that went green does not come back red. Arm it
+  // the moment the move is real (+3%) and lock +2%. This does not cap runners:
+  // the effective stop is the HIGHER of this floor and the trailing floor, so a
+  // position making new highs is still governed by the trail, which widens as it
+  // runs. It only closes the dead zone where we previously had nothing.
+  PROFIT_LOCK_ARM_MULT: z.coerce.number().default(1.03),
   PROFIT_LOCK_FLOOR_MULT: z.coerce.number().default(1.02),
   // TAKE-PROFIT ON THE WAY UP — the missing mechanism. A trailing stop only fires
   // on a gradual PULLBACK; a token that pumps then rugs ATOMICALLY from the peak
@@ -1111,8 +1120,13 @@ const envSchema = z.object({
     .string()
     .default("true")
     .transform((v) => v !== "false"),
-  LIVE_PROFIT_ARM_MULT: z.coerce.number().default(1.08), // peak that arms the lock (matches paper)
-  LIVE_PROFIT_FLOOR_MULT: z.coerce.number().default(1.05), // LEAD: paper's floor is 1.02
+  // Live arms and floors ABOVE paper's (paper 1.03/1.02) — the lead that pays
+  // for confirm latency, since live's identical order lands ~5s later and lower
+  // (Jimhood: paper's TP0 filled 1.102×, live's 1.008×). The lead cannot fully
+  // cover a violent gap; its job is to catch the ordinary fades, which are the
+  // majority. Arm must stay above floor or the lock fires on entry.
+  LIVE_PROFIT_ARM_MULT: z.coerce.number().default(1.05),
+  LIVE_PROFIT_FLOOR_MULT: z.coerce.number().default(1.03),
   LIVE_FLOOR_ARM_MULT: z.coerce.number().default(1.15), // = TP0_MULT; bank the first tranche into the blow-off
   LIVE_FLOOR_FRACTION: z.coerce.number().default(0.4), // = TP0_CUM_SELL; farm tape uses FARM_TP0_CUM_SELL (cost-recoup 0.87)
   LIVE_FLOOR_SLIPPAGE_BPS: z.coerce.number().default(900), // banking into strength — wide enough to fill a fast mover, not a panic dump
