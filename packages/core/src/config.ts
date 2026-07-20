@@ -541,7 +541,20 @@ const envSchema = z.object({
   // rather than another filter. Tokens clearing 1.35× have shown real follow-through,
   // and the cost-recoup floor banks the basis on the ones that stall.
   CONFIRM_MIN_MULT: z.coerce.number().default(1.35), // green and established vs ref
-  CONFIRM_MAX_DD_PCT: z.coerce.number().default(10), // near the highs, not rolling over
+  // 10 → 40 (2026-07-20). A 10% ceiling could only admit a winner at its highs,
+  // because winners DIP: measured pre-peak drawdown is 22.3% median for climbers
+  // and 35.2% for moons, versus 0.9% for rugs — dipping is the winner signature,
+  // and this gate was selecting for the classes that don't dip.
+  // The larger gain is CONTINUITY of the armed state. At 10% a climber flickered
+  // in and out of armed exactly while it was breathing, and a flicker can be
+  // missed by any scan (Ballerina: armed 22:20:00, disarmed ~20s later at 20% DD,
+  // peaked 3.49×, never traded). At 40% a qualifying candidate stays armed
+  // through its normal dip so the 5s scan can actually reach it.
+  // Measured in the 2-3min entry window, rug rate FALLS as entry drawdown rises
+  // (19.4% at 0-5% DD → 0% above 20%), so dips are not rug signals here. Stopped
+  // at 40 rather than 60: the bands above 20% carry only n=10/5/3, so the
+  // direction is established but the magnitude is not.
+  CONFIRM_MAX_DD_PCT: z.coerce.number().default(40), // winners dip — stay armed through it
   // Buy-share VETO floor. Was 0.60 — that arm-time veto cost 6.5% of all
   // microstructure-qualified winners (62 of 959, incl. MOOBULL 33x whose heavy
   // two-way bot tape sat 0.45-0.52 its whole run) while only 31% of duds fell
