@@ -244,7 +244,13 @@ const envSchema = z.object({
     .default("false")
     .transform((v) => v === "true"),
   FAST_FLOOR_MS: z.coerce.number().default(1000), // sub-poll cadence between the 5s manage cycles
-  FAST_FLOOR_ARM_MULT: z.coerce.number().default(1.15), // only watch positions lifted past this (in profit)
+  // 1.15 → 1.05 entry-relative (2026-07-20). ENTRY-RELATIVE, not recorder-frame:
+  // this is "our position is up 5%", which for a 1.35R entry is ~1.42R — far
+  // above the 1.05-1.10R dud zone, since a dud never reaches our fill at all.
+  // At 1.15 the sweep sat idle through the population the book actually lives
+  // in: positions peak 5-15% above entry, roll over, and gap through the 5s
+  // loop. Arming at 1.05 puts the 1-second sweep on them.
+  FAST_FLOOR_ARM_MULT: z.coerce.number().default(1.05), // only watch positions lifted past this (in profit)
   FAST_FLOOR_TRAIL_PCT: z.coerce.number().default(8), // fire when the fast mark <= peak * (1 - this/100)
   // FARM-VENUE LADDER — the escalator counter-play. DNA study (2026-07-15, 101
   // dust rugs dissected): 99/101 lived on meteora-damm-v2, pumped a machine-

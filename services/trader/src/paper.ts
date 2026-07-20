@@ -1553,7 +1553,12 @@ export async function fastFloorSweep(cfg: HermesConfig): Promise<void> {
       const lg = last.get(p.id);
       // divergence guard — never fire on a disputed price (SX read 2.8x on one feed vs 611x on the other)
       if (lg && lg.px > 0 && Math.max(px, lg.px) / Math.min(px, lg.px) > cfg.MARK_FEED_DIVERGENCE) continue;
-      const floor = peak * (1 - cfg.FAST_FLOOR_TRAIL_PCT / 100);
+      // Floor never sits below the profit lock. With the arm at 1.05 entry-rel,
+      // a raw 8% trail off a 1.05 peak would put the floor at 0.966 — selling a
+      // WINNER at a loss, the exact thing this mechanism exists to prevent. The
+      // trail governs once the position has run far enough for it to sit above
+      // breakeven; below that, the lock line is the floor.
+      const floor = Math.max(peak * (1 - cfg.FAST_FLOOR_TRAIL_PCT / 100), entry * cfg.PROFIT_LOCK_FLOOR_MULT);
       if (px > floor) continue;
       const markMult = px / entry;
       if (cfg.FAST_FLOOR_LOG_ONLY) {
