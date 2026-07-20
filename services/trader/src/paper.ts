@@ -774,9 +774,36 @@ export function decideExit(
 ): ExitDecision | null {
   const entry = n(position.entryPriceUsd);
   const price = market.priceUsd;
-  const ageHours = (Date.now() - position.openedAt.getTime()) / 3_600_000;
+  const ageSec = (Date.now() - position.openedAt.getTime()) / 1000;
+  const ageHours = ageSec / 3600;
   const peakMult = entry > 0 ? peak / entry : 1;
   const peakProfitUsd = n(position.sizeUsd) * (peakMult - 1);
+
+  // ── FAST SCRATCH — the dud solution ──────────────────────────────────────
+  // Duds are NOT separable at entry: across 414 closed trades every entry-time
+  // feature (trigger multiple, pool growth, buy share, rug prob, conviction,
+  // fill lag) is statistically identical between duds and movers. But they
+  // separate violently the moment we own them —
+  //     mark at 30s:  DUD 0.938×   MOVER 1.104×
+  //     mark at 60s:  DUD 0.967×   MOVER 1.155×
+  //     mark at 95s:  DUD 0.968×   MOVER 1.234×
+  // A dud declares itself in half a minute and then flatlines around 0.97; we
+  // nonetheless rode it to the −7% hard stop or a rug, which is why the dud band
+  // averages −13.7% having never fallen more than ~6%. 167 duds cost −$162.94
+  // over 12h — the single largest loss pool in the book, in BOTH lanes.
+  // So: if a position has not established by the checkpoint, scratch it at the
+  // small loss instead of paying full price to learn what we already know.
+  // Deliberately narrow — it only fires on a position that has never printed a
+  // green tick (peak below the arm floor), so a mover that dips is never cut.
+  if (
+    cfg.FAST_SCRATCH_ENABLED &&
+    ageSec >= cfg.FAST_SCRATCH_AT_SEC &&
+    peakMult < cfg.FAST_SCRATCH_MAX_PEAK &&
+    entry > 0 &&
+    price / entry < cfg.FAST_SCRATCH_MIN_MULT
+  ) {
+    return { reason: "fast_scratch", fraction: 1 };
+  }
 
   // TAKE-PROFIT ON THE WAY UP — checked FIRST, before any trailing/stall logic.
   // This is the only mechanism that captures a token that pumps then rugs

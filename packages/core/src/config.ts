@@ -542,6 +542,24 @@ const envSchema = z.object({
   PAPER_INFLOW_EXPLORE_RATE: z.coerce.number().default(0.15), // sample of weak-inflow kept for measurement
   PAPER_INFLOW_EXPLORE_SIZE_MULT: z.coerce.number().default(0.25), // exploration is priced as a probe, not a bet
 
+  // ── FAST SCRATCH — the dud solution ────────────────────────────────────────
+  // Duds cannot be filtered at entry (every entry-time feature is identical
+  // between duds and movers across 414 trades) but they identify themselves in
+  // ~30 seconds of ownership: mark at 30s is 0.938× for duds vs 1.104× for
+  // movers, and duds then flatline near 0.97 forever. Riding them to the −7%
+  // hard stop turned a 6% fade into a −13.7% average loss; 167 duds cost
+  // −$162.94 in 12h, the largest loss pool in either lane. Scratch a position
+  // that has not established by the checkpoint. Narrow by construction: it only
+  // fires when the position has NEVER printed a green tick above the arm floor,
+  // so a real mover that dips is never cut.
+  FAST_SCRATCH_ENABLED: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  FAST_SCRATCH_AT_SEC: z.coerce.number().default(30), // checkpoint age
+  FAST_SCRATCH_MIN_MULT: z.coerce.number().default(1.0), // below this at the checkpoint = scratch
+  FAST_SCRATCH_MAX_PEAK: z.coerce.number().default(1.05), // ...and it never established
+
   // LATE-ENTRY (BUYING-THE-TOP) SHRINK — the second loss pool. Confirms in the
   // 2.0-2.5× band ran 27.5% dead-on-arrival and −13.3% on deployed (n=40): the
   // move had largely finished before we confirmed, so our fill IS the top tick.
