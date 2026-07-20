@@ -91,7 +91,21 @@ export interface EntryTrigger {
  */
 export function evaluateEntryTrigger(
   series: Tick[],
-  ctx: { watchMinutes: number; observationCount: number; action?: Action | null; liqGrowth?: number | null },
+  ctx: {
+    watchMinutes: number;
+    observationCount: number;
+    action?: Action | null;
+    liqGrowth?: number | null;
+    /**
+     * How many ticks back ≈ the continuation measurement window (~30s). Passed
+     * by the caller from its poll interval so the gate is SAMPLING-RATE
+     * INDEPENDENT: "+2% of continuation" must always mean +2% over ~30 seconds,
+     * never "+2% per tick". Without this, tightening the recorder's poll would
+     * silently triple the strictness of the gate and collapse entry volume for
+     * reasons that have nothing to do with the signal. Defaults to 1.
+     */
+    continuationLookback?: number;
+  },
   cfg: EntryTriggerConfig,
 ): EntryTrigger {
   const last = series[series.length - 1];
@@ -141,7 +155,8 @@ export function evaluateEntryTrigger(
   // advanced by minContinuation since. A token that clears the bar and stalls
   // (or fades) is refused before a dollar is committed; the tape does the
   // probing that our capital used to pay for.
-  const prior = series[series.length - 2];
+  const lookback = Math.max(1, Math.round(ctx.continuationLookback ?? 1));
+  const prior = series[series.length - 1 - lookback];
   if (!prior) return no("awaiting a second observation to confirm continuation");
   if (prior.markMultiple < cfg.minMult)
     return no(`first tick over the bar (${last.markMultiple.toFixed(2)}x) — waiting for continuation`);

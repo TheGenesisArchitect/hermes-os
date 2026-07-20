@@ -292,7 +292,15 @@ async function observe(
     const trig = trusted
       ? evaluateEntryTrigger(
           series,
-          { watchMinutes: watchMin, observationCount: o.ticks + 1, action: call.action, liqGrowth },
+          {
+            watchMinutes: watchMin,
+            observationCount: o.ticks + 1,
+            action: call.action,
+            liqGrowth,
+            // Keep "+2% continuation" pinned to a ~30s window regardless of how
+            // fast we poll, so changing the cadence never silently re-tunes the gate.
+            continuationLookback: Math.max(1, Math.round(30_000 / cfg.RECORDER_POLL_MS)),
+          },
           triggerCfg,
         )
       : {

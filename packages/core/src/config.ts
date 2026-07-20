@@ -429,7 +429,16 @@ const envSchema = z.object({
     .string()
     .default("true")
     .transform((v) => v === "true"),
-  RECORDER_POLL_MS: z.coerce.number().default(30_000),
+  // 30s → 10s (2026-07-20). The 30s interval was a leftover from the per-mint
+  // polling era that self-inflicted DexScreener throttling; batching (one request
+  // per 30 mints) fixed that and the whole platform now runs ~20 req/min against
+  // a ~300 req/min ceiling — 7% of budget. At 10s we sit near 20%, still ample
+  // headroom, and gain three things: confirmations land inside the 20s entry
+  // freshness window instead of expiring, continuation is measured on a finer
+  // grid, and a dud reveals itself in 10s instead of 30. The continuation gate
+  // is sampling-rate independent (continuationLookback) so this does not
+  // silently re-tune it.
+  RECORDER_POLL_MS: z.coerce.number().default(10_000),
   RECORDER_WINDOW_MIN: z.coerce.number().default(15),
   RECORDER_WIN_MULT: z.coerce.number().default(2),
   // A candidate is a RUG if it terminally collapsed to <= this multiple of the
