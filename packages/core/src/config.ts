@@ -335,8 +335,21 @@ const envSchema = z.object({
   // tokens live and rug; the leash only widens for a PROVEN multi-x runner so a
   // real moonshot still isn't shaken out. Aggressive markets → lock profit fast.
   TRAIL_TIGHT_PCT: z.coerce.number().default(5), // < 2.5x spike zone — bank tight, give back only 5%
-  TRAIL_MID_PCT: z.coerce.number().default(10), // 2.5x .. 6x — proven runner, a little room
-  TRAIL_WIDE_PCT: z.coerce.number().default(18), // >= 6x — parabolic, don't get shaken out
+  // WIDENED on the pre-peak dip signature (2026-07-20). Measured over 4,154
+  // labelled tokens, the drawdown a token SURVIVES on its way up:
+  //     RUG 0.9% · DUD 5.2% · RISER 7.5% · CLIMBER 22.3% · MOON 35.2% (medians)
+  // A 10-18% trail cannot hold a climber, let alone a moon — it survives only
+  // rugs and duds, which is precisely backwards. Mid now covers the climber
+  // median with room; wide covers the moon median at roughly its p75 (48.5%).
+  TRAIL_MID_PCT: z.coerce.number().default(25), // established + still climbing (climber zone)
+  TRAIL_WIDE_PCT: z.coerce.number().default(45), // proven runner still printing highs (moon zone)
+  // Rugs peak at a median 4.9 minutes; climbers and moons at ~10. Inside this
+  // window a token has not distinguished itself, so the leash stays short.
+  TRAIL_RUG_WINDOW_MIN: z.coerce.number().default(5),
+  // Manage ticks without a NEW HIGH before the trail snugs back to tight. This
+  // replaces drawdown as the snug trigger: a dip is the WINNER signature, but a
+  // stall is the move ending. ~60s at the 5s manage cadence.
+  TRAIL_STALL_TICKS: z.coerce.number().default(12),
   TRAIL_RIDE_BONUS_PCT: z.coerce.number().default(6), // classifier RIDE widens slightly (was 15 — the giveback source)
   // BANK-FIRST-THEN-LEASH: once any TP tranche has banked, the runner is house
   // money — its trail floors here instead of the tight wick-noise width, and a

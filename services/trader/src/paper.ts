@@ -739,24 +739,37 @@ function trailWidthPct(
   // ~breakeven, then ran 1.3-2.3x without us — ETC banked $0.09 and peaked 2.27x
   // nine seconds after our exit). An UNPAID position keeps the tight leash.
   banked = false,
+  // Token age in minutes — the rug-vs-climber discriminator. Rugs peak at a
+  // median 4.9min; climbers and moons at ~10min.
+  tokenAgeMin: number | null = null,
 ): number {
-  let w =
-    peakMult >= PARABOLIC_MULT
-      ? cfg.TRAIL_WIDE_PCT
-      : peakMult >= RUNNER_MULT
-        ? cfg.TRAIL_MID_PCT
-        : cfg.TRAIL_TIGHT_PCT; // 1–2.5x spike zone — bank it
+  // ── ZONE BY TIME AND NEW HIGHS, NOT BY MULTIPLE ──────────────────────────
+  // Measured pre-peak dip (the drawdown a token SURVIVES on its way up), across
+  // 4,154 labelled tokens: RUG 0.9% · DUD 5.2% · RISER 7.5% · CLIMBER 22.3% ·
+  // MOON 35.2% (medians). Dipping is the WINNER signature — rugs go straight up
+  // and then the LP is pulled. The old zones keyed off entry-relative multiple
+  // and clamped to a 5% leash the moment drawdown passed 8%, which made holding
+  // a moon (35% median dip) arithmetically impossible: we survived only the two
+  // classes that don't dip, rugs and duds.
+  //
+  // The move is over when it STOPS MAKING HIGHS, not when it dips. So:
+  //   inside the rug window, or stalled  → tight
+  //   established and still printing highs → room to breathe
+  const stalled = call != null && call.ticksSinceNewHigh >= cfg.TRAIL_STALL_TICKS;
+  const established = (tokenAgeMin ?? 0) >= cfg.TRAIL_RUG_WINDOW_MIN;
+  let w: number;
+  if (stalled || !established) {
+    w = cfg.TRAIL_TIGHT_PCT;
+  } else {
+    w = peakMult >= RUNNER_MULT ? cfg.TRAIL_WIDE_PCT : cfg.TRAIL_MID_PCT;
+  }
   if (banked) w = Math.max(w, cfg.POST_BANK_TRAIL_PCT);
   if (call?.action === "RIDE" && peakMult >= RIDE_MIN_MULT && drawdownPct < SNUG_DD) {
     w += cfg.TRAIL_RIDE_BONUS_PCT; // earned: a real runner still printing highs
-  } else if (
-    drawdownPct >= SNUG_DD ||
-    call?.regime === "BLOWOFF" ||
-    call?.regime === "STALL" ||
-    call?.action === "TRIM"
-  ) {
-    // Rolling over — lock it. A PAID runner clamps only to its post-bank leash
-    // (never back to the wick-noise width); an unpaid one snugs fully tight.
+  } else if (stalled || call?.regime === "BLOWOFF" || call?.action === "TRIM") {
+    // Snug ONLY on a move that has actually ended — never merely because price
+    // dipped. Drawdown was removed from this condition deliberately; it was the
+    // single line that ejected every climber and moon.
     w = Math.min(w, banked ? cfg.POST_BANK_TRAIL_PCT : cfg.TRAIL_TIGHT_PCT);
   }
   return w;
@@ -948,7 +961,7 @@ export function decideExit(
     const trailFloor =
       cfg.TRAIL_MODE === "gain"
         ? gainTrailFloor(cfg, entry, peak)
-        : peak * (1 - trailWidthPct(cfg, provenMult, drawdownPct, call, bankedRunner) / 100);
+        : peak * (1 - trailWidthPct(cfg, provenMult, drawdownPct, call, bankedRunner, market.pairAgeMinutes ?? null) / 100);
     const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, trailFloor);
     if (price <= stop) return { reason: "profit_trail", fraction: 1 };
   } else {
