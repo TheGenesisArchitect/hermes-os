@@ -237,9 +237,18 @@ const envSchema = z.object({
   // — this ladder is gated behind isFarmTape; green-cell venues keep the uncapped
   // tail. This is the "150 seconds, in and out, don't investigate a loser twice"
   // doctrine, quantified.
-  FARM_TP0_CUM_SELL: z.coerce.number().default(1.0), // farm: 100% out at the first level (1.15x)
-  FARM_TP1_CUM_SELL: z.coerce.number().default(1.0), // gap-up past 1.15 still dumps 100%
-  FARM_TP2_CUM_SELL: z.coerce.number().default(1.0), // nothing ever rides into the cliff
+  // FARM LADDER → COST-RECOUP FLOOR (2026-07-20). The 100%-out-at-1.15x dump
+  // was earned on the escalator dust-rugs, but it also sold nice (7.61x) in 12
+  // seconds for +$1.44 — 7 of the last 20 ≥3x moonshots were farm-classified
+  // damm-v2. New shape per the Wallet Crucible's proven insurance floor: TP0
+  // banks the COST BASIS (0.87 × 1.15x ≈ 1.0× cost — the position is house
+  // money), and the ~13% runner rides the ratchet/trail/stale-take uncapped.
+  // Worst case (runner rugs to $0) is breakeven instead of +15%; a 5x final
+  // banks ~1.65× instead of 1.15×. TP1/TP2 bank a bit more into strength but
+  // never fully cap the tail per [[maximize]].
+  FARM_TP0_CUM_SELL: z.coerce.number().default(0.87), // farm: recoup full cost at 1.15x — runner is house money
+  FARM_TP1_CUM_SELL: z.coerce.number().default(0.9), // small extra bank into 1.3x strength
+  FARM_TP2_CUM_SELL: z.coerce.number().default(0.95), // 5% of tokens always rides uncapped
   // AUTO-FARM — the adaptive layer. The static FARM_VENUES list is a snapshot;
   // the operation can hop venues or rotate new tickers tomorrow. So the farm
   // set also SELF-MAINTAINS from the recorder's own outcomes: any venue or
@@ -613,10 +622,19 @@ const envSchema = z.object({
   // This never blocks a real convex candidate — it blocks buying a corpse.
   ENTRY_MAX_SLIPPAGE_PCT: z.coerce.number().default(30),
 
-  // PAPER WALLET-GRAPH GATE — apply the wallet graph to PAPER entries too, so the
-  // book stops opening positions on the rug-wallet slice of bleeder venues (the
-  // recorder still watches everything free). "Don't bleed for the sake of being
-  // busy" — exploration ≠ execution. Default true.
+  // PAPER WALLET-GRAPH GATE — apply the wallet graph to PAPER entries, but as a
+  // SHRINK, not a veto (2026-07-20). The 2026-07-19 label backfill turned the
+  // graph much redder: on farm-ecosystem venues the same wallets hold everything,
+  // so "serial-rugger holders, no smart-money" started vetoing the tail itself —
+  // 24h blocked cohort was 217 duds + 118 rugs + 57 WINNERS avg 6.68x peak
+  // (football 68x, TEAM 27.8x, Wukong 11.2x). Convex math: the 57 tails dwarf
+  // 335 shrunk losses. So the rugger profile now sizes down (×WALLET_GATE_SIZE_MULT)
+  // per the shrink-don't-veto doctrine; only an OVERWHELMING rap sheet still
+  // vetoes (≥VETO_MIN_RUG_HITS rug-rep holders, zero winner-rep, on a
+  // ≥VETO_MIN_KNOWN sample — a book held almost entirely by proven ruggers).
+  WALLET_GATE_SIZE_MULT: z.coerce.number().default(0.4), // rugger-profile size multiplier
+  WALLET_VETO_MIN_RUG_HITS: z.coerce.number().default(5),
+  WALLET_VETO_MIN_KNOWN: z.coerce.number().default(8),
   PAPER_WALLET_GATE: z
     .string()
     .default("true")
@@ -857,7 +875,7 @@ const envSchema = z.object({
     .default("true")
     .transform((v) => v !== "false"), // shadow: log the 🩹 intent, don't sell — flip to false to arm
   LIVE_FLOOR_ARM_MULT: z.coerce.number().default(1.15), // = TP0_MULT; bank the first tranche into the blow-off
-  LIVE_FLOOR_FRACTION: z.coerce.number().default(0.4), // = TP0_CUM_SELL; farm tape uses FARM_TP0_CUM_SELL (1.0)
+  LIVE_FLOOR_FRACTION: z.coerce.number().default(0.4), // = TP0_CUM_SELL; farm tape uses FARM_TP0_CUM_SELL (cost-recoup 0.87)
   LIVE_FLOOR_SLIPPAGE_BPS: z.coerce.number().default(900), // banking into strength — wide enough to fill a fast mover, not a panic dump
 });
 

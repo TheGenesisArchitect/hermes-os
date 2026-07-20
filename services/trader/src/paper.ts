@@ -444,6 +444,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       triggerMultiple: candidateOutcomes.triggerMultiple,
       walletWinnerHits: candidateOutcomes.walletWinnerHits,
       walletRugHits: candidateOutcomes.walletRugHits,
+      walletKnown: candidateOutcomes.walletKnown,
       convictionScore: candidateOutcomes.convictionScore,
     })
     .from(candidateOutcomes)
@@ -544,7 +545,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     return;
   }
 
-  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits } of armed) {
+  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits, walletKnown } of armed) {
     if (total() >= cfg.PAPER_MAX_CONCURRENT) break; // global cap hit — leave the rest armed
 
     // Open-only duplicate guard — a CLOSED prior position no longer blocks
@@ -555,18 +556,30 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       .where(and(eq(positions.mint, mint), eq(positions.status, "open")))
       .limit(1);
     if (held) continue; // already in it — recorder will disarm on its next poll
-    if (signal.status === "traded_paper" || signal.status === "dismissed") continue;
+    // Skip only DISMISSED signals. `traded_paper` must NOT block: the recorder's
+    // armed flag is the re-entry authority (cooldown + entry cap + gate
+    // re-qualified per the VICE fix), but this status check silently made every
+    // entry one-shot anyway — nice re-armed at 2.26x/0%dd/89% buys and was
+    // refused here while running to 7.61x (2026-07-20).
+    if (signal.status === "dismissed") continue;
 
-    // WALLET-GRAPH GATE (don't bleed for the sake of being busy): a bleeder venue
-    // like meteora-damm-v2 (13% win venue-wide) is really two populations — a
-    // winner-wallet slice (44% win, 0% rug) and a rug-wallet slice (0% win, 54%
-    // rug). Skip OPENING a position on the rug-wallet slice (serial-rugger holders
-    // with no smart-money offset); the recorder still WATCHES it (the graph keeps
-    // learning free). Exploration ≠ execution. Validated leak-free (rug-rep holder
-    // → 7.7% win vs 12.4% base). Missing score = no data → don't block.
+    // WALLET-GRAPH GATE — SHRINK, don't veto (2026-07-20). The binary veto
+    // ("serial-rugger holders, no smart-money") started blocking the tail itself
+    // after the label backfill reddened the graph: 57 winners avg 6.68x peak
+    // (incl. a 68x) vetoed in 24h alongside 335 losers. The rugger profile now
+    // sizes down ×WALLET_GATE_SIZE_MULT; only an overwhelming rap sheet — a
+    // large sampled holder set that is ALL rugger-rep with zero winner-rep —
+    // still vetoes. Missing score = no data → full size, don't block.
+    let walletMult = 1;
     if (cfg.PAPER_WALLET_GATE && (walletRugHits ?? 0) > 0 && (walletWinnerHits ?? 0) === 0) {
-      await audit("entry_filtered", { mint, reason: "wallet: serial-rugger holders, no smart-money" });
-      continue;
+      if (
+        (walletRugHits ?? 0) >= cfg.WALLET_VETO_MIN_RUG_HITS &&
+        (walletKnown ?? 0) >= cfg.WALLET_VETO_MIN_KNOWN
+      ) {
+        await audit("entry_filtered", { mint, reason: `wallet: overwhelming rugger rap sheet (${walletRugHits} rug-rep / ${walletKnown} known, 0 winner-rep)` });
+        continue;
+      }
+      walletMult = cfg.WALLET_GATE_SIZE_MULT;
     }
 
     // Confirm-quality sizing: fading buy-share at the freshest armed read = the
@@ -600,7 +613,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       primeVenue || (tm !== null && Number.isFinite(tm) && tm >= cfg.CONVICTION_MULT_MIN)
         ? cfg.CONVICTION_SIZE_BOOST
         : 1;
-    const qualityMult = buyShareMult * rugMult * convictionMult;
+    const qualityMult = buyShareMult * rugMult * convictionMult * walletMult;
 
     // Consume ONLY on a real fill. A false return (lane reserved / market null /
     // venue / liquidity / slippage) leaves the candidate armed to re-attempt next
@@ -713,8 +726,10 @@ export function decideExit(
     // Farm-tape detection — the escalator DNA (99/101 dust rugs on meteora-
     // damm-v2, atomic cliff at peak). Static venue list ∪ ADAPTIVE sets (venues/
     // tickers whose 24h rug share crossed the threshold). Farm tape gets the
-    // NO-RUNNER ladder: 40% @TP0 → 75% @TP1 → 100% out @TP2 — nothing is ever
-    // held into the cliff; real-moonshot venues keep the uncapped runner.
+    // COST-RECOUP ladder (2026-07-20): 87% @TP0 recoups the full cost basis so
+    // the runner is house money, 90% @TP1, 95% @TP2 — the cliff can only cost
+    // unrealized profit, never principal, while the tail stays open (nice 7.61x
+    // was fully dumped at 1.22x under the old 100%-out shape).
     const farm = isFarmDump(cfg, market);
     const tp0Cum = farm ? cfg.FARM_TP0_CUM_SELL : cfg.TP0_CUM_SELL;
     const tp1Cum = farm ? cfg.FARM_TP1_CUM_SELL : cfg.TP1_CUM_SELL;
