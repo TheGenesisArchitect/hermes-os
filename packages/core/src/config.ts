@@ -168,6 +168,15 @@ const envSchema = z.object({
   // runs. It only closes the dead zone where we previously had nothing.
   PROFIT_LOCK_ARM_MULT: z.coerce.number().default(1.03),
   PROFIT_LOCK_FLOOR_MULT: z.coerce.number().default(1.02),
+  // TIME-BASED FLOOR — the operator's model: the floor goes under the trade at
+  // ~3.5min of watch time, i.e. roughly 90s after a 2-2.5min entry, REGARDLESS
+  // of how far price has moved. The price-triggered lock (above) only arms once
+  // a position reaches +3%, so a trade that drifts sideways at 1.01× carries no
+  // floor at all and can still round-trip into a loss. After this long the trade
+  // has had its chance: protect breakeven and let the trail govern anything that
+  // is actually running. Set 0 to disable.
+  TIME_FLOOR_AT_SEC: z.coerce.number().default(90),
+  TIME_FLOOR_MULT: z.coerce.number().default(1.0), // breakeven-or-better once armed
   // TAKE-PROFIT ON THE WAY UP — the missing mechanism. A trailing stop only fires
   // on a gradual PULLBACK; a token that pumps then rugs ATOMICALLY from the peak
   // (LP pulled in one block) never trades back through the stop with liquidity, so

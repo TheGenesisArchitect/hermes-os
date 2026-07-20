@@ -796,6 +796,24 @@ export function decideExit(
   const peakMult = entry > 0 ? peak / entry : 1;
   const peakProfitUsd = n(position.sizeUsd) * (peakMult - 1);
 
+  // ── TIME-BASED FLOOR ──────────────────────────────────────────────────────
+  // The operator's model: once a trade has been held ~90s (≈3.5min of watch time
+  // after a 2-2.5min entry), a floor goes UNDER IT regardless of how far it has
+  // moved. The price-triggered profit lock only arms at +3%, so a position that
+  // drifts sideways at 1.01× has no floor and can still round-trip into a loss.
+  // This closes that: after the trade has had its chance, we exit at breakeven
+  // or better rather than give it back. It never touches a runner — a position
+  // above the floor is governed by the trail, which is strictly higher once the
+  // move is real.
+  if (
+    cfg.TIME_FLOOR_AT_SEC > 0 &&
+    ageSec >= cfg.TIME_FLOOR_AT_SEC &&
+    entry > 0 &&
+    price / entry <= cfg.TIME_FLOOR_MULT
+  ) {
+    return { reason: "time_floor", fraction: 1 };
+  }
+
   // ── FAST SCRATCH — the dud solution ──────────────────────────────────────
   // Duds are NOT separable at entry: across 414 closed trades every entry-time
   // feature (trigger multiple, pool growth, buy share, rug prob, conviction,
