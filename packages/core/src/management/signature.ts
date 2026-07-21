@@ -388,7 +388,7 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
   TRAIL_TIGHT_PCT: number; TRAIL_MID_PCT: number; TRAIL_WIDE_PCT: number;
   HARD_STOP_PCT: number; HARD_STOP_PCT_THIN: number; RUNNER_MAX_HOLD_SEC: number;
   TIME_FLOOR_AT_SEC: number; FAST_FLOOR_ENABLED: boolean;
-  PROFIT_LOCK_ARM_MULT: number; PROFIT_FLOOR_USD: number;
+  PROFIT_LOCK_ARM_MULT: number; PROFIT_LOCK_FLOOR_MULT: number; PROFIT_FLOOR_USD: number;
   POST_BANK_TRAIL_PCT: number; TIMEBOX_FLAT_MULT: number;
 } {
   const p = withLearned(s, learned);
@@ -436,8 +436,20 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
     // governed purely by their own fingerprint.
     TIME_FLOOR_AT_SEC: 0, // breakeven-at-90s cut — the cover owns the downside
     FAST_FLOOR_ENABLED: false, // sub-tick floor sweep — not in the fitted model
-    PROFIT_LOCK_ARM_MULT: Number.POSITIVE_INFINITY, // never-close-red ratchet: the trail owns give-back
-    PROFIT_FLOOR_USD: Number.POSITIVE_INFINITY, // dollar-profit arm for the same ratchet
+    // ARM THE TRAIL, NOT THE NEVER-CLOSE-RED RATCHET.
+    // These two live in the SAME branch: setting them to Infinity to disable the
+    // ratchet also disabled the trailing stop, so signature positions ran with no
+    // trail at all — only rungs, cover and clock. Measured cost: every runner
+    // exited on the clock instead of the trail, giving back 68-78% from the peak
+    // (Liquititty 2.32×→0.52×, Kevin 3.19×→1.02×), and Spam's 55% remainder rode
+    // a 3.90× peak to zero.
+    // So the branch is ARMED from just above entry — the trail is the mechanism
+    // we want — while PROFIT_LOCK_FLOOR_MULT is pinned at 1.0 so the "never close
+    // red" floor it also carries can never sit above the class's own cover. The
+    // genome still owns the downside; the trail now owns the give-back.
+    PROFIT_LOCK_ARM_MULT: 1.01,
+    PROFIT_LOCK_FLOOR_MULT: 1.0,
+    PROFIT_FLOOR_USD: Number.POSITIVE_INFINITY, // never arm on a dollar amount
     POST_BANK_TRAIL_PCT: trailPct, // post-bank snug would re-tighten the class's own trail
     // STOP_FLAT — recycles any position whose peak hasn't cleared 1.1× after 3
     // minutes. Measured live 2026-07-21: it cut three BASE positions for −$1.08,
