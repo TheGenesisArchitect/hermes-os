@@ -871,7 +871,7 @@ async function learnedProfile(sig: Signature): Promise<LearnedProfile | null> {
   return learnedCache.map[sig] ?? null;
 }
 
-function trailWidthPct(
+export function trailWidthPct(
   cfg: HermesConfig,
   peakMult: number,
   drawdownPct: number,
@@ -921,6 +921,23 @@ function trailWidthPct(
   // So the width TIGHTENS as the multiple climbs: the trade keeps room to breathe
   // while it is young, and the floor closes in as the gain becomes worth
   // defending. The runner still runs; the floor just stops giving back a fortune.
+  // ── PRE-LADDER TIGHTENING ─────────────────────────────────────────────────
+  // The band the ratchet never covered. A 45% class trail on a position peaking
+  // 1.98× puts the floor at 1.09× — the price drifts at ~1.34× and never
+  // touches it, so the trail cannot fire and the clock sells the position at
+  // market instead. These trades WALK rather than gap (verified: the last six
+  // ticks before a runner_timeout sit flat within 1%), which is exactly the
+  // population a reachable floor converts. min() only ever tightens, so a class
+  // already trailing inside this width (CLIMBER 25%) is untouched.
+  //
+  // DELIBERATE STEP AT THE BOUNDARY: crossing RUNNER_RATCHET_START widens back
+  // to 40%, so the floor briefly sits lower between 3.2× and ~3.84×. That is
+  // the ratchet's existing "just past the ladder — full breathing room" intent
+  // and it is left alone: a position breaking past the ladder has earned room,
+  // and this change is aimed at the trades that never get there.
+  if (peakMult >= cfg.RUNNER_RATCHET_PRE_START && peakMult < cfg.RUNNER_RATCHET_START) {
+    w = Math.min(w, cfg.RUNNER_RATCHET_PRE_PCT);
+  }
   if (peakMult >= cfg.RUNNER_RATCHET_START) {
     const bands: [number, number][] = [
       [cfg.RUNNER_RATCHET_START, cfg.RUNNER_RATCHET_WIDE_PCT], // just past the ladder — full breathing room

@@ -110,6 +110,29 @@ const CLIMBER_GROWTH = 1.5; // +50% pool by the tick: 0.8% rug vs a 20% baseline
 // round number: MOON 5.26% / RISER 4.63% largest holder against RUG 35.3%,
 // DUD 51.2%, CLIMBER 78.0%. The gap is wide enough that the exact cut matters
 // little — anything from ~10% to ~25% separates the same way.
+// ── CHURN DEAD ZONE ────────────────────────────────────────────────────────
+// A price rising while order flow sits at ~50/50 is being DISTRIBUTED into, not
+// accumulated. Measured 2026-07-21 over 989 paper trades / 48h, by buy share at
+// entry:  <.50 → 48% win, +$0.12/trade · .50–.55 → 24% win, −$1.40 · .55–.60 →
+// 34% win, −$0.44 · .60–.70 → 48% win, +$0.32 · .70+ → 50% win, +$0.36.
+//
+// The band is −$161.73 over 48h and contains ZERO 10× peaks (best 6.3×) against
+// two ten-baggers outside it, and NOT ONE signature is profitable inside it
+// (RISER −$30, MOON_FAST −$32, MOON_STEADY −$9). So refusing it surrenders no
+// upside — it is not a cap on winners, there are none here to cap.
+//
+// Note it is the indecisive MIDDLE that is toxic, not weak flow: below 0.50 the
+// pullback is genuine and the snap is a real reversal, and that band pays. The
+// 07-19 refit already found [0.50,0.55) and excluded it from the LABEL SET —
+// which stopped the model seeing it while the trader kept buying it. Exclusion
+// is not a gate; this is the gate.
+//
+// These are gap deaths, not exit failures: PONS printed 1.024× then 0.719× in
+// one 2.5s tick with the pool steady at $25k, so the correctly-placed 1.02
+// floor was simply unreachable. No exit geometry defends this band. Not
+// entering is the only defence.
+const CHURN_LO = 0.5;
+const CHURN_HI = 0.6;
 const DISPERSED_LARGEST_PCT = 12; // ≤ this = crowd-held (moon/riser territory)
 const DISPERSED_TOP10_PCT = 35; // MOON 16.9 / RISER 14.8 vs DUD 81.1 / CLIMBER 81.0
 const CONCENTRATED_LARGEST_PCT = 30; // ≥ this = whale-held (climber/dud/rug)
@@ -237,6 +260,14 @@ export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
 export function routeSignature(i: SignatureInputs): Signature {
   const growth = i.liq0 > 0 ? i.liqNow / i.liq0 : 1;
   if (growth < 1.0 || i.liq0 >= DEEP_POOL) return "RUG_RISK";
+
+  // Churn dead zone — refused on EVERY path, before routing. This has to sit
+  // above the dispersed branch: that branch admits RISER on `buyShare >= 0.5`
+  // alone (the 0.80 RISER bar exists only on the non-dispersed path below), so
+  // a dispersed book at 0.539 routed straight into the largest-sized class.
+  // PONS did exactly that, and across 93 RISERs the minimum entry buy share
+  // was 0.533.
+  if (i.buyShare >= CHURN_LO && i.buyShare < CHURN_HI) return "RUG_RISK";
 
   // ── HOLDER DISPERSION FIRST ────────────────────────────────────────────────
   // Ownership structure is known at discovery and separates the classes an order

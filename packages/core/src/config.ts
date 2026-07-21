@@ -645,6 +645,14 @@ const envSchema = z.object({
   // expensive — Pumpman peaked 27.63× and survived only because a basket harvest
   // happened to fire; Spam banked 45% off a 3.90× peak and still finished red
   // because the 55% runner rode a full-width trail into the rug.
+  // Below the ratchet the class trail (25–45%) was the only width, and at 45% a
+  // position peaking 1.98× floors at 1.09× — never reached, so it rode to the
+  // clock and was market-dumped at 1.24×. That is the `runner_timeout` bucket:
+  // 23 trades since 2026-07-21T13:48, +$36.12 at 28% capture, and unlike the
+  // gap victims these WALK (last six ticks flat at ~1.34×), so a tighter floor
+  // is actually reachable. Static replay: 28% → +$58.09, 20% → +$77.95.
+  RUNNER_RATCHET_PRE_START: z.coerce.number().default(1.5), // green enough to defend
+  RUNNER_RATCHET_PRE_PCT: z.coerce.number().default(28), // caps the class trail below the ladder
   RUNNER_RATCHET_START: z.coerce.number().default(3.2), // engages just past the top rung
   RUNNER_RATCHET_WIDE_PCT: z.coerce.number().default(40), // 3.2–8×: still developing, let it breathe
   RUNNER_RATCHET_MID_PCT: z.coerce.number().default(28), // 8–20×: proven runner, start defending
