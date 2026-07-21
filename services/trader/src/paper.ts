@@ -423,9 +423,29 @@ async function openFromSignal(
     sizeUsd,
   });
 
-  const [position] = await db
-    .insert(positions)
-    .values({
+  // ATOMIC OPEN CLAIM. The `held` check above is a read-then-write: two
+  // consumers evaluating the same armed candidate both see "not held" and both
+  // insert. Measured 2026-07-21: 15 signals opened TWICE in 24h — 30 positions,
+  // −$17.55 combined, with MILF booking −$3.07 twice off one signal and FIM
+  // deploying $28.80 against a $14.40 decision. The pairs land 5ms–1s apart, so
+  // no amount of checking-first closes it.
+  //
+  // The invariant already existed in code; it now lives in the database, where
+  // it cannot race: unique index positions_one_open_paper_per_mint on (mint)
+  // WHERE status='open' AND lane='paper'. A loser of the race gets a unique
+  // violation here and skips the entry rather than doubling the book.
+  //
+  // PAPER ONLY, deliberately. Live inserts its row AFTER the on-chain swap has
+  // already executed, so a constraint failure there would leave real tokens
+  // bought with no position row to manage them — strictly worse than the
+  // duplicate. Live needs the claim taken BEFORE the swap, which is a real
+  // refactor; it duplicated 1 signal in 24h against paper's 14, so this closes
+  // the measured bleed without putting capital at risk.
+  let position: typeof positions.$inferSelect | undefined;
+  try {
+    [position] = await db
+      .insert(positions)
+      .values({
       signalId: signal.id,
       mint: signal.mint,
       lane: "paper",
@@ -445,8 +465,15 @@ async function openFromSignal(
       entryPriceUsd: String(entryPrice),
       peakPriceUsd: String(entryPrice),
       realizedPnlUsd: "0",
-    })
-    .returning();
+      })
+      .returning();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/positions_one_open_paper_per_mint|duplicate key/i.test(msg)) throw err;
+    await audit("entry_filtered", { mint: signal.mint, reason: "duplicate open — lost the claim race" });
+    console.log(`⛔ SKIP   ${token.symbol ?? "?"} ${short(signal.mint)} — already open in this lane (claim race)`);
+    return false;
+  }
   if (!position) return false;
   if (book) book[lane] += 1; // book the fill into the shared capacity ledger
 
