@@ -162,8 +162,15 @@ export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
   // ── sample-limited: traded small to accumulate evidence ──
   CLIMBER: {
     trade: true, minSnap: 0.2, floor: 0.4, trail: 0.25,
-    tp0: [1.55, 0.2], tp1: [2.35, 0.25], tp2: [3.0, 0.25], holdSec: CLOCK_SEC, size: 0.6,
-    note: "whale accumulation into a deep book — 1.6% rug, best risk-adjusted class",
+    // SHRUNK 0.6 → 0.2 (2026-07-21). CLIMBER is the worst-evidenced tradeable
+    // class on every axis we have: 0-for-3 live at ~−$12 with all three dead on
+    // arrival (peak ≈1.00×), failed holdout across 2,160 configurations (0.892
+    // EV, 0/8 plateau), and below the 60-per-side floor so the learning loop
+    // refuses to tune it. Shrunk rather than paused deliberately — pausing means
+    // it never crosses the sample floor and stays permanently unresolved, so a
+    // small live allocation keeps the evidence accruing at a third of the bleed.
+    tp0: [1.55, 0.2], tp1: [2.35, 0.25], tp2: [3.0, 0.25], holdSec: CLOCK_SEC, size: 0.2,
+    note: "whale accumulation into a deep book — 1.6% rug measured, but 0-for-3 live",
   },
   MOON_FAST: {
     trade: true, minSnap: 0.35, floor: 0.4, trail: 0.45,
