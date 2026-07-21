@@ -918,11 +918,20 @@ async function liveSellPosition(
     if (raw <= 0n) {
       // Nothing on-chain (dust-swept, rugged to zero, or external move): close
       // the ledger row honestly rather than retrying a sell forever.
-      await db
+      //
+      // CONDITIONAL on the row still being open. The sweep and the guard run
+      // concurrently off rows loaded at cycle start: DEXBULL's trail sell
+      // closed the position as profit_trail, then the sweep — holding the
+      // stale row — read the now-empty wallet and stamped live_desync_empty
+      // OVER the true exit reason. P&L was right, the label wrong, and the
+      // Trade Performance Analyzer scores by label. The status='open' clause
+      // makes the race a no-op for the loser.
+      const closed = await db
         .update(positions)
         .set({ status: "closed", closedAt: new Date(), exitReason: "live_desync_empty", qtyRemaining: "0" })
-        .where(eq(positions.id, position.id));
-      await audit("live_desync_empty", { positionId: position.id, mint: position.mint });
+        .where(and(eq(positions.id, position.id), eq(positions.status, "open")))
+        .returning({ id: positions.id });
+      if (closed.length > 0) await audit("live_desync_empty", { positionId: position.id, mint: position.mint });
       return true;
     }
     const f = Math.min(1, Math.max(0, fraction));
