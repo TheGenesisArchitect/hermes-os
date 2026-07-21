@@ -189,17 +189,22 @@ export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
   },
   MOON_FAST: {
     trade: true, minSnap: 0.35, floor: 0.4, trail: 0.45,
-    tp0: [1.45, 0.2], tp1: [2.35, 0.2], tp2: [4.25, 0.2], holdSec: CLOCK_SEC, size: 0.8,
+    // SWEEP RUNG 1.45 → 1.25. MOON's measured median run is 1.43×, so a rung at
+    // 1.45 sat ABOVE the median — the same defect fixed elsewhere, and worst
+    // here: the moon grades carry the highest rug rates in the system, and the
+    // early tranche is precisely what pays for those rugs. Elon peaked 1.43×,
+    // missed the old rung by two hundredths, banked nothing and cost −$8.02.
+    tp0: [1.25, 0.2], tp1: [2.35, 0.2], tp2: [4.25, 0.2], holdSec: CLOCK_SEC, size: 0.8,
     note: "thin pool, dispersed, 150-400%/min recovery — rugs 11.6%, p90 6.90×",
   },
   MOON_STEADY: {
     trade: true, minSnap: 0.35, floor: 0.7, trail: 0.35,
-    tp0: [1.45, 0.2], tp1: [2.35, 0.25], tp2: [4.25, 0.2], holdSec: CLOCK_SEC, size: 0.6,
+    tp0: [1.25, 0.2], tp1: [2.35, 0.25], tp2: [4.25, 0.2], holdSec: CLOCK_SEC, size: 0.6,
     note: "50-150%/min recovery — 13.3% reach 5×",
   },
   MOON_SLOW: {
     trade: true, minSnap: 0.35, floor: 0.4, trail: 0.45,
-    tp0: [1.45, 0.25], tp1: [2.35, 0.25], tp2: [4.25, 0.2], holdSec: CLOCK_SEC, size: 0.4,
+    tp0: [1.25, 0.25], tp1: [2.35, 0.25], tp2: [4.25, 0.2], holdSec: CLOCK_SEC, size: 0.4,
     note: "<50%/min recovery — weakest moon grade (2.1% reach 5×)",
   },
   MOON_VIOLENT: {
@@ -207,7 +212,10 @@ export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
     // tranche, but 4.5% still reach 5×, so a runner stays alive. Runs on the RUG
     // timeline, not the winners' — this cohort is done inside ~7 minutes.
     trade: true, minSnap: 0.35, floor: 0.52, trail: 0.4,
-    tp0: [1.4, 0.35], tp1: [2.3, 0.2], tp2: [4.25, 0.15], holdSec: FAST_CLOCK_SEC, size: 0.3,
+    // Earliest rung of any class at 1.20×: a 58% rug rate means the first
+    // tranche IS the thesis, and it has to fire on the majority of trades to
+    // pay for the losses. At 1.40 it almost never did.
+    tp0: [1.2, 0.35], tp1: [2.3, 0.2], tp2: [4.25, 0.15], holdSec: FAST_CLOCK_SEC, size: 0.3,
     note: "400%+/min snap off a deep dip — 58% rug, kept small for the 4.5% tail",
   },
   // ── refused ──
