@@ -61,6 +61,15 @@ export interface SignatureInputs {
   top10Pct?: number | null;
   /** Holder count: MOON 91 / RISER 60 vs DUD 9 / CLIMBER 14 / RUG 16. */
   holders?: number | null;
+  /**
+   * WALLET-GRAPH EDGE at arm time. Holder wallets persist across one-shot
+   * tokens, so a book already held by wallets that backed previous winners is a
+   * genuinely independent signal from anything in the price or the pool —
+   * measured at a 2.2× winner lift and validated leak-free.
+   */
+  walletEdge?: number | null;
+  /** Count of sampled holders with winner reputation. */
+  walletWinnerHits?: number | null;
 }
 
 export interface SignatureProfile {
@@ -254,6 +263,14 @@ export function convictionOf(s: Signature, i: Partial<SignatureInputs>): Convict
   if (i.holders != null && i.holders >= 100 && i.holders <= 250) marks.push("holders 100-250 (4.4% reach 5×)");
   if (i.top10Pct != null && i.top10Pct < 5) marks.push("top-10 <5% (4.4% reach 5×)");
   if (i.largestHolderPct != null && i.largestHolderPct <= 6) marks.push("crowd-held");
+  // WALLET GRAPH — an independent axis. Ownership dispersion says HOW MANY hold
+  // it; the graph says WHO. A book already held by wallets that backed previous
+  // winners carries a measured 2.2× winner lift, and because holder wallets
+  // persist across one-shot tokens it is not derivable from price, pool or
+  // concentration. Winner reputation with no rug reputation is the clean case.
+  if ((i.walletWinnerHits ?? 0) > 0 && (i.walletEdge ?? 0) > 0) {
+    marks.push(`${i.walletWinnerHits} winner-rep holder${(i.walletWinnerHits ?? 0) > 1 ? "s" : ""} (2.2× lift)`);
+  }
 
   // The evidenced classes: RISER confirmed on both sides of the split, MOON_FAST
   // the lowest-rug cohort measured. BASE is the residual bucket by construction —

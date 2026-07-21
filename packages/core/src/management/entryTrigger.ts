@@ -149,6 +149,13 @@ export function evaluateEntryTrigger(
      * reasons that have nothing to do with the signal. Defaults to 1.
      */
     continuationLookback?: number;
+    /**
+     * Slack on the window's LOWER bound, in minutes — normally one poll
+     * interval. The boundary cannot be meaningfully sharper than the sampling
+     * rate, and enforcing it that way discards qualifying ticks for reasons that
+     * have nothing to do with the signal.
+     */
+    pollToleranceMin?: number;
   },
   cfg: EntryTriggerConfig,
 ): EntryTrigger {
@@ -189,7 +196,17 @@ export function evaluateEntryTrigger(
 
   if (!cfg.enabled) return no("confirmation entry disabled");
   if (!last) return no("no observations yet");
-  if (ctx.watchMinutes < cfg.minWatchMin) return no(`too early (${ctx.watchMinutes.toFixed(1)}m < ${cfg.minWatchMin}m — t=0 noise)`);
+  // POLL-TOLERANT LOWER BOUND. The window floor must not be enforced more
+  // precisely than we sample: a candidate is only observed every RECORDER_POLL_MS,
+  // so a tick landing a few seconds short of the boundary is a timing artifact,
+  // not a different signal. Hieromojis (2026-07-21) printed its ONLY qualifying
+  // tick at 1.9519m — 1.67× at 0% drawdown with 71% buys — and was refused as
+  // "too early" by 2.9 seconds. The next poll had collapsed 42%; it went on to
+  // peak 4.12×. One poll interval of slack costs nothing (t=0 noise is minutes
+  // away, not seconds) and recovers exactly this class of miss.
+  const tolerance = Math.max(0, ctx.pollToleranceMin ?? 0);
+  if (ctx.watchMinutes < cfg.minWatchMin - tolerance)
+    return no(`too early (${ctx.watchMinutes.toFixed(2)}m < ${cfg.minWatchMin}m − ${tolerance.toFixed(2)}m poll slack — t=0 noise)`);
   if (ctx.watchMinutes > cfg.maxWatchMin) return no(`past entry window (${ctx.watchMinutes.toFixed(1)}m > ${cfg.maxWatchMin}m)`);
   if (ctx.observationCount < cfg.minTicks) return no(`insufficient trajectory (${ctx.observationCount} < ${cfg.minTicks} ticks)`);
   if (ctx.action === "CUT") return no("classifier says CUT — do not enter");

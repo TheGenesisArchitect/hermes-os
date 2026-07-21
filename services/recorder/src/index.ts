@@ -346,6 +346,9 @@ async function observe(
             // Keep "+2% continuation" pinned to a ~30s window regardless of how
             // fast we poll, so changing the cadence never silently re-tunes the gate.
             continuationLookback: Math.max(1, Math.round(30_000 / cfg.RECORDER_POLL_MS)),
+            // One poll interval of slack on the window floor — the boundary cannot
+            // be sharper than the sampling rate.
+            pollToleranceMin: cfg.RECORDER_POLL_MS / 60_000,
           },
           triggerCfg,
         )
@@ -376,6 +379,11 @@ async function observe(
       largestHolderPct: holder.largestPct,
       top10Pct: holder.top10Pct,
       holders: holder.holders,
+      // Persisted from the previous scoring pass — the wallet edge is computed
+      // once per candidate and stored, so routing reads it rather than
+      // re-scoring the graph on every tick.
+      walletEdge: o.walletEdge != null ? Number(o.walletEdge) : null,
+      walletWinnerHits: o.walletWinnerHits ?? null,
     };
     const signature = routeSignature(sigInputs);
     // CONVICTION — how well THIS instance matches the fingerprint of the ones
