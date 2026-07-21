@@ -577,10 +577,20 @@ function livePositionUsd(
       regimeMult *
       anticipationMult
     : balanceUsd * cfg.LIVE_SIZE_FRAC * regimeMult * convictionMult * anticipationMult;
-  return Math.max(
-    cfg.LIVE_MIN_POSITION_USD,
-    Math.min(base, balanceUsd * cfg.LIVE_MAX_POSITION_FRAC, cfg.LIVE_MAX_POSITION_USD),
-  );
+  // CAPS SCALE WITH THE BALANCE, FLOORS DO NOT.
+  // LIVE_MIN_POSITION_USD is a fee-viability floor, not a strategy knob — below
+  // it the transaction cost eats the trade. But applied to a small balance it
+  // swallows the whole conviction range: at $60, a 0★ residual computes to $0.60
+  // and a 2★ to $3.00, and the $3.50 floor makes them IDENTICAL. Conviction then
+  // does nothing, which breaks the 1:1 with paper silently.
+  //
+  // So a routed position is NOT floored. If its fraction of the balance is too
+  // small to be worth the fee, the honest answer is to skip the trade rather than
+  // inflate it to a size the conviction never asked for — an inflated 0★ is
+  // exactly the capital misallocation the whole signature system exists to stop.
+  // The caller drops anything under the fee floor.
+  const capped = Math.min(base, balanceUsd * cfg.LIVE_MAX_POSITION_FRAC, cfg.LIVE_MAX_POSITION_USD);
+  return sig ? capped : Math.max(cfg.LIVE_MIN_POSITION_USD, capped);
 }
 
 // ── public API (mirror hooks) ────────────────────────────────────────────────
@@ -713,7 +723,19 @@ export async function maybeLiveBuy(
       const frac = Math.min(1, lossToday / cfg.LIVE_DAILY_LOSS_CAP_USD);
       dailyThrottle = 1 - frac * (1 - cfg.LIVE_DAILY_THROTTLE_MIN);
     }
-    const usd = Math.max(cfg.LIVE_MIN_POSITION_USD, Math.min(livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult, sig) * dailyThrottle, affordable));
+    const sized = Math.min(livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult, sig) * dailyThrottle, affordable);
+    // A routed position is never inflated to the fee floor — if its own conviction
+    // does not justify a fee-viable size, we SKIP rather than take a trade at a
+    // size the signature never asked for. Legacy (unrouted) live buys keep the
+    // old floor-up behaviour.
+    if (sig && sized < cfg.LIVE_MIN_POSITION_USD) {
+      await audit("live_buy_skipped", {
+        mint,
+        reason: `${sig.signature} ${sig.stars ?? 0}★ sizes to $${sized.toFixed(2)}, under the $${cfg.LIVE_MIN_POSITION_USD} fee floor — balance too small to express this conviction`,
+      });
+      return;
+    }
+    const usd = sig ? sized : Math.max(cfg.LIVE_MIN_POSITION_USD, sized);
     const lamports = BigInt(Math.floor((usd / sol) * 1e9));
 
     const wallet = liveWallet();
@@ -1105,6 +1127,8 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
   const sol = (await solPriceUsd(cfg)) ?? 0;
   if (sol <= 0) return; // no SOL price → can't value; skip rather than risk a false read
   const { PublicKey } = await import("@solana/web3.js");
+  // Greens collected across the pass for the basket harvest below.
+  const liveGreens: { lp: (typeof rows)[number]; upl: number }[] = [];
   for (const lp of rows) {
     try {
       const resp = await rpcPool(cfg).read((c) =>
@@ -1152,7 +1176,24 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       // the mirror skips take_profit_0 so the floor owns that rung). value/cost == mark
       // while nothing is sold, which is exactly the soldFrac<0.01 gate below.
       // TODO(farm): bank 100% on meteora-damm-v2 rug tape — needs the tokens.dex join.
-      if (cfg.LIVE_FLOOR_ENABLED) {
+      // ── 1:1 WITH PAPER ────────────────────────────────────────────────────
+      // A signature-routed position is governed by its GENOME alone. Every
+      // live-only rule below — the early floor, the never-close-red ratchet, the
+      // fast protective stop — predates signature routing and would override the
+      // class cover with a decision paper never makes. RISER covers at 0.40×, a
+      // 60% drawdown; LIVE_STOP_PCT cuts at 28%, so the lanes would diverge on
+      // the first dip and it would read as execution slippage rather than the
+      // rules conflict it actually is. Legacy live rows keep all of it.
+      const genomeOwned = lp.signature != null;
+      // BASKET HARVEST, 1:1. Paper sweeps its whole green book when the aggregate
+      // unrealised gain clears a threshold — it banked six positions for +$37 in a
+      // single cycle tonight. Paper's version mirrors to live by MINT, which only
+      // worked while live was a shadow; independent live holds different mints, so
+      // it needs the same rule evaluated over its OWN book. Collected here from the
+      // real sell-route value (more accurate than a price API) and executed after
+      // the loop, so a harvest never races the per-position exits above.
+      if (genomeOwned && cost > 0 && value > cost) liveGreens.push({ lp, upl: value - cost });
+      if (cfg.LIVE_FLOOR_ENABLED && !genomeOwned) {
         const soldFrac = 1 - n(lp.qtyRemaining) / Math.max(n(lp.qtyTokens), 1e-9);
         if (soldFrac < 0.01 && cost > 0 && value / cost >= cfg.LIVE_FLOOR_ARM_MULT) {
           console.log(
@@ -1179,6 +1220,7 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       livePeakMark.set(lp.id, peakMark);
       if (
         cfg.LIVE_PROFIT_FLOOR_ENABLED &&
+        !genomeOwned &&
         peakMark >= cfg.LIVE_PROFIT_ARM_MULT &&
         markNow <= cfg.LIVE_PROFIT_FLOOR_MULT &&
         markNow > 0
@@ -1224,7 +1266,7 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       // Require the real drawdown to PERSIST across 2 guard cycles (~10s) before
       // cutting — a single bad quote can NEVER cut a winner paper is still riding;
       // a genuine collapse trips it and DUMPS at market. Recovery resets the count.
-      if (drawdownPct <= -cfg.LIVE_STOP_PCT) {
+      if (drawdownPct <= -cfg.LIVE_STOP_PCT && !genomeOwned) {
         const hits = (guardHits.get(lp.id) ?? 0) + 1;
         guardHits.set(lp.id, hits);
         if (hits >= 2) {
@@ -1238,6 +1280,29 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       }
     } catch (err) {
       console.error(`live guard ${short(lp.mint)}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  // ── BASKET HARVEST, over live's OWN book ───────────────────────────────────
+  // Paper sweeps its entire green book when the aggregate unrealised gain clears
+  // BASKET_HARVEST_USD, and that mechanism has been one of its largest earners.
+  // Paper's version mirrors to live by mint, which only worked while live was a
+  // shadow of it; an independent live book holds different mints and would simply
+  // never harvest, so the lanes would diverge on the single rule that banks the
+  // most. Runs AFTER the per-position pass so a harvest can never race an exit
+  // that already fired, and only over genome-owned rows.
+  if (cfg.BASKET_HARVEST_ENABLED && liveGreens.length > 0) {
+    const total = liveGreens.reduce((s, g) => s + g.upl, 0);
+    if (total >= cfg.BASKET_HARVEST_USD) {
+      await audit("live_basket_harvest", { positions: liveGreens.length, greenUpl: total });
+      console.log(
+        `💰 LIVE BASKET HARVEST — ${liveGreens.length} green positions net +$${total.toFixed(2)} → banking all`,
+      );
+      for (const g of liveGreens) {
+        await liveSellPosition(cfg, g.lp, 1, "basket_harvest");
+        guardHits.delete(g.lp.id);
+        livePeakMark.delete(g.lp.id);
+      }
     }
   }
 }
