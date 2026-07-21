@@ -72,9 +72,15 @@ export interface SignatureProfile {
   floor: number;
   /** Trail width as a fraction off the running peak. */
   trail: number;
-  /** First take-profit: [entry-relative multiple, fraction of position]. */
+  /**
+   * THREE PROGRESSIVE RUNGS, placed on the class's OWN run distribution at
+   * roughly p50 → p75 → p90. A trade does not simply rise and hold: it wanders,
+   * spikes and gives back, so profit is swept along the path rather than staked
+   * on one late rung. The prior two-rung shape banked 10% at 2.10× and left 90%
+   * riding, which only pays when a position goes straight up.
+   */
+  tp0: [number, number];
   tp1: [number, number];
-  /** Second take-profit. */
   tp2: [number, number];
   /** Seconds after entry to close the remainder; 0 = no time exit. */
   holdSec: number;
@@ -107,50 +113,71 @@ function moonGrade(snapRate: number): Signature {
   return "MOON_SLOW";
 }
 
+// THE CLOCK, set at P75 of the labeled time-to-peak. Measured over 17,872
+// candidates, time-to-peak p75 is ~15.2m from discovery for every winner class;
+// entry lands in the 2-3m window, so the hold is ~12.7m ≈ 760s — inside the
+// Trade Matrix's existing 1000s moonshot horizon, so the clock and the Matrix
+// finally agree instead of contradicting each other.
+//
+// It is deliberately NOT the median. Fitting a clock to the middle of a class
+// whose value lives in the tail truncates exactly the outcomes we want, which is
+// the same error as the 5% trail in the time dimension. Note also that 56% of
+// RISERs and 47% of CLIMBERs are still rising when the 15m watch window closes,
+// so their true peaks are right-censored — p75 is a floor on the right answer,
+// not a precise one, and it should be revisited if the window is ever widened.
+const CLOCK_SEC = 1000;
+// Rugs are the one class our window fully captures (0.8% censored): they peak at
+// 4.6m and are done by 12.2m at p90. A class that snaps violently off a deep dip
+// lives on that timeline, not the winners'.
+const FAST_CLOCK_SEC = 420;
+
 export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
   // ── confirmed on both sides of the split ──
+  // Rungs sit on each class's OWN measured run distribution — p50 / p75 / p90 —
+  // so profit is swept along the path and a 30% runner still carries the tail.
   RISER: {
     trade: true, minSnap: 0.15, floor: 0.4, trail: 0.45,
-    tp1: [1.55, 0.25], tp2: [2.3, 0.2], holdSec: 0, size: 1.0,
-    note: "steady accumulation, high buy pressure — the microwin engine (86% win)",
+    tp0: [1.5, 0.2], tp1: [2.2, 0.25], tp2: [3.2, 0.25], holdSec: CLOCK_SEC, size: 1.0,
+    note: "dispersed ownership, steady accumulation — the microwin engine (86% win)",
   },
   BASE: {
     trade: true, minSnap: 0.2, floor: 0.7, trail: 0.45,
-    tp1: [1.55, 0.25], tp2: [2.3, 0.2], holdSec: 0, size: 1.0,
+    tp0: [1.5, 0.2], tp1: [2.1, 0.25], tp2: [2.85, 0.25], holdSec: CLOCK_SEC, size: 1.0,
     note: "unclassified mover with pool support (57% win)",
   },
   // ── sample-limited: traded small to accumulate evidence ──
   CLIMBER: {
     trade: true, minSnap: 0.2, floor: 0.4, trail: 0.25,
-    tp1: [1.55, 0.25], tp2: [2.3, 0.3], holdSec: 150, size: 0.6,
-    note: "accumulation into a deep book — 1.6% rug, best risk-adjusted class",
+    tp0: [1.55, 0.2], tp1: [2.35, 0.25], tp2: [3.0, 0.25], holdSec: CLOCK_SEC, size: 0.6,
+    note: "whale accumulation into a deep book — 1.6% rug, best risk-adjusted class",
   },
   MOON_FAST: {
     trade: true, minSnap: 0.35, floor: 0.4, trail: 0.45,
-    tp1: [1.55, 0.25], tp2: [2.3, 0.2], holdSec: 240, size: 0.8,
-    note: "thin pool, 150-400%/min recovery — rugs 11.6%, p90 6.90×",
+    tp0: [1.45, 0.2], tp1: [2.35, 0.2], tp2: [4.25, 0.2], holdSec: CLOCK_SEC, size: 0.8,
+    note: "thin pool, dispersed, 150-400%/min recovery — rugs 11.6%, p90 6.90×",
   },
   MOON_STEADY: {
     trade: true, minSnap: 0.35, floor: 0.7, trail: 0.35,
-    tp1: [1.55, 0.25], tp2: [2.3, 0.2], holdSec: 240, size: 0.6,
+    tp0: [1.45, 0.2], tp1: [2.35, 0.25], tp2: [4.25, 0.2], holdSec: CLOCK_SEC, size: 0.6,
     note: "50-150%/min recovery — 13.3% reach 5×",
   },
   MOON_SLOW: {
     trade: true, minSnap: 0.35, floor: 0.4, trail: 0.45,
-    tp1: [1.55, 0.25], tp2: [2.3, 0.2], holdSec: 240, size: 0.4,
+    tp0: [1.45, 0.25], tp1: [2.35, 0.25], tp2: [4.25, 0.2], holdSec: CLOCK_SEC, size: 0.4,
     note: "<50%/min recovery — weakest moon grade (2.1% reach 5×)",
   },
   MOON_VIOLENT: {
     // Banks early and hard: a 58% rug rate has to be paid for by the first
-    // tranche, but 4.5% of these still reach 5×, so a runner stays alive.
+    // tranche, but 4.5% still reach 5×, so a runner stays alive. Runs on the RUG
+    // timeline, not the winners' — this cohort is done inside ~7 minutes.
     trade: true, minSnap: 0.35, floor: 0.52, trail: 0.4,
-    tp1: [1.4, 0.4], tp2: [2.3, 0.2], holdSec: 120, size: 0.3,
+    tp0: [1.4, 0.35], tp1: [2.3, 0.2], tp2: [4.25, 0.15], holdSec: FAST_CLOCK_SEC, size: 0.3,
     note: "400%+/min snap off a deep dip — 58% rug, kept small for the 4.5% tail",
   },
   // ── refused ──
   RUG_RISK: {
     trade: false, minSnap: 0, floor: 0, trail: 0,
-    tp1: [0, 0], tp2: [0, 0], holdSec: 0, size: 0,
+    tp0: [0, 0], tp1: [0, 0], tp2: [0, 0], holdSec: 0, size: 0,
     note: "draining pool or ≥$30k at discovery — 36.1% rug, 0.0% reach 5×",
   },
 };
@@ -219,6 +246,9 @@ export function withLearned(s: Signature, learned: LearnedProfile | null | undef
   if (!learned || typeof learned.trail !== "number") return base;
   return {
     ...base,
+    // The loop's grid fits two rungs; its r1/r2 map onto the middle and upper
+    // rungs, and the compiled p50 sweep rung is preserved underneath so a
+    // promotion can never remove the early bank.
     tp1: [learned.r1, learned.f1],
     tp2: [learned.r2, learned.f2],
     trail: learned.trail,
@@ -240,15 +270,18 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
   POST_BANK_TRAIL_PCT: number; TIMEBOX_FLAT_MULT: number;
 } {
   const p = withLearned(s, learned);
-  const cum1 = p.tp1[1];
+  // Cumulative, because the trader's ladder is expressed as "total fraction sold
+  // by the time this rung is reached", not as per-rung slices.
+  const cum0 = p.tp0[1];
+  const cum1 = cum0 + p.tp1[1];
   const cum2 = cum1 + p.tp2[1];
   const trailPct = Math.round(p.trail * 100);
   return {
-    // The ladder collapses to two real rungs; TP0 is folded onto TP1 so the
-    // measured "bank late" shape survives (the optimizer chose 1.55×, not 1.15×,
-    // in every confirmed configuration — selling under the median outcome was
-    // costing more than it protected).
-    TP0_MULT: p.tp1[0], TP0_CUM_SELL: cum1,
+    // Three progressive rungs on the class's own run distribution (p50/p75/p90),
+    // sweeping profit along the path. A trade rarely rises and holds — it wanders,
+    // spikes and gives back — so staking the position on one late rung only pays
+    // when it goes straight up. The remainder rides to the trail or the clock.
+    TP0_MULT: p.tp0[0], TP0_CUM_SELL: cum0,
     TP1_MULT: p.tp1[0], TP1_CUM_SELL: cum1,
     TP2_MULT: p.tp2[0], TP2_CUM_SELL: cum2,
     // One width: the measured give-back a winner takes BEFORE its real high is
