@@ -148,12 +148,20 @@ export class MeteoraDbcProvider implements SwapProvider {
     // curve throws HERE ("Virtual pool is completed") — which is exactly the
     // failover signal that hands the graduated token to the DAMM provider.
     const swapBaseForQuote = !isBuy;
+    // CURVE-ENTRY SLIPPAGE FLOOR. A seconds-old bonding curve moves faster than
+    // an AMM: the first two real DBC buys built correctly and died on-chain
+    // with ExceededSlippage (Custom 6002) at the caller's AMM-calibrated 10%,
+    // one of them AFTER paying the tx fee. Entries take a 25% floor — position
+    // sizes here are $2-ish and minimumAmountOut still bounds the fill — while
+    // sells keep the caller's tolerance untouched (exit calls already choose
+    // their own width for dying curves).
+    const effBps = isBuy ? Math.max(slippageBps, 2_500) : slippageBps;
     const q = client.pool.swapQuote({
       virtualPool,
       config,
       swapBaseForQuote,
       amountIn: new BN(amountRaw),
-      slippageBps,
+      slippageBps: effBps,
       hasReferral: false,
       eligibleForFirstSwapWithMinFee: false,
       currentPoint,
