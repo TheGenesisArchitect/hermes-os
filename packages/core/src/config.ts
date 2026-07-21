@@ -145,7 +145,14 @@ const envSchema = z.object({
   // that showed 1 tick died inside a single 20s gap. Keyless DexScreener, so we
   // can poll hard. (DexScreener's own aggregation lag is the deeper ceiling — a
   // real-time Jupiter mark is the next lever if this isn't tight enough.)
-  MANAGE_POLL_MS: z.coerce.number().default(5_000),
+  // 5s → 2s (2026-07-21). The TP ladder can only fire on an OBSERVED tick, so
+  // sampling rate is a hard ceiling on how much of a move we capture. ALIVE
+  // [MOON_FAST] peaked 1.60×, cleared its 1.25× rung, and still banked nothing —
+  // the entire run and collapse happened between two 5s looks, so 1.25 was never
+  // seen in either direction. That class peaks ~1.6min after entry, which at 5s
+  // is only ~20 observations for the whole life of the trade.
+  // Batched fetch, so request volume does not scale with book size.
+  MANAGE_POLL_MS: z.coerce.number().default(2_000),
   TP_MULTIPLIER: z.coerce.number().default(2),
   TP_SELL_FRACTION: z.coerce.number().default(0.5),
   // Ratcheting profit-trail — the core defender. Goal: MAXIMIZE every
@@ -497,7 +504,13 @@ const envSchema = z.object({
   // grid, and a dud reveals itself in 10s instead of 30. The continuation gate
   // is sampling-rate independent (continuationLookback) so this does not
   // silently re-tune it.
-  RECORDER_POLL_MS: z.coerce.number().default(10_000),
+  // 10s → 6s (2026-07-21). Entry resolution is bounded by this: Hieromojis
+  // printed its ONLY qualifying tick 2.9 seconds inside the window floor and
+  // peaked 4.12× untraded. Faster sampling both narrows that gap and shrinks the
+  // poll-tolerance slack the trigger now carries (pollToleranceMin is derived
+  // from this value, so it scales automatically and nothing re-tunes silently).
+  // The continuation gate is likewise sampling-rate independent by construction.
+  RECORDER_POLL_MS: z.coerce.number().default(6_000),
   RECORDER_WINDOW_MIN: z.coerce.number().default(15),
   RECORDER_WIN_MULT: z.coerce.number().default(2),
   // A candidate is a RUG if it terminally collapsed to <= this multiple of the
