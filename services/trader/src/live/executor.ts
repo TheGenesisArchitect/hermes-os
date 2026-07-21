@@ -618,7 +618,13 @@ export async function maybeLiveBuy(
   // The routed signature and its conviction. Live sizes and exits from this the
   // same way paper does, so the lanes run one system on two balances rather
   // than one lane shadowing the other.
-  sig: { signature: Signature; stars: number | null } | null = null,
+  sig: {
+    signature: Signature;
+    stars: number | null;
+    dipDepth?: number | null;
+    snapPct?: number | null;
+    snapRate?: number | null;
+  } | null = null,
 ): Promise<void> {
   try {
     // LATENCY: live trailed paper's entry by a measured 6–8s, and that lag
@@ -781,6 +787,12 @@ export async function maybeLiveBuy(
         // scorecards compare the two lanes signal-for-signal.
         signature: sig?.signature ?? null,
         stars: sig?.stars ?? null,
+        // The routing EVIDENCE, same as paper persists. Without it the Matrix's
+        // signal-vs-execution card is blank for live and a signature cannot be
+        // audited after the fact — which is the whole point of recording it.
+        dipDepth: sig?.dipDepth != null ? String(sig.dipDepth) : null,
+        snapPct: sig?.snapPct != null ? String(sig.snapPct) : null,
+        snapRate: sig?.snapRate != null ? String(sig.snapRate) : null,
         sizeUsd: String(usd),
         qtyTokens: String(res.outUi),
         qtyRemaining: String(res.outUi),

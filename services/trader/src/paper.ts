@@ -816,7 +816,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // same genome. That makes the two lanes a genuine comparison — same signals,
     // same rules, different balances — instead of one lane echoing the other.
     // Fire-and-forget: an on-chain confirm must never stall the entry scan.
-    void maybeLiveBuy(cfg, mint, token.symbol, sigArg ? { signature: sigArg.signature, stars: sigArg.stars } : null);
+    void maybeLiveBuy(cfg, mint, token.symbol, sigArg);
     if (await openFromSignal(cfg, signal, token, "confirmed", book, qualityMult, tm, sigArg)) {
       // (The live buy already fired above, on the same signal and at the same
       // moment — it is no longer mirrored off this branch.)
