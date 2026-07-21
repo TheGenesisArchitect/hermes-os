@@ -4,7 +4,7 @@ import { HarvestClock } from "@/components/HarvestClock";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ControlTerminal } from "@/components/ControlTerminal";
 import { SignatureConsole } from "@/components/SignatureConsole";
-import { LaneScorecard } from "@/components/LaneScorecard";
+import { TradePerformance } from "@/components/TradePerformance";
 import { EquityChart } from "@/components/EquityChart";
 import { FillsTable } from "@/components/FillsTable";
 import { HarvestButton } from "@/components/HarvestButton";
@@ -36,6 +36,7 @@ import {
   getControlTerminal,
   getSignatureConsole,
   getLaneScorecard,
+  getTradePerformance,
   getLaneEquitySeries,
   getKpiStrip,
   getNews,
@@ -86,6 +87,7 @@ export default async function Overview() {
     controlTerminal,
     signatureConsole,
     laneScorecard,
+    tradePerf,
     laneEquity,
     ponds,
     hourWindows,
@@ -120,6 +122,7 @@ export default async function Overview() {
     getControlTerminal(),
     getSignatureConsole(),
     getLaneScorecard(),
+    getTradePerformance(),
     getLaneEquitySeries(),
     getPondRadar(),
     getHourlyWindows(),
@@ -265,9 +268,11 @@ export default async function Overview() {
           lanes are a genuine comparison — same signatures, same rules, two
           balances. These sit together: the scorecard says WHETHER the edge
           survives real execution, the curve says which way each lane is going. */}
-      <section className="card p-4">
-        <LaneScorecard view={laneScorecard} />
-      </section>
+      {/* Every trade scored through the pipeline the architecture defines —
+          entry, floor, ladder, trail, capture. P&L says whether a trade won;
+          this says whether it was MANAGED well, and tonight proved those come
+          apart constantly. */}
+      <TradePerformance view={tradePerf} liveEnabled={laneScorecard.liveEnabled} />
 
       {/* The desk, reorganised around the five genomes. Exit geometry belongs to
           the signature now, so this sits ABOVE the control terminal — it is the

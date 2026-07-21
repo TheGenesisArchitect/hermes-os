@@ -3762,3 +3762,208 @@ export async function getSignatureConsole(windowHours = 24): Promise<SignatureCo
     },
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRADE PERFORMANCE ANALYZER — score every trade through the whole pipeline.
+//
+// A P&L column says whether a trade won. It does not say whether it was MANAGED
+// well, and those are different questions: a +$1 win that gave back a 4× peak is
+// a worse outcome than a −$0.30 loss that exited exactly where the genome said.
+// Tonight proved the point — the trailing stop was broken three separate ways
+// and every one of them was invisible in P&L, surfacing only when the exits were
+// audited stage by stage.
+//
+// So each trade is scored at the checkpoints the architecture actually defines:
+//   ENTRY   — signature, conviction, and the snap that qualified it
+//   FLOOR   — was the class cover tested, and did it hold
+//   LADDER  — which rungs were reachable, and which actually fired
+//   TRAIL   — did it engage, and what did it give back versus its configured width
+//   CAPTURE — the share of the available move we actually kept
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface TradeScore {
+  id: number;
+  lane: string;
+  symbol: string | null;
+  signature: string | null;
+  stars: number | null;
+  sizeUsd: number;
+  pnl: number;
+  peakX: number;
+  exitX: number;
+  /** Share of the available gain actually realised: (realised−1) ÷ (peak−1), clamped ±100. */
+  captureP: number | null;
+  /** Dollars the peak put on the table — the denominator for pooled capture. */
+  gainAvailUsd: number;
+  rungsHit: number;
+  rungsReachable: number;
+  bankedFrac: number;
+  exitReason: string;
+  heldMin: number;
+  snapPct: number | null;
+  /** Managed-quality flags — the things P&L hides. */
+  flags: string[];
+  grade: "A" | "B" | "C" | "D" | "F";
+}
+
+export interface TradePerformanceView {
+  windowHours: number;
+  trades: TradeScore[];
+  byGrade: { grade: string; n: number; pnl: number }[];
+  bySignature: { signature: string; n: number; pnl: number; avgCapture: number | null; bankedRate: number }[];
+  totals: {
+    n: number;
+    pnl: number;
+    /** Pooled: dollars kept ÷ dollars the peaks offered. */
+    avgCapture: number | null;
+    trailedRed: number;
+    bankedNothing: number;
+    reachedRung: number;
+    ladderFillRate: number;
+    wellManaged: number;
+  };
+}
+
+export async function getTradePerformance(windowHours = 6): Promise<TradePerformanceView> {
+  const since = new Date(Date.now() - windowHours * 3_600_000);
+  const rows = await db
+    .select({
+      id: positions.id,
+      lane: positions.lane,
+      symbol: tokens.symbol,
+      signature: positions.signature,
+      stars: positions.stars,
+      sizeUsd: positions.sizeUsd,
+      pnl: positions.realizedPnlUsd,
+      entry: positions.entryPriceUsd,
+      peak: positions.peakPriceUsd,
+      exit: positions.exitPriceUsd,
+      exitReason: positions.exitReason,
+      openedAt: positions.openedAt,
+      closedAt: positions.closedAt,
+      snapPct: positions.snapPct,
+      qtyTokens: positions.qtyTokens,
+      qtyRemaining: positions.qtyRemaining,
+    })
+    .from(positions)
+    .leftJoin(tokens, eq(tokens.mint, positions.mint))
+    .where(and(eq(positions.status, "closed"), gte(positions.closedAt, since)))
+    .orderBy(desc(positions.closedAt))
+    .limit(300);
+
+  // Rungs AND the quantity they sold, from the same pass so the two can never
+  // disagree. "Banked" has to mean sold ON THE WAY UP — reading qtyRemaining on
+  // a closed position always returns 0 and reported 100% banked on every trade,
+  // including trades that never reached a rung.
+  const sells = await db
+    .select({ positionId: fills.positionId, reason: fills.reason, qty: fills.qtyTokens })
+    .from(fills)
+    .where(and(eq(fills.side, "sell"), gte(fills.filledAt, since)));
+  const rungsByPos = new Map<number, number>();
+  const rungQtyByPos = new Map<number, number>();
+  for (const f of sells) {
+    if (!f.reason?.startsWith("take_profit")) continue;
+    rungsByPos.set(f.positionId, (rungsByPos.get(f.positionId) ?? 0) + 1);
+    rungQtyByPos.set(f.positionId, (rungQtyByPos.get(f.positionId) ?? 0) + num(f.qty));
+  }
+
+  const trades: TradeScore[] = rows.map((r) => {
+    const entry = num(r.entry);
+    const size = num(r.sizeUsd);
+    const pnl = num(r.pnl);
+    const peakX = entry > 0 ? num(r.peak) / entry : 1;
+    const exitX = entry > 0 && r.exit != null ? num(r.exit) / entry : 0;
+    const realised = size > 0 ? 1 + pnl / size : 1;
+    const prof = r.signature ? SIGNATURE_PROFILES[r.signature as Signature] : null;
+    const rungLevels = prof ? [prof.tp0[0], prof.tp1[0], prof.tp2[0]] : [];
+    const rungsReachable = rungLevels.filter((lv) => peakX >= lv).length;
+    const rungsHit = rungsByPos.get(r.id) ?? 0;
+    // Capture is only meaningful when the peak actually offered something to
+    // take — gate on the first rung, not on a hair above entry. At peak 1.02x
+    // a 10% loss scores −500%, and averaging ratios like that is what produced
+    // the nonsense −347% headline. Display is clamped to ±100%: "gave it all
+    // back" is the message; the exact magnitude is denominator noise.
+    const rawCapture = ((realised - 1) / (peakX - 1)) * 100;
+    const captureP = rungsReachable >= 1 ? Math.max(-100, Math.min(100, rawCapture)) : null;
+    /** Dollars the peak put on the table, for pooling the aggregate. */
+    const gainAvailUsd = rungsReachable >= 1 ? size * (peakX - 1) : 0;
+    const qty = num(r.qtyTokens);
+    const bankedFrac = qty > 0 ? Math.min(1, (rungQtyByPos.get(r.id) ?? 0) / qty) : 0;
+    const reason = r.exitReason ?? "?";
+    const heldMin = r.closedAt ? (r.closedAt.getTime() - r.openedAt.getTime()) / 60_000 : 0;
+
+    const flags: string[] = [];
+    // The defects tonight's audit found, made permanent as detectors.
+    if (peakX > 1.05 && realised < 1) flags.push("trailed red");
+    if (rungsReachable > rungsHit) flags.push(`missed ${rungsReachable - rungsHit} rung`);
+    if (rungsReachable > 0 && rungsHit === 0) flags.push("banked nothing");
+    if (reason === "live_unsellable" || reason === "live_sweep_close") flags.push("stranded");
+    if (peakX >= 3.2 && captureP != null && captureP < 25) flags.push("runner given back");
+    if (heldMin > 20) flags.push("outlived clock");
+
+    let grade: TradeScore["grade"];
+    if (realised <= 0.35) grade = "F";
+    else if (peakX > 1.05 && realised < 1) grade = "D"; // had a winner, closed red
+    else if (captureP == null) grade = realised >= 1 ? "B" : "C"; // never offered a gain
+    else if (captureP >= 60) grade = "A";
+    else if (captureP >= 30) grade = "B";
+    else if (captureP >= 0) grade = "C";
+    else grade = "D";
+
+    return {
+      id: r.id, lane: r.lane, symbol: r.symbol, signature: r.signature, stars: r.stars,
+      sizeUsd: size, pnl, peakX, exitX, captureP, gainAvailUsd, rungsHit, rungsReachable, bankedFrac,
+      exitReason: reason, heldMin, snapPct: r.snapPct == null ? null : num(r.snapPct), flags, grade,
+    };
+  });
+
+  const gradeOrder = ["A", "B", "C", "D", "F"];
+  const byGrade = gradeOrder.map((g) => ({
+    grade: g,
+    n: trades.filter((t) => t.grade === g).length,
+    pnl: trades.filter((t) => t.grade === g).reduce((s, t) => s + t.pnl, 0),
+  }));
+
+  // POOLED capture — dollars kept over dollars the peaks put on the table.
+  // A mean of per-trade ratios is dominated by whichever trade had the smallest
+  // denominator, which is exactly how a book that made money reported −347%.
+  const pooledCapture = (set: TradeScore[]) => {
+    const avail = set.reduce((s, t) => s + t.gainAvailUsd, 0);
+    if (avail <= 0) return null;
+    const kept = set.filter((t) => t.gainAvailUsd > 0).reduce((s, t) => s + t.pnl, 0);
+    return (kept / avail) * 100;
+  };
+
+  const sigs = [...new Set(trades.map((t) => t.signature ?? "(unrouted)"))];
+  const bySignature = sigs.map((sig) => {
+    const g = trades.filter((t) => (t.signature ?? "(unrouted)") === sig);
+    const reachable = g.filter((t) => t.rungsReachable > 0);
+    return {
+      signature: sig,
+      n: g.length,
+      pnl: g.reduce((s, t) => s + t.pnl, 0),
+      avgCapture: pooledCapture(g),
+      bankedRate: reachable.length ? (100 * reachable.filter((t) => t.rungsHit > 0).length) / reachable.length : 0,
+    };
+  }).sort((a, b) => b.pnl - a.pnl);
+
+  const reachedRung = trades.filter((t) => t.rungsReachable > 0);
+  return {
+    windowHours,
+    trades,
+    byGrade,
+    bySignature,
+    totals: {
+      n: trades.length,
+      pnl: trades.reduce((s, t) => s + t.pnl, 0),
+      avgCapture: pooledCapture(trades),
+      trailedRed: trades.filter((t) => t.flags.includes("trailed red")).length,
+      bankedNothing: trades.filter((t) => t.flags.includes("banked nothing")).length,
+      reachedRung: reachedRung.length,
+      ladderFillRate: reachedRung.length
+        ? (100 * reachedRung.filter((t) => t.rungsHit > 0).length) / reachedRung.length
+        : 0,
+      wellManaged: trades.filter((t) => t.grade === "A" || t.grade === "B").length,
+    },
+  };
+}
