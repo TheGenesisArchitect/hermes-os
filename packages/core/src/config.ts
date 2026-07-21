@@ -1137,7 +1137,18 @@ const envSchema = z.object({
   // was realizing −19%. At 3% an adverse move that large REVERTS instead of filling,
   // and we retry a moment later; if price is genuinely collapsing that fast it is
   // the trail and the guard's job to exit, not the profit ladder's.
-  LIVE_TP_SLIPPAGE_BPS: z.coerce.number().default(300),
+  // 300 → 1000 (2026-07-21). The tight tolerance was introduced on a theory —
+  // that live TP0 was donating ~10% to slippage — which the data then DISPROVED:
+  // there were zero slippage refusals and the gap was upstream of execution. The
+  // tolerance was never reverted, and at 3% every take-profit rung began
+  // REVERTING ON-CHAIN (InstructionError Custom:1, a min-out violation). The
+  // consequence was worse than the imagined problem: seven live positions sat
+  // open past their clocks with qty_remaining at 100% — not one tranche sold —
+  // while paper cycled 103 closes in the same window. A rung that cannot land is
+  // strictly worse than a rung that lands a few percent low, because the position
+  // then has no exit at all. Paper applies no slippage constraint whatsoever;
+  // matching its behaviour means prioritising the fill.
+  LIVE_TP_SLIPPAGE_BPS: z.coerce.number().default(1000),
   // LIVE PREMIUM-VENUE GATE — real capital only enters venues the recorder has
   // proven premium by MEASURED performance, never by volume/'core' label
   // (volume ≠ quality: the highest-volume venue can be the biggest bleeder).
