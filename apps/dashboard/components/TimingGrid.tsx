@@ -66,6 +66,13 @@ const SIG_TONE: Record<string, string> = {
   MOON_VIOLENT: "var(--status-critical)",
 };
 const sigShort = (s: string) => (s.startsWith("MOON_") ? `M·${s.slice(5, 9)}` : s.slice(0, 7));
+
+// LANE. Live trades its own signals now, so the Matrix carries both books and
+// must never let them blur — a live bar is real capital and has to read as such
+// at a glance. Live bars carry a filled marker and the danger accent; paper is
+// unmarked, so the default reading of the grid stays quiet.
+const isLive = (lane: string) => lane === "live";
+const LANE_MARK = "◆";
 const fmtSec = (s: number) => (s >= 60 ? `${Math.round(s / 60)}m` : `${Math.round(s)}s`);
 const fmtClock = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -135,11 +142,18 @@ function Card({
     >
       {/* header */}
       <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{t.symbol ?? "?"}</span>
+        <span className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+          {isLive(t.lane) && <span style={{ color: "var(--status-critical)" }}>{LANE_MARK} </span>}
+          {t.symbol ?? "?"}
+        </span>
         <span
           className="rounded px-1.5 py-px text-[9px] uppercase tracking-wide"
-          style={{ border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+          style={{
+            border: `1px solid ${isLive(t.lane) ? "var(--status-critical)" : "var(--border)"}`,
+            color: isLive(t.lane) ? "var(--status-critical)" : "var(--text-secondary)",
+          }}
         >
+          {isLive(t.lane) ? "LIVE · " : ""}
           {t.venue ?? "unknown"}{t.isFarm ? " ◇ farm" : ""}
         </span>
       </div>
@@ -424,7 +438,11 @@ export function TimingGrid({ view, dnaByMint }: { view: TimingGridView; dnaByMin
                     {exitUp ? "+" : ""}{(t.exit?.pnl ?? 0).toFixed(1)}
                   </div>
                   {t.signature && (
-                    <div className="truncate text-[7.5px] uppercase tracking-wide" style={{ color: SIG_TONE[t.signature] ?? "var(--text-muted)" }}>
+                    <div
+                      className="truncate text-[7.5px] uppercase tracking-wide"
+                      style={{ color: isLive(t.lane) ? "var(--status-critical)" : SIG_TONE[t.signature] ?? "var(--text-muted)" }}
+                    >
+                      {isLive(t.lane) ? `${LANE_MARK} ` : ""}
                       {sigShort(t.signature)}
                     </div>
                   )}
@@ -440,7 +458,11 @@ export function TimingGrid({ view, dnaByMint }: { view: TimingGridView; dnaByMin
                 {/* age is now read against THIS class's clock, not a global one */}
                 <div className="text-[10px] tabular" style={{ color: zoneTone(t.ageSec, t.signature) }}>{fmtSec(t.ageSec)}</div>
                 {t.signature && (
-                  <div className="truncate text-[8px] uppercase tracking-wide" style={{ color: SIG_TONE[t.signature] ?? "var(--text-muted)" }}>
+                  <div
+                    className="truncate text-[8px] uppercase tracking-wide"
+                    style={{ color: isLive(t.lane) ? "var(--status-critical)" : SIG_TONE[t.signature] ?? "var(--text-muted)" }}
+                  >
+                    {isLive(t.lane) ? `${LANE_MARK} ` : ""}
                     {sigShort(t.signature)}
                   </div>
                 )}

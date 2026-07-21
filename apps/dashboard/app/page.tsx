@@ -4,6 +4,7 @@ import { HarvestClock } from "@/components/HarvestClock";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ControlTerminal } from "@/components/ControlTerminal";
 import { SignatureConsole } from "@/components/SignatureConsole";
+import { LaneScorecard } from "@/components/LaneScorecard";
 import { EquityChart } from "@/components/EquityChart";
 import { FillsTable } from "@/components/FillsTable";
 import { HarvestButton } from "@/components/HarvestButton";
@@ -34,6 +35,8 @@ import {
   getKillSwitch,
   getControlTerminal,
   getSignatureConsole,
+  getLaneScorecard,
+  getLaneEquitySeries,
   getKpiStrip,
   getNews,
   getManagedPositions,
@@ -82,6 +85,8 @@ export default async function Overview() {
     timingGrid,
     controlTerminal,
     signatureConsole,
+    laneScorecard,
+    laneEquity,
     ponds,
     hourWindows,
     walletStatus,
@@ -114,6 +119,8 @@ export default async function Overview() {
     getTimingGrid(),
     getControlTerminal(),
     getSignatureConsole(),
+    getLaneScorecard(),
+    getLaneEquitySeries(),
     getPondRadar(),
     getHourlyWindows(),
     getWalletStatus(),
@@ -163,9 +170,21 @@ export default async function Overview() {
   // only feed the chart; the headline number moves with every 10s refresh.
   const equity = cfg.PAPER_BANKROLL_USD + stats.realizedPnl + liveRead.floatNetUsd;
   const pnlSinceStart = equity - cfg.PAPER_BANKROLL_USD;
+  // EQUITY CURVE DATA — paper, the live wallet, and a fitted paper trend on one
+  // x-axis. Live carries null wherever it has no snapshot at that instant, so a
+  // gap reads as "not trading" rather than a fabricated flat line.
+  const liveByTs = new Map(laneEquity.points.filter((p) => p.live != null).map((p) => [new Date(p.at).getTime(), p.live!]));
+  const paperPts = series.map((p) => ({ t: p.at.getTime(), y: Number(p.equity) }));
+  const meanT = paperPts.length ? paperPts.reduce((s, p) => s + p.t, 0) / paperPts.length : 0;
+  const meanY = paperPts.length ? paperPts.reduce((s, p) => s + p.y, 0) / paperPts.length : 0;
+  let num = 0, den = 0;
+  for (const p of paperPts) { num += (p.t - meanT) * (p.y - meanY); den += (p.t - meanT) ** 2; }
+  const slope = den === 0 ? 0 : num / den; // dollars per ms
   const chartData = series.map((p) => ({
     at: p.at.toISOString(),
     equity: Number(p.equity),
+    live: liveByTs.get(p.at.getTime()) ?? null,
+    trend: meanY + slope * (p.at.getTime() - meanT),
   }));
 
   return (
@@ -217,7 +236,13 @@ export default async function Overview() {
         <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
           Equity — paper lane (start {usd(cfg.PAPER_BANKROLL_USD, 0)})
         </h2>
-        <EquityChart data={chartData} bankroll={cfg.PAPER_BANKROLL_USD} />
+        <EquityChart
+          data={chartData}
+          bankroll={cfg.PAPER_BANKROLL_USD}
+          liveActive={laneEquity.liveActive}
+          paperTrendPerHour={laneEquity.paperTrend}
+          liveTrendPerHour={laneEquity.liveTrend}
+        />
       </section>
 
       {/* Timing grid — the live time×multiple field. Every trade a trajectory on
@@ -236,6 +261,14 @@ export default async function Overview() {
           reads the regime and recommends (ghost values); the operator's manual
           pins always win. Auto ships ADVISORY until a clean prime run gives the
           policy its favorable pole — see the one-pole caveat in overrides.ts. */}
+      {/* Live trades its OWN signals now rather than mirroring paper, so the two
+          lanes are a genuine comparison — same signatures, same rules, two
+          balances. These sit together: the scorecard says WHETHER the edge
+          survives real execution, the curve says which way each lane is going. */}
+      <section className="card p-4">
+        <LaneScorecard view={laneScorecard} />
+      </section>
+
       {/* The desk, reorganised around the five genomes. Exit geometry belongs to
           the signature now, so this sits ABOVE the control terminal — it is the
           surface that actually governs how a position is managed. */}

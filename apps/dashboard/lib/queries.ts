@@ -83,6 +83,80 @@ export async function getEquitySeries() {
     .limit(1000);
 }
 
+/**
+ * LANE-SEPARATED EQUITY. Live now trades its own signals rather than mirroring,
+ * so the two curves are a genuine comparison — same signatures, same rules, two
+ * balances — and blending them would hide exactly the divergence worth watching.
+ * Each lane is also normalised to its own start so the shapes are comparable
+ * despite very different absolute capital.
+ */
+export interface LaneEquityPoint {
+  at: string;
+  paper: number | null;
+  live: number | null;
+  paperPct: number | null;
+  livePct: number | null;
+}
+
+export async function getLaneEquitySeries(): Promise<{
+  points: LaneEquityPoint[];
+  paperTrend: number;
+  liveTrend: number;
+  liveActive: boolean;
+}> {
+  const [paper, live] = await Promise.all([
+    db.select({ at: pnlSnapshots.snappedAt, equity: pnlSnapshots.equityUsd })
+      .from(pnlSnapshots).where(eq(pnlSnapshots.lane, "paper")).orderBy(pnlSnapshots.snappedAt).limit(1000),
+    db.select({ at: pnlSnapshots.snappedAt, equity: pnlSnapshots.equityUsd })
+      .from(pnlSnapshots).where(eq(pnlSnapshots.lane, "live")).orderBy(pnlSnapshots.snappedAt).limit(1000),
+  ]);
+  const p0 = paper.length ? Number(paper[0]!.equity) : 0;
+  const l0 = live.length ? Number(live[0]!.equity) : 0;
+
+  // Merge on timestamp so both series share one x-axis; a lane with no snapshot
+  // at a given instant carries null rather than a fabricated value.
+  const byTs = new Map<number, { paper: number | null; live: number | null }>();
+  for (const r of paper) {
+    const t = new Date(r.at).getTime();
+    byTs.set(t, { ...(byTs.get(t) ?? { paper: null, live: null }), paper: Number(r.equity) });
+  }
+  for (const r of live) {
+    const t = new Date(r.at).getTime();
+    byTs.set(t, { ...(byTs.get(t) ?? { paper: null, live: null }), live: Number(r.equity) });
+  }
+  const points: LaneEquityPoint[] = [...byTs.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([t, v]) => ({
+      at: new Date(t).toISOString(),
+      paper: v.paper,
+      live: v.live,
+      paperPct: v.paper != null && p0 > 0 ? ((v.paper - p0) / p0) * 100 : null,
+      livePct: v.live != null && l0 > 0 ? ((v.live - l0) / l0) * 100 : null,
+    }));
+
+  // TRENDLINE: least-squares slope over each lane's percent series, expressed as
+  // percent-per-hour. A single number for "which way is this actually going",
+  // which a noisy equity curve does not answer at a glance.
+  const slopePerHour = (pts: { t: number; y: number }[]): number => {
+    if (pts.length < 2) return 0;
+    const n = pts.length;
+    const mx = pts.reduce((s, p) => s + p.t, 0) / n;
+    const my = pts.reduce((s, p) => s + p.y, 0) / n;
+    let num = 0, den = 0;
+    for (const p of pts) { num += (p.t - mx) * (p.y - my); den += (p.t - mx) ** 2; }
+    return den === 0 ? 0 : (num / den) * 3_600_000; // per ms → per hour
+  };
+  const paperPts = points.filter((p) => p.paperPct != null).map((p) => ({ t: new Date(p.at).getTime(), y: p.paperPct! }));
+  const livePts = points.filter((p) => p.livePct != null).map((p) => ({ t: new Date(p.at).getTime(), y: p.livePct! }));
+
+  return {
+    points,
+    paperTrend: slopePerHour(paperPts),
+    liveTrend: slopePerHour(livePts),
+    liveActive: live.length > 0,
+  };
+}
+
 export async function getStats() {
   const [scanned] = await db
     .select({ n: sql<number>`count(*)::int` })
@@ -514,6 +588,9 @@ export interface TimingTrade {
   // TRADE SIGNATURE — the genome this bar was routed to and managed under, plus
   // the shape that produced it. The Matrix classifies INTENTIONALLY now: a bar is
   // coloured by the class it belongs to, not by a single global time axis.
+  // Which lane this bar belongs to. Live trades its own signals now, so the
+  // Matrix carries both and must distinguish them visually.
+  lane: string;
   signature: string | null;
   dipDepth: number | null;
   snapPct: number | null;
@@ -565,6 +642,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
         qtyTokens: positions.qtyTokens,
         qtyRemaining: positions.qtyRemaining,
         realizedPnlUsd: positions.realizedPnlUsd,
+        lane: positions.lane,
         rugProb: candidateOutcomes.rugProb,
         signature: positions.signature,
         dipDepth: positions.dipDepth,
@@ -574,7 +652,9 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       .from(positions)
       .innerJoin(tokens, eq(tokens.mint, positions.mint))
       .leftJoin(candidateOutcomes, eq(candidateOutcomes.mint, positions.mint))
-      .where(and(eq(positions.lane, "paper"), eq(positions.status, "open"))),
+      // BOTH LANES. Live trades its own signals now, so the Matrix must show them
+      // side by side - a paper-only grid would silently hide every live position.
+      .where(eq(positions.status, "open")),
     db
       .select({
         id: positions.id,
@@ -590,6 +670,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
         closedAt: positions.closedAt,
         triggerMult: positions.triggerMult,
         qualityMult: positions.qualityMult,
+        lane: positions.lane,
         rugProb: candidateOutcomes.rugProb,
         signature: positions.signature,
         dipDepth: positions.dipDepth,
@@ -599,7 +680,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       .from(positions)
       .innerJoin(tokens, eq(tokens.mint, positions.mint))
       .leftJoin(candidateOutcomes, eq(candidateOutcomes.mint, positions.mint))
-      .where(and(eq(positions.lane, "paper"), eq(positions.status, "closed"), gte(positions.closedAt, closedSince)))
+      .where(and(eq(positions.status, "closed"), gte(positions.closedAt, closedSince)))
       .orderBy(desc(positions.closedAt))
       .limit(TIMING_CLOSED_MAX_BARS),
   ]);
@@ -673,6 +754,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       triggerMult: p.triggerMult === null ? null : num(p.triggerMult),
       rugProb: p.rugProb === null ? null : num(p.rugProb),
       qualityMult: p.qualityMult === null ? null : num(p.qualityMult),
+      lane: p.lane,
       signature: p.signature ?? null,
       dipDepth: p.dipDepth === null ? null : num(p.dipDepth),
       snapPct: p.snapPct === null ? null : num(p.snapPct),
@@ -707,6 +789,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       triggerMult: p.triggerMult === null ? null : num(p.triggerMult),
       rugProb: p.rugProb === null ? null : num(p.rugProb),
       qualityMult: p.qualityMult === null ? null : num(p.qualityMult),
+      lane: p.lane,
       signature: p.signature ?? null,
       dipDepth: p.dipDepth === null ? null : num(p.dipDepth),
       snapPct: p.snapPct === null ? null : num(p.snapPct),
@@ -3533,6 +3616,63 @@ export interface SignatureConsoleView {
   rows: SignatureRow[];
   promotedAt: string | null;
   totals: { trades: number; winPct: number; pnlUsd: number; routed: number };
+}
+
+/**
+ * LANE SCORECARD — the same signatures, scored separately per lane.
+ *
+ * Live trades its own signals now, so paper is no longer a proxy for it: the two
+ * lanes see the same candidates and can legitimately diverge on fills, slippage
+ * and timing. Blending them would bury exactly the comparison that matters —
+ * whether live reproduces paper's edge on the same rules.
+ */
+export interface LaneScoreRow {
+  signature: string;
+  paper: { n: number; winPct: number; pnl: number; ev: number };
+  live: { n: number; winPct: number; pnl: number; ev: number };
+}
+export interface LaneScorecard {
+  windowHours: number;
+  rows: LaneScoreRow[];
+  totals: { paper: { n: number; pnl: number; ev: number }; live: { n: number; pnl: number; ev: number } };
+  liveEnabled: boolean;
+}
+
+export async function getLaneScorecard(windowHours = 24): Promise<LaneScorecard> {
+  const since = new Date(Date.now() - windowHours * 3_600_000);
+  const rows = await db
+    .select({
+      lane: positions.lane,
+      sig: sql<string>`coalesce(${positions.signature}, '(unrouted)')`,
+      n: sql<number>`count(*)::int`,
+      wins: sql<number>`count(*) filter (where ${positions.realizedPnlUsd} > 0)::int`,
+      pnl: sql<number>`coalesce(sum(${positions.realizedPnlUsd}),0)::float8`,
+      deployed: sql<number>`coalesce(sum(${positions.sizeUsd}),0)::float8`,
+    })
+    .from(positions)
+    .where(and(eq(positions.status, "closed"), gte(positions.closedAt, since)))
+    .groupBy(positions.lane, sql`coalesce(${positions.signature}, '(unrouted)')`);
+
+  const key = new Map<string, LaneScoreRow>();
+  const blank = () => ({ n: 0, winPct: 0, pnl: 0, ev: 0 });
+  for (const r of rows) {
+    const row = key.get(r.sig) ?? { signature: r.sig, paper: blank(), live: blank() };
+    const side = r.lane === "live" ? row.live : row.paper;
+    side.n = r.n;
+    side.winPct = r.n > 0 ? (100 * r.wins) / r.n : 0;
+    side.pnl = r.pnl;
+    side.ev = r.deployed > 0 ? 1 + r.pnl / r.deployed : 0;
+    key.set(r.sig, row);
+  }
+  const out = [...key.values()].sort((a, b) => b.paper.pnl + b.live.pnl - (a.paper.pnl + a.live.pnl));
+  const sum = (lane: "paper" | "live") => {
+    const n = out.reduce((s, r) => s + r[lane].n, 0);
+    const pnl = out.reduce((s, r) => s + r[lane].pnl, 0);
+    const dep = rows.filter((r) => (r.lane === "live") === (lane === "live")).reduce((s, r) => s + r.deployed, 0);
+    return { n, pnl, ev: dep > 0 ? 1 + pnl / dep : 0 };
+  };
+  const cfg = loadConfig();
+  return { windowHours, rows: out, totals: { paper: sum("paper"), live: sum("live") }, liveEnabled: cfg.LIVE_TRADING_ENABLED };
 }
 
 export async function getSignatureConsole(windowHours = 24): Promise<SignatureConsoleView> {
