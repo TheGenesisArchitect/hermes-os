@@ -511,6 +511,13 @@ export interface TimingTrade {
   // by TP tranches — float math must run on the REMAINDER, not original size
   // (the GAIN card once showed +$39.52 gross on a position 80% banked; the
   // true remaining float was ~$8.7).
+  // TRADE SIGNATURE — the genome this bar was routed to and managed under, plus
+  // the shape that produced it. The Matrix classifies INTENTIONALLY now: a bar is
+  // coloured by the class it belongs to, not by a single global time axis.
+  signature: string | null;
+  dipDepth: number | null;
+  snapPct: number | null;
+  snapRate: number | null;
   remFrac: number;
   banked: number;
 }
@@ -559,6 +566,10 @@ export async function getTimingGrid(): Promise<TimingGridView> {
         qtyRemaining: positions.qtyRemaining,
         realizedPnlUsd: positions.realizedPnlUsd,
         rugProb: candidateOutcomes.rugProb,
+        signature: positions.signature,
+        dipDepth: positions.dipDepth,
+        snapPct: positions.snapPct,
+        snapRate: positions.snapRate,
       })
       .from(positions)
       .innerJoin(tokens, eq(tokens.mint, positions.mint))
@@ -580,6 +591,10 @@ export async function getTimingGrid(): Promise<TimingGridView> {
         triggerMult: positions.triggerMult,
         qualityMult: positions.qualityMult,
         rugProb: candidateOutcomes.rugProb,
+        signature: positions.signature,
+        dipDepth: positions.dipDepth,
+        snapPct: positions.snapPct,
+        snapRate: positions.snapRate,
       })
       .from(positions)
       .innerJoin(tokens, eq(tokens.mint, positions.mint))
@@ -658,6 +673,10 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       triggerMult: p.triggerMult === null ? null : num(p.triggerMult),
       rugProb: p.rugProb === null ? null : num(p.rugProb),
       qualityMult: p.qualityMult === null ? null : num(p.qualityMult),
+      signature: p.signature ?? null,
+      dipDepth: p.dipDepth === null ? null : num(p.dipDepth),
+      snapPct: p.snapPct === null ? null : num(p.snapPct),
+      snapRate: p.snapRate === null ? null : num(p.snapRate),
       remFrac: num(p.qtyTokens) > 0 ? Math.max(0, Math.min(1, num(p.qtyRemaining) / num(p.qtyTokens))) : 1,
       banked: num(p.realizedPnlUsd),
     });
@@ -688,6 +707,10 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       triggerMult: p.triggerMult === null ? null : num(p.triggerMult),
       rugProb: p.rugProb === null ? null : num(p.rugProb),
       qualityMult: p.qualityMult === null ? null : num(p.qualityMult),
+      signature: p.signature ?? null,
+      dipDepth: p.dipDepth === null ? null : num(p.dipDepth),
+      snapPct: p.snapPct === null ? null : num(p.snapPct),
+      snapRate: p.snapRate === null ? null : num(p.snapRate),
       remFrac: 0,
       banked: num(p.realizedPnlUsd),
     });

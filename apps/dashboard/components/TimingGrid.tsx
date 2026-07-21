@@ -29,8 +29,43 @@ const STATE_TONE: Record<TimingTrade["state"], string> = {
   stalling: "var(--status-warning)",
   falling: "var(--status-critical)",
 };
-const zoneTone = (sec: number) =>
-  sec < 150 ? "var(--status-critical)" : sec < 300 ? "var(--status-warning)" : "var(--status-good)";
+// SIGNATURE-AWARE TIME ZONING.
+//
+// The old axis bucketed every trade on one genome (<150s critical, >300s good),
+// which cannot be right for classes that peak at completely different times:
+// MOON peaks ~1.6m after entry, CLIMBER ~4.2m, BASE ~7.7m, RISER ~9.8m. A moon
+// at 200s is past its prime; a riser at 200s has barely started. Colouring both
+// the same way told the operator nothing.
+//
+// So a bar is now read against ITS OWN class clock: green while it is inside the
+// window where that signature does its work, amber as it approaches the horizon,
+// red once past it. Unrouted (legacy) bars keep the original global zoning.
+const PEAK_SEC: Record<string, number> = {
+  MOON_FAST: 96, MOON_STEADY: 96, MOON_SLOW: 96, MOON_VIOLENT: 96,
+  CLIMBER: 252, BASE: 462, RISER: 588,
+};
+const zoneTone = (sec: number, signature?: string | null) => {
+  const peak = signature ? PEAK_SEC[signature] : undefined;
+  if (peak === undefined) {
+    return sec < 150 ? "var(--status-critical)" : sec < 300 ? "var(--status-warning)" : "var(--status-good)";
+  }
+  if (sec <= peak) return "var(--status-good)"; // inside its productive window
+  if (sec <= peak * 2) return "var(--status-warning)"; // drifting past prime
+  return "var(--status-critical)"; // well beyond what this class has ever paid
+};
+
+// One tone per genome, so a wall of bars reads as a distribution of classes at a
+// glance rather than an undifferentiated field.
+const SIG_TONE: Record<string, string> = {
+  RISER: "var(--series-1)",
+  BASE: "var(--series-2)",
+  CLIMBER: "var(--series-3)",
+  MOON_FAST: "var(--status-warning)",
+  MOON_STEADY: "var(--status-warning)",
+  MOON_SLOW: "var(--text-muted)",
+  MOON_VIOLENT: "var(--status-critical)",
+};
+const sigShort = (s: string) => (s.startsWith("MOON_") ? `M·${s.slice(5, 9)}` : s.slice(0, 7));
 const fmtSec = (s: number) => (s >= 60 ? `${Math.round(s / 60)}m` : `${Math.round(s)}s`);
 const fmtClock = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -113,6 +148,31 @@ function Card({
           ? `OPEN · ${t.state} · ${fmtSec(t.ageSec)} · since ${fmtClock(t.openedAtIso)}`
           : `CLOSED · ${t.exit?.reason ?? "closed"} · held ${fmtSec(t.ageSec)} · opened ${fmtClock(t.openedAtIso)}`}
       </div>
+
+      {/* SIGNAL vs EXECUTION — the routing evidence beside what it produced. This
+          is the row worth reading: a class that consistently exits unlike its
+          genome is either mis-routed or mis-tuned, and neither is visible from
+          P&L alone. */}
+      {t.signature && (
+        <div
+          className="mb-2 rounded px-1.5 py-1 text-[10px]"
+          style={{ background: "var(--surface-2)", border: `1px solid ${SIG_TONE[t.signature] ?? "var(--border)"}` }}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold uppercase tracking-wide" style={{ color: SIG_TONE[t.signature] ?? "var(--text-secondary)" }}>
+              {t.signature}
+            </span>
+            <span className="tabular" style={{ color: zoneTone(t.ageSec, t.signature) }}>
+              {fmtSec(t.ageSec)} / peak ~{fmtSec(PEAK_SEC[t.signature] ?? 0)}
+            </span>
+          </div>
+          <div className="mt-0.5 tabular" style={{ color: "var(--text-muted)" }}>
+            {t.dipDepth != null && `dip ${(t.dipDepth * 100).toFixed(0)}%`}
+            {t.snapPct != null && ` · snap +${(t.snapPct * 100).toFixed(0)}%`}
+            {t.snapRate != null && ` · ${t.snapRate.toFixed(1)}×/min`}
+          </div>
+        </div>
+      )}
 
       {isOpen && dna && (
         <div className="mb-2 flex items-center gap-2">
@@ -363,6 +423,11 @@ export function TimingGrid({ view, dnaByMint }: { view: TimingGridView; dnaByMin
                   <div className="text-[10px] tabular" style={{ color: exitUp ? "var(--status-good)" : "var(--status-critical)" }}>
                     {exitUp ? "+" : ""}{(t.exit?.pnl ?? 0).toFixed(1)}
                   </div>
+                  {t.signature && (
+                    <div className="truncate text-[7.5px] uppercase tracking-wide" style={{ color: SIG_TONE[t.signature] ?? "var(--text-muted)" }}>
+                      {sigShort(t.signature)}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -372,7 +437,13 @@ export function TimingGrid({ view, dnaByMint }: { view: TimingGridView; dnaByMin
                 <div className="truncate text-[11px]" style={{ color: card?.id === t.id ? "var(--text-primary)" : "var(--text-secondary)" }}>
                   {t.symbol ?? "?"}
                 </div>
-                <div className="text-[10px] tabular" style={{ color: zoneTone(t.ageSec) }}>{fmtSec(t.ageSec)}</div>
+                {/* age is now read against THIS class's clock, not a global one */}
+                <div className="text-[10px] tabular" style={{ color: zoneTone(t.ageSec, t.signature) }}>{fmtSec(t.ageSec)}</div>
+                {t.signature && (
+                  <div className="truncate text-[8px] uppercase tracking-wide" style={{ color: SIG_TONE[t.signature] ?? "var(--text-muted)" }}>
+                    {sigShort(t.signature)}
+                  </div>
+                )}
               </div>
             ))}
             <div className="shrink-0" style={{ width: RIGHT_PAD }} />
