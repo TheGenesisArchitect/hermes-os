@@ -1079,6 +1079,16 @@ const envSchema = z.object({
   // retry landed), and repeatedly failing to exit a winner round-trips it. 10%
   // ensures the exit fills; the guard's catastrophe/rug stops backstop the worst.
   LIVE_SELL_SLIPPAGE_BPS: z.coerce.number().default(1000),
+  // TAKE-PROFIT tolerance — the rungs bank INTO STRENGTH, so unlike a trail they
+  // have no urgency and must not pay the trail's 10% to land. Measured 2026-07-20:
+  // live TP0 filled at a 1.018× median against paper's 1.136× over the same tape,
+  // with 3 of 9 fills landing BELOW ENTRY (PURPLE 0.806×, Rigby 0.863×) while paper
+  // went 0-for-72 below entry. The ~10.4% gap is the sell tolerance being consumed
+  // by adverse movement between quote and confirm — a rung labelled "take profit"
+  // was realizing −19%. At 3% an adverse move that large REVERTS instead of filling,
+  // and we retry a moment later; if price is genuinely collapsing that fast it is
+  // the trail and the guard's job to exit, not the profit ladder's.
+  LIVE_TP_SLIPPAGE_BPS: z.coerce.number().default(300),
   // LIVE PREMIUM-VENUE GATE — real capital only enters venues the recorder has
   // proven premium by MEASURED performance, never by volume/'core' label
   // (volume ≠ quality: the highest-volume venue can be the biggest bleeder).

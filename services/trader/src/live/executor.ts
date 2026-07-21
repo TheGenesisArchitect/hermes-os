@@ -755,6 +755,10 @@ export async function maybeLiveBuy(cfg: HermesConfig, mint: string, symbol: stri
 const sellBackoff = new Map<number, { fails: number; nextAttemptMs: number }>();
 const SELL_BACKOFF_BASE_MS = 5_000;
 const SELL_BACKOFF_MAX_MS = 300_000;
+// A take-profit that reverts on tight tolerance retries on a FLAT short fuse, not
+// the exponential one: the position is a winner we simply refused to sell cheap,
+// so backing off exponentially would walk us away from the bank we wanted.
+const TP_RETRY_MS = 3_000;
 
 async function liveSellPosition(
   cfg: HermesConfig,
@@ -767,6 +771,14 @@ async function liveSellPosition(
   if (!wallet) return false;
   const bo = sellBackoff.get(position.id);
   if (bo && Date.now() < bo.nextAttemptMs) return false; // cooling off — don't burn RPC
+  // Classify the exit's URGENCY up front — the catch needs it too, to tell a
+  // take-profit that refused a bad price from a position that genuinely can't sell.
+  // Protective exits (stop / catastrophe / rug / sweep / mirror-cut) DUMP at the wide
+  // stop slippage so they fill at the crashed price instead of reverting into a −100%
+  // sweep. Take-profits bank into strength and get the tight tolerance. Trails sit
+  // between: they fire while price pulls away, so landing beats price.
+  const isProtective = /stop|catastrophe|rug|sweep|mirror_cut|unsellable/i.test(reason);
+  const isTakeProfit = !isProtective && /take_profit/i.test(reason);
   try {
     const { PublicKey } = await import("@solana/web3.js");
     const resp = await rpcPool(cfg).read((c) =>
@@ -796,12 +808,14 @@ async function liveSellPosition(
     const rawSell = f >= 0.999 ? raw : (raw * BigInt(Math.floor(f * 10_000))) / 10_000n;
     if (rawSell <= 0n) return false;
 
-    // Protective exits (stop / catastrophe / rug / sweep / mirror-cut) DUMP at the
-    // wide stop slippage so they fill at the crashed price instead of reverting into
-    // a −100% sweep; profit exits (trail / take-profit) keep the tight slippage so
-    // we don't give away a good fill. Explicit slippageBps (the guard) always wins.
-    const isProtective = /stop|catastrophe|rug|sweep|mirror_cut|unsellable/i.test(reason);
-    const slip = slippageBps ?? (isProtective ? cfg.LIVE_STOP_SLIPPAGE_BPS : cfg.LIVE_SELL_SLIPPAGE_BPS);
+    // Explicit slippageBps (the guard) always wins over the classification above.
+    const slip =
+      slippageBps ??
+      (isProtective
+        ? cfg.LIVE_STOP_SLIPPAGE_BPS
+        : isTakeProfit
+          ? cfg.LIVE_TP_SLIPPAGE_BPS
+          : cfg.LIVE_SELL_SLIPPAGE_BPS);
     const quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip);
     const b64 = await swapRouter.buildSwapTx(cfg, quote, wallet.publicKey.toBase58());
     const res = await executeSwap(cfg, b64, WSOL_MINT);
@@ -852,6 +866,19 @@ async function liveSellPosition(
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // A take-profit that reverts on tolerance is the tolerance DOING ITS JOB — the
+    // rung refused a bad price on a position that is winning. It must never feed
+    // the strand-writeoff counter: LIVE_SELL_MAX_FAILS would otherwise book a live
+    // WINNER as "unsellable" and realize a total loss after six tight-slippage
+    // reverts. Retry on the flat fuse and leave the failure count untouched; if the
+    // token really is unsellable, the trail and guard exits reach this catch with a
+    // protective reason and the write-off fires from there.
+    if (isTakeProfit) {
+      const keep = sellBackoff.get(position.id)?.fails ?? 0;
+      sellBackoff.set(position.id, { fails: keep, nextAttemptMs: Date.now() + TP_RETRY_MS });
+      console.warn(`live TP held out ${short(position.mint)} (${reason}) — refused a fill worse than ${(cfg.LIVE_TP_SLIPPAGE_BPS / 100).toFixed(1)}%, retry ${TP_RETRY_MS / 1000}s: ${msg}`);
+      return false;
+    }
     // Back off before anything else — a failing sell must not be free to retry.
     const prev = sellBackoff.get(position.id)?.fails ?? 0;
     const fails = prev + 1;
