@@ -134,7 +134,12 @@ function moonGrade(snapRate: number): Signature {
 // RISERs and 47% of CLIMBERs are still rising when the 15m watch window closes,
 // so their true peaks are right-censored — p75 is a floor on the right answer,
 // not a precise one, and it should be revisited if the window is ever widened.
-const CLOCK_SEC = 1000;
+// 762s = the measured P75 hold (p75 time-to-peak 15.2m from discovery, less a
+// ~2.5m entry). Previously 1000s to match the Trade Matrix's horizon — but that
+// was rounding UP past the data, and worse, 1000s sits beyond the 15-minute
+// watch window so the learning loop cannot validate it at all. A clock the loop
+// can never test is a clock we can never improve.
+const CLOCK_SEC = 762;
 // Rugs are the one class our window fully captures (0.8% censored): they peak at
 // 4.6m and are done by 12.2m at p90. A class that snaps violently off a deep dip
 // lives on that timeline, not the winners'.

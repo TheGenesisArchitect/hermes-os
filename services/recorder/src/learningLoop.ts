@@ -77,7 +77,7 @@ const MAX_HORIZON_MIN = 12;
 
 interface Step { mk: number; wm: number }
 interface Cand { sig: Signature; entryMk: number; entryWm: number; fwd: Step[]; liq: number; at: Date }
-interface Cfg { r1: number; f1: number; r2: number; f2: number; trail: number; floor: number; hold: number }
+interface Cfg { r1: number; f1: number; r2: number; f2: number; trail: number; floor: number; hold: number; sweep?: [number, number] }
 interface Scored { ev: number; win: number; n: number }
 
 // Counts positions whose exit never triggered and were booked at the last observed
@@ -102,6 +102,12 @@ function sim(c: Cand, x: Cfg): number {
   }
   if (!triggered) truncatedExits++;
   let banked = 0, sold = 0;
+  // THE SWEEP RUNG. The live profiles carry three progressive rungs; the loop
+  // fits the upper two, so the compiled p50 sweep must be simulated underneath
+  // or the loop optimises a two-rung ladder while a three-rung one executes.
+  // That is the same "optimise one policy, run another" fault that the global
+  // exits caused — and it would silently bias every promotion.
+  if (x.sweep && peak >= x.sweep[0]) { banked += x.sweep[1] * x.sweep[0]; sold += x.sweep[1]; }
   if (peak >= x.r1) { banked += x.f1 * x.r1; sold += x.f1; }
   if (peak >= x.r2) { banked += x.f2 * x.r2; sold += x.f2; }
   const gross = banked + Math.max(0, 1 - sold) * Math.max(exitRel, 0);
@@ -118,7 +124,7 @@ function scoreSet(cands: Cand[], x: Cfg): Scored {
 
 const profileToCfg = (s: Signature): Cfg => {
   const p = SIGNATURE_PROFILES[s];
-  return { r1: p.tp1[0], f1: p.tp1[1], r2: p.tp2[0], f2: p.tp2[1], trail: p.trail, floor: p.floor, hold: p.holdSec > 0 ? p.holdSec / 60 : 999 };
+  return { r1: p.tp1[0], f1: p.tp1[1], r2: p.tp2[0], f2: p.tp2[1], trail: p.trail, floor: p.floor, hold: p.holdSec > 0 ? p.holdSec / 60 : 999, sweep: p.tp0 };
 };
 
 async function main(): Promise<void> {
@@ -188,7 +194,7 @@ async function main(): Promise<void> {
     for (const r1 of R1_LEVEL) for (const f1 of R1_FRAC) for (const r2 of R2_LEVEL) for (const f2 of R2_FRAC)
       for (const trail of TRAIL) for (const floor of FLOOR) for (const hold of HOLD_MIN) {
         if (r2 <= r1 || f1 + f2 > 0.85) continue;
-        const x: Cfg = { r1, f1, r2, f2, trail, floor, hold };
+        const x: Cfg = { r1, f1, r2, f2, trail, floor, hold, sweep: SIGNATURE_PROFILES[sig].tp0 };
         results.push({ x, f: scoreSet(fitC, x), h: scoreSet(holdC, x) });
       }
 
