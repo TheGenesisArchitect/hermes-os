@@ -9,6 +9,8 @@
   "dependencies": {
     "@hermes/core": "workspace:*",
     "@hermes/db": "workspace:*",
+    "@meteora-ag/cp-amm-sdk": "^1.4.5",
+    "@meteora-ag/dynamic-bonding-curve-sdk": "^1.5.10",
     "@pump-fun/pump-swap-sdk": "^1.19.0",
     "@solana/web3.js": "^1.98.4",
     "bn.js": "^5.2.2",

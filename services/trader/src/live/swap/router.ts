@@ -18,6 +18,7 @@ import { JupiterSelfHostedProvider } from "./jupiterSelfHosted.js";
 import { FluxbeamProvider } from "./fluxbeam.js";
 import { PumpSwapProvider } from "./pumpswap.js";
 import { PumpPortalProvider } from "./pumpportal.js";
+import { MeteoraDbcProvider, MeteoraDammV2Provider } from "./meteora.js";
 
 const BREAKER_TRIP_AFTER = 3; // consecutive failures → open
 const BREAKER_COOLDOWN_MS = 30_000; // skip an open provider this long, then re-probe
@@ -49,6 +50,13 @@ export class SwapRouter {
       new JupiterHostedProvider(),
       new JupiterSelfHostedProvider(),
       new FluxbeamProvider(),
+      // Meteora DIRECT, ahead of the PumpPortal last resort: on 2026-07-21
+      // every live buy on a Meteora venue fell through to PumpPortal and died
+      // with `build 400` (48 fails, 0 fills) while meteora-damm-v2 carried the
+      // entire paper session profit. Each throws instantly on "no pool of my
+      // protocol", so non-Meteora tokens pass through at zero cost.
+      new MeteoraDbcProvider(),
+      new MeteoraDammV2Provider(),
       new PumpPortalProvider(),
     ];
     for (const p of this.providers) this.breakers.set(p.name, { fails: 0, openUntil: 0 });
