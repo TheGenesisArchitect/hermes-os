@@ -447,8 +447,14 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
     // we want — while PROFIT_LOCK_FLOOR_MULT is pinned at 1.0 so the "never close
     // red" floor it also carries can never sit above the class's own cover. The
     // genome still owns the downside; the trail now owns the give-back.
+    // The stop is max(entry × PROFIT_LOCK_FLOOR_MULT, trailFloor), so this knob is
+    // the HARD FLOOR beneath the trail — and it must be the class's own cover.
+    // Pinning it at 1.0 made entry the floor for any position that ticked green,
+    // which contradicts every genome: RISER is built to hold a dip to 0.40× and
+    // was instead being cut at breakeven the moment it came back through entry.
+    // Rob peaked 1.20×, fell through entry, and the exit gapped to −69%.
     PROFIT_LOCK_ARM_MULT: 1.01,
-    PROFIT_LOCK_FLOOR_MULT: 1.0,
+    PROFIT_LOCK_FLOOR_MULT: p.floor,
     PROFIT_FLOOR_USD: Number.POSITIVE_INFINITY, // never arm on a dollar amount
     POST_BANK_TRAIL_PCT: trailPct, // post-bank snug would re-tighten the class's own trail
     // STOP_FLAT — recycles any position whose peak hasn't cleared 1.1× after 3
