@@ -35,7 +35,7 @@ import {
   type HermesConfig,
   type Signature,
 } from "@hermes/core";
-import { auditLog, candidateOutcomes, db, fills, pnlSnapshots, positionTicks, positions, safetyChecks, tokens } from "@hermes/db";
+import { auditLog, candidateOutcomes, candidateTicks, db, fills, pnlSnapshots, positionTicks, positions, safetyChecks, tokens } from "@hermes/db";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { rpcPool } from "./rpc/pool.js";
 import { JupiterHostedProvider, WSOL_MINT } from "./swap/jupiterHosted.js";
@@ -1221,6 +1221,39 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       } catch {
         /* no live sell route — the sweep/mirror handles it, don't false-cut here */
       }
+      // FEED-MARK FALLBACK, routed rows only. Jupiter is the ONLY provider that
+      // can VALUE a position (PumpSwap and PumpPortal are build-only,
+      // canValue:false) and it does not index a fresh pool for minutes — so a
+      // just-opened live position had no mark at all: no tick telemetry, no
+      // genome exits, nothing but the clock, in exactly the minutes where these
+      // tokens live and die. But the recorder is already watching this mint
+      // every 2s. Its latest trusted read is the SAME feed paper marks from, so
+      // managing on it is 1:1 by construction. The sell, if decided, still goes
+      // through the router — PumpSwap builds fine for the pools Jupiter can't
+      // quote. Trusted = fresh (≤60s) and real liquidity (≥$1k, the flicker
+      // guard). Legacy unrouted rows keep quote-only marks: their tight
+      // hard-stop is exactly what a glitched feed read could false-fire.
+      let markSource: "sell-quote" | "feed" = "sell-quote";
+      if (value == null && lp.signature) {
+        const entry0 = n(lp.entryPriceUsd);
+        if (entry0 > 0) {
+          const [ct] = await db
+            .select({ priceUsd: candidateTicks.priceUsd, liq: candidateTicks.liquidityUsd, at: candidateTicks.snappedAt })
+            .from(candidateTicks)
+            .where(eq(candidateTicks.mint, lp.mint))
+            .orderBy(desc(candidateTicks.id))
+            .limit(1);
+          if (
+            ct &&
+            Date.now() - ct.at.getTime() <= 60_000 &&
+            ct.liq != null && Number(ct.liq) >= 1_000 &&
+            Number(ct.priceUsd) > 0
+          ) {
+            value = n(lp.sizeUsd) * (Number(ct.priceUsd) / entry0);
+            markSource = "feed";
+          }
+        }
+      }
       if (value == null) {
         guardHits.delete(lp.id);
         // NO SELL QUOTE. Transiently this is fine — a 504 or a momentary route gap
@@ -1273,7 +1306,9 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       // it needs the same rule evaluated over its OWN book. Collected here from the
       // real sell-route value (more accurate than a price API) and executed after
       // the loop, so a harvest never races the per-position exits above.
-      if (genomeOwned && cost > 0 && value > cost) liveGreens.push({ lp, upl: value - cost });
+      // Harvest only on a REAL sell quote — a feed-marked green has no proven
+      // route, and the harvest's whole point is selling into live liquidity NOW.
+      if (genomeOwned && markSource === "sell-quote" && cost > 0 && value > cost) liveGreens.push({ lp, upl: value - cost });
       if (cfg.LIVE_FLOOR_ENABLED && !genomeOwned) {
         const soldFrac = 1 - n(lp.qtyRemaining) / Math.max(n(lp.qtyTokens), 1e-9);
         if (soldFrac < 0.01 && cost > 0 && value / cost >= cfg.LIVE_FLOOR_ARM_MULT) {
