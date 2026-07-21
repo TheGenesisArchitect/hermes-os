@@ -808,11 +808,18 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
           stars: stars ?? null,
         }
       : null;
+    // LIVE FIRES ON THE SAME SIGNAL, INDEPENDENTLY — not as a shadow of paper.
+    // Previously this was nested inside the paper-open success branch, so live
+    // could only ever trade what paper had already filled, inheriting paper's
+    // timing and its failures. Both lanes now act on the same armed candidate at
+    // the same moment, each sizing off its own capital and managing under the
+    // same genome. That makes the two lanes a genuine comparison — same signals,
+    // same rules, different balances — instead of one lane echoing the other.
+    // Fire-and-forget: an on-chain confirm must never stall the entry scan.
+    void maybeLiveBuy(cfg, mint, token.symbol, sigArg ? { signature: sigArg.signature, stars: sigArg.stars } : null);
     if (await openFromSignal(cfg, signal, token, "confirmed", book, qualityMult, tm, sigArg)) {
-      // MIRROR the confirmed entry into the live lane (M5). Fire-and-forget:
-      // a 45s on-chain confirm must never stall the entry scan; the executor
-      // audits its own outcome and sweepLiveBook reconciles any miss.
-      void maybeLiveBuy(cfg, mint, token.symbol);
+      // (The live buy already fired above, on the same signal and at the same
+      // moment — it is no longer mirrored off this branch.)
       await db.update(candidateOutcomes).set({ entered: true, armed: false, updatedAt: new Date() }).where(eq(candidateOutcomes.mint, mint));
     }
   }

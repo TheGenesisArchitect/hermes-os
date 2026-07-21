@@ -26,7 +26,15 @@
  * self-heals instead of relying on every mirror call succeeding.
  */
 import { Transaction, VersionedTransaction } from "@solana/web3.js";
-import { convictionBand, fetchJupiterPrice, type HermesConfig } from "@hermes/core";
+import {
+  convictionBand,
+  fetchJupiterPrice,
+  profileOf,
+  signatureExitOverrides,
+  sizeFraction,
+  type HermesConfig,
+  type Signature,
+} from "@hermes/core";
 import { auditLog, candidateOutcomes, db, fills, pnlSnapshots, positions, safetyChecks, tokens } from "@hermes/db";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { rpcPool } from "./rpc/pool.js";
@@ -548,8 +556,27 @@ async function anticipationMult(cfg: HermesConfig, mint: string): Promise<number
  *  the absolute backstop. Conviction + anticipation let the best setups in the
  *  hottest venues/windows size toward the 14% cap while the floor preserves
  *  breadth — "maximize don't minimize" within bounded caps. */
-function livePositionUsd(cfg: HermesConfig, balanceUsd: number, regimeMult: number, convictionMult: number, anticipationMult: number): number {
-  const base = balanceUsd * cfg.LIVE_SIZE_FRAC * regimeMult * convictionMult * anticipationMult;
+function livePositionUsd(
+  cfg: HermesConfig,
+  balanceUsd: number,
+  regimeMult: number,
+  convictionMult: number,
+  anticipationMult: number,
+  sig?: { signature: Signature; stars: number | null } | null,
+): number {
+  // SIGNATURE SIZING — identical formula to paper, against the WALLET BALANCE
+  // instead of the bankroll: the policy sets the range by regime, the quality
+  // score picks the point inside it, and the class multiplier scales it. Both
+  // lanes therefore share one risk model and stay on it as the account moves;
+  // a flat LIVE_SIZE_FRAC would give a 2-star MOON_FAST and a 0-star residual
+  // the same size, which is exactly the divergence we just removed from paper.
+  const base = sig
+    ? balanceUsd *
+      sizeFraction(sig.stars ?? 0, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) *
+      profileOf(sig.signature).size *
+      regimeMult *
+      anticipationMult
+    : balanceUsd * cfg.LIVE_SIZE_FRAC * regimeMult * convictionMult * anticipationMult;
   return Math.max(
     cfg.LIVE_MIN_POSITION_USD,
     Math.min(base, balanceUsd * cfg.LIVE_MAX_POSITION_FRAC, cfg.LIVE_MAX_POSITION_USD),
@@ -562,7 +589,15 @@ function livePositionUsd(cfg: HermesConfig, balanceUsd: number, regimeMult: numb
  * Mirror a confirmed PAPER entry into the live lane, if every gate passes.
  * Called after a successful paper open; never throws into the caller.
  */
-export async function maybeLiveBuy(cfg: HermesConfig, mint: string, symbol: string | null): Promise<void> {
+export async function maybeLiveBuy(
+  cfg: HermesConfig,
+  mint: string,
+  symbol: string | null,
+  // The routed signature and its conviction. Live sizes and exits from this the
+  // same way paper does, so the lanes run one system on two balances rather
+  // than one lane shadowing the other.
+  sig: { signature: Signature; stars: number | null } | null = null,
+): Promise<void> {
   try {
     // LATENCY: live trailed paper's entry by a measured 6–8s, and that lag
     // propagates straight to the exit (THUNDERCAT: paper out at 1.018×, live 7s
@@ -678,7 +713,7 @@ export async function maybeLiveBuy(cfg: HermesConfig, mint: string, symbol: stri
       const frac = Math.min(1, lossToday / cfg.LIVE_DAILY_LOSS_CAP_USD);
       dailyThrottle = 1 - frac * (1 - cfg.LIVE_DAILY_THROTTLE_MIN);
     }
-    const usd = Math.max(cfg.LIVE_MIN_POSITION_USD, Math.min(livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult) * dailyThrottle, affordable));
+    const usd = Math.max(cfg.LIVE_MIN_POSITION_USD, Math.min(livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult, sig) * dailyThrottle, affordable));
     const lamports = BigInt(Math.floor((usd / sol) * 1e9));
 
     const wallet = liveWallet();
@@ -711,6 +746,11 @@ export async function maybeLiveBuy(cfg: HermesConfig, mint: string, symbol: stri
         mint,
         lane: "live",
         tier: "base",
+        // The genome this live position is managed under, pinned at open exactly
+        // as paper does. It drives the exit profile and lets the Matrix and the
+        // scorecards compare the two lanes signal-for-signal.
+        signature: sig?.signature ?? null,
+        stars: sig?.stars ?? null,
         sizeUsd: String(usd),
         qtyTokens: String(res.outUi),
         qtyRemaining: String(res.outUi),
@@ -988,6 +1028,17 @@ async function sweepLiveBookInner(cfg: HermesConfig): Promise<void> {
     .from(positions)
     .where(and(eq(positions.lane, "live"), eq(positions.status, "open")));
   for (const lp of rows) {
+    // GUARD 0 — INDEPENDENT LIVE POSITIONS ARE NOT SWEPT.
+    // This backstop exists for the MIRROR era, when every live position was the
+    // shadow of a paper one and a live row with no paper twin meant a failed
+    // mirror sell had stranded it. Live now trades its OWN signals, so a live
+    // position frequently has no paper twin by design — paper may have been
+    // blocked by its lane book, a venue filter or slippage while live filled.
+    // Without this guard the sweep would force-close every independent live
+    // trade within one manage cycle, which is the opposite of a backstop.
+    // A signature-routed live position is governed by its genome and the guard;
+    // only legacy mirror rows fall through to the twin check.
+    if (lp.signature) continue;
     // GUARD 1 — a mirror sell owns this mint right now. Racing it produces a
     // contested exit at a worse price (and mislabels the fill).
     if (mirrorSellInFlight.has(lp.mint)) continue;
@@ -1139,6 +1190,35 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
         guardHits.delete(lp.id);
         livePeakMark.delete(lp.id);
         continue;
+      }
+      // ── THE SAME FORMULA, STEP FOR STEP ───────────────────────────────────
+      // A signature-routed live position runs the IDENTICAL decideExit paper
+      // runs, under the IDENTICAL genome config. Live differs only in how the
+      // sell executes, never in what it decides — paper has proven these
+      // mechanics healthy, so reimplementing a second ladder here would
+      // guarantee the lanes drift apart exactly where we need them comparable.
+      //
+      // The mark is derived from the real sell-route value rather than a price
+      // API, so decideExit is fed a BETTER price than paper gets, not a worse
+      // one. Imported lazily because paper.ts imports this module — a top-level
+      // import would close the cycle.
+      if (lp.signature) {
+        const { decideExit } = await import("../paper.js");
+        const entry = Number(lp.entryPriceUsd) || 0;
+        const ecfg = { ...cfg, ...signatureExitOverrides(lp.signature as Signature) };
+        const synthetic = { priceUsd: entry * markNow, liquidityUsd: 0, fdvUsd: 0, pairAddress: "", dexId: "" } as never;
+        const dec = decideExit(ecfg, lp, synthetic, entry * peakMark, null);
+        if (dec) {
+          console.log(
+            `🧬 LIVE ${lp.signature} ${short(lp.mint)} — ${dec.reason} at ${markNow.toFixed(2)}x (peak ${peakMark.toFixed(2)}x), selling ${(dec.fraction * 100).toFixed(0)}%`,
+          );
+          await liveSellPosition(cfg, lp, dec.fraction, dec.reason);
+          if (dec.fraction >= 0.999) {
+            guardHits.delete(lp.id);
+            livePeakMark.delete(lp.id);
+          }
+          continue;
+        }
       }
       const drawdownPct = cost > 0 ? ((value - cost) / cost) * 100 : 0;
       // Require the real drawdown to PERSIST across 2 guard cycles (~10s) before
