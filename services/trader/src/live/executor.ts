@@ -635,6 +635,14 @@ export async function maybeLiveBuy(
     // to finish before the other two have even started.
     const solP = solPriceUsd(cfg).catch(() => null);
     const balP = liveBalance(cfg).catch(() => null);
+    // REFUSED CLASSES. Paper will not open RUG_RISK at all — 36.1% rug, and it
+    // reaches 5× exactly 0% of the time — but the live path never consulted the
+    // profile, so live was trading the single class paper refuses. A 1:1 lane
+    // cannot take trades the reference lane declines.
+    if (sig && !profileOf(sig.signature).trade) {
+      await audit("live_buy_skipped", { mint, reason: `${sig.signature} — class is not traded` });
+      return;
+    }
     const gate = await liveBuyGate(cfg, mint, sig != null);
     if (!gate.ok) {
       if (cfg.LIVE_TRADING_ENABLED && gate.reason !== "disabled")
@@ -763,7 +771,16 @@ export async function maybeLiveBuy(
     // EXIT PRE-CHECK — never enter what we can't currently sell (KIMI guard). The
     // expected buy output is the sell probe amount (nominal fallback when the buy
     // provider doesn't quote an out amount, e.g. PumpSwap/PumpPortal build-only).
-    if (cfg.LIVE_EXIT_PRECHECK) {
+    // EXIT PRE-CHECK — skipped for routed buys. It blocked 6 entries in 60
+    // minutes and took live's moon count to ZERO while paper opened four, because
+    // it asks an aggregator for an exit quote on a 2-minute-old thin pool, which
+    // is exactly when the aggregator has not indexed it yet. It was not filtering
+    // unsellable tokens, it was filtering NEW ones — and new thin pools are the
+    // MOON classes, the tail that pays for everything else.
+    // Sellability is already established upstream: the scout's honeypot probe is
+    // an actual Jupiter round-trip (roundtripRatio ≈ 0.99 on these), and a
+    // genuinely unsellable position is still caught by the strand write-off.
+    if (cfg.LIVE_EXIT_PRECHECK && !sig) {
       const probeAmt = Number(quote.outAmount) > 1 ? BigInt(quote.outAmount) : 1_000_000_000n;
       if (!(await canExitLive(cfg, mint, probeAmt))) {
         await audit("live_buy_skipped", { mint, reason: "no exit route — would strand" });
