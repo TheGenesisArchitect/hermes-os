@@ -45,6 +45,22 @@ export interface SignatureInputs {
   dipDepth: number;
   /** Percent recovered off the trough PER MINUTE: the tell's velocity. */
   snapRate: number;
+  /**
+   * HOLDER DISPERSION at discovery — the cleanest class separator measured, and
+   * available before a single tick of trajectory exists. Median largest-holder
+   * share by outcome class over 17,872 labeled candidates:
+   *     MOON 5.26%   RISER 4.63%   RUG 35.3%   DUD 51.2%   CLIMBER 78.0%
+   * A 10-15× separation on one number. Dispersed ownership is what MOON and
+   * RISER — the two classes that actually pay — have in common, and it is the
+   * thing that distinguishes CLIMBER (a concentrated-whale accumulation) from
+   * MOON despite both showing pool growth. Null when the check is missing;
+   * routing then falls back to trajectory alone.
+   */
+  largestHolderPct?: number | null;
+  /** Top-10 concentration: MOON 16.9% / RISER 14.8% vs DUD 81.1% / CLIMBER 81.0%. */
+  top10Pct?: number | null;
+  /** Holder count: MOON 91 / RISER 60 vs DUD 9 / CLIMBER 14 / RUG 16. */
+  holders?: number | null;
 }
 
 export interface SignatureProfile {
@@ -75,6 +91,21 @@ const STEADY_RATE = 0.5; // 50%/min
 const DEEP_POOL = 30_000; // ≥ this at discovery rugs 32.6% and NEVER reaches 5×
 const THIN_POOL = 5_000; // < this is the real moon tell (14.0% reach 5×)
 const CLIMBER_GROWTH = 1.5; // +50% pool by the tick: 0.8% rug vs a 20% baseline
+// Ownership thresholds, set between the measured class medians rather than at a
+// round number: MOON 5.26% / RISER 4.63% largest holder against RUG 35.3%,
+// DUD 51.2%, CLIMBER 78.0%. The gap is wide enough that the exact cut matters
+// little — anything from ~10% to ~25% separates the same way.
+const DISPERSED_LARGEST_PCT = 12; // ≤ this = crowd-held (moon/riser territory)
+const DISPERSED_TOP10_PCT = 35; // MOON 16.9 / RISER 14.8 vs DUD 81.1 / CLIMBER 81.0
+const CONCENTRATED_LARGEST_PCT = 30; // ≥ this = whale-held (climber/dud/rug)
+
+/** Grade a moon by the velocity of its recovery — an inverted U, not "faster is better". */
+function moonGrade(snapRate: number): Signature {
+  if (snapRate >= VIOLENT_RATE) return "MOON_VIOLENT";
+  if (snapRate >= FAST_RATE) return "MOON_FAST";
+  if (snapRate >= STEADY_RATE) return "MOON_STEADY";
+  return "MOON_SLOW";
+}
 
 export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
   // ── confirmed on both sides of the split ──
@@ -135,13 +166,33 @@ export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
 export function routeSignature(i: SignatureInputs): Signature {
   const growth = i.liq0 > 0 ? i.liqNow / i.liq0 : 1;
   if (growth < 1.0 || i.liq0 >= DEEP_POOL) return "RUG_RISK";
-  if (growth >= CLIMBER_GROWTH && i.liq0 >= THIN_POOL) return "CLIMBER";
-  if (i.liq0 < THIN_POOL || i.buyShare < 0.5 || i.dipDepth >= 0.25) {
-    if (i.snapRate >= VIOLENT_RATE) return "MOON_VIOLENT";
-    if (i.snapRate >= FAST_RATE) return "MOON_FAST";
-    if (i.snapRate >= STEADY_RATE) return "MOON_STEADY";
-    return "MOON_SLOW";
+
+  // ── HOLDER DISPERSION FIRST ────────────────────────────────────────────────
+  // Ownership structure is known at discovery and separates the classes an order
+  // of magnitude better than anything in the trajectory. Dispersed ownership is
+  // the shared fingerprint of the two classes that pay (MOON 5.26% largest
+  // holder, RISER 4.63%); concentrated ownership marks the ones that do not
+  // (DUD 51.2%, CLIMBER 78.0%, RUG 35.3%).
+  //
+  // This runs BEFORE the pool-growth test because growth alone cannot tell a
+  // whale accumulating a book (CLIMBER) from a crowd igniting one (MOON) — both
+  // show it. Ownership can. Skipped entirely when the check is missing, so a
+  // candidate without holder data still routes on trajectory exactly as before.
+  const dispersed =
+    i.largestHolderPct != null && i.largestHolderPct <= DISPERSED_LARGEST_PCT &&
+    (i.top10Pct == null || i.top10Pct <= DISPERSED_TOP10_PCT);
+  const concentrated = i.largestHolderPct != null && i.largestHolderPct >= CONCENTRATED_LARGEST_PCT;
+
+  if (dispersed) {
+    // A dispersed book that also shows the moon microstructure is the strongest
+    // combination in the data; otherwise it is the reliable microwin class.
+    if (i.liq0 < THIN_POOL || i.buyShare < 0.5 || i.dipDepth >= 0.25) return moonGrade(i.snapRate);
+    return "RISER";
   }
+  if (concentrated && growth >= CLIMBER_GROWTH) return "CLIMBER";
+
+  if (growth >= CLIMBER_GROWTH && i.liq0 >= THIN_POOL) return "CLIMBER";
+  if (i.liq0 < THIN_POOL || i.buyShare < 0.5 || i.dipDepth >= 0.25) return moonGrade(i.snapRate);
   if (i.buyShare >= 0.8) return "RISER";
   return "BASE";
 }
@@ -183,10 +234,10 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
   TP1_MULT: number; TP1_CUM_SELL: number;
   TP2_MULT: number; TP2_CUM_SELL: number;
   TRAIL_TIGHT_PCT: number; TRAIL_MID_PCT: number; TRAIL_WIDE_PCT: number;
-  HARD_STOP_PCT: number; RUNNER_MAX_HOLD_SEC: number;
+  HARD_STOP_PCT: number; HARD_STOP_PCT_THIN: number; RUNNER_MAX_HOLD_SEC: number;
   TIME_FLOOR_AT_SEC: number; FAST_FLOOR_ENABLED: boolean;
   PROFIT_LOCK_ARM_MULT: number; PROFIT_FLOOR_USD: number;
-  POST_BANK_TRAIL_PCT: number;
+  POST_BANK_TRAIL_PCT: number; TIMEBOX_FLAT_MULT: number;
 } {
   const p = withLearned(s, learned);
   const cum1 = p.tp1[1];
@@ -205,6 +256,11 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
     // already run — it varies by CLASS.
     TRAIL_TIGHT_PCT: trailPct, TRAIL_MID_PCT: trailPct, TRAIL_WIDE_PCT: trailPct,
     HARD_STOP_PCT: Math.round((1 - p.floor) * 100),
+    // The stop is VENUE-SPLIT — thin bonding-curve tape reads a different knob
+    // entirely, and most of our tape is meteora-dbc. Overriding only
+    // HARD_STOP_PCT left the majority of routed positions taking a 45% stop
+    // instead of their own cover, which is the whole point of the genome.
+    HARD_STOP_PCT_THIN: Math.round((1 - p.floor) * 100),
     RUNNER_MAX_HOLD_SEC: p.holdSec,
     // ── THE GENOME IS THE SOLE AUTHORITY ──────────────────────────────────────
     // Every global floor is disabled for a routed position. These were built for
@@ -228,5 +284,13 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
     PROFIT_LOCK_ARM_MULT: Number.POSITIVE_INFINITY, // never-close-red ratchet: the trail owns give-back
     PROFIT_FLOOR_USD: Number.POSITIVE_INFINITY, // dollar-profit arm for the same ratchet
     POST_BANK_TRAIL_PCT: trailPct, // post-bank snug would re-tighten the class's own trail
+    // STOP_FLAT — recycles any position whose peak hasn't cleared 1.1× after 3
+    // minutes. Measured live 2026-07-21: it cut three BASE positions for −$1.08,
+    // −$1.54 and −$2.42 in minutes, swinging that class from +$4.05 to −$3.63 and
+    // inverting the measured ranking between classes. It cannot coexist with
+    // genomes whose median run is 1.43-1.56× and whose clocks are their own (MOON
+    // 10.9m to peak, RISER 14.8m) — three minutes is inside every class's normal
+    // development. 0 disables: `peakMult < 0` is never true.
+    TIMEBOX_FLAT_MULT: 0,
   };
 }

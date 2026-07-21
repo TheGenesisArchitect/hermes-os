@@ -23,9 +23,10 @@ import {
   config,
   db,
   positions,
+  safetyChecks,
   signals,
 } from "@hermes/db";
-import { asc, desc, eq, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { scanPonds } from "./pondScanner.js";
 import { refreshWalletReputation, scoreCandidateWalletEdge } from "./walletReputation.js";
 
@@ -46,6 +47,49 @@ const DELIST_MISSES = 2;
 // peak) fabricated a 56,000x "winner". So we only trust a read with real
 // liquidity for the baseline and for new highs — deaths are still recorded.
 const REF_MIN_LIQ = 1_000;
+
+/**
+ * HOLDER DISPERSION at discovery, from the safety checks the scout already ran.
+ * Ownership structure separates the outcome classes an order of magnitude better
+ * than anything in the trajectory (largest-holder median: MOON 5.26% / RISER
+ * 4.63% vs DUD 51.2% / CLIMBER 78.0% / RUG 35.3%) and it is known before a
+ * single tick exists.
+ *
+ * Cached for the life of the process because ownership AT DISCOVERY is a fixed
+ * fact — re-reading it on every tick of every watched candidate would be pure
+ * query load for a value that cannot change. A missing check resolves to nulls
+ * and the router falls back to trajectory alone.
+ */
+interface HolderShape { largestPct: number | null; top10Pct: number | null; holders: number | null }
+const holderCache = new Map<string, HolderShape>();
+async function holderShape(mint: string): Promise<HolderShape> {
+  const hit = holderCache.get(mint);
+  if (hit) return hit;
+  const empty: HolderShape = { largestPct: null, top10Pct: null, holders: null };
+  try {
+    const rows = await db
+      .select({ checkName: safetyChecks.checkName, evidence: safetyChecks.evidence })
+      .from(safetyChecks)
+      .where(and(eq(safetyChecks.mint, mint), inArray(safetyChecks.checkName, ["holder_concentration", "rugcheck"])));
+    const shape = { ...empty };
+    for (const r of rows) {
+      const e = (r.evidence ?? {}) as Record<string, unknown>;
+      if (r.checkName === "holder_concentration") {
+        const lg = Number(e.largestHolderPct);
+        const t10 = Number(e.top10Pct);
+        if (Number.isFinite(lg)) shape.largestPct = lg;
+        if (Number.isFinite(t10)) shape.top10Pct = t10;
+      } else {
+        const h = Number(e.totalHolders);
+        if (Number.isFinite(h)) shape.holders = h;
+      }
+    }
+    holderCache.set(mint, shape);
+    return shape;
+  } catch {
+    return empty; // a DB hiccup must never stop the recorder from arming
+  }
+}
 
 function rowToTick(r: typeof candidateTicks.$inferSelect): Tick {
   return {
@@ -318,12 +362,19 @@ async function observe(
     // for every armed candidate, traded or not, so the refusal population stays
     // measurable instead of invisible. The trader looks the exit profile up from
     // this rather than from the global config.
+    // HOLDER DISPERSION — read from the safety checks captured at discovery.
+    // Cached per mint for the life of the watch: ownership at discovery is a
+    // fixed fact, so re-reading it every tick would be pure query load.
+    const holder = await holderShape(o.mint);
     const signature = routeSignature({
       liq0: firstTrustedLiq,
       liqNow: market.liquidityUsd,
       buyShare: t.buyShareM5,
       dipDepth: trig.dipDepth,
       snapRate: trig.snapRate,
+      largestHolderPct: holder.largestPct,
+      top10Pct: holder.top10Pct,
+      holders: holder.holders,
     });
     // RE-ENTRY (the VICE 8.4x lesson, 2026-07-16): one-shot `!o.entered`
     // permanently burned any candidate we ever touched — overnight, 67
