@@ -41,14 +41,31 @@ function KnobRow({ k }: { k: ControlKnobView }) {
     else setDraft("");
   };
 
+  // A knob the TRADE SIGNATURE owns is dimmed and labelled, never silently live:
+  // the signature's exit overrides merge after the effective config, so pinning
+  // one of these changes nothing on a routed position. A control that looks
+  // active but does nothing is worse than no control at all.
+  const dead = k.supersededBySignature === true;
+
   return (
-    <div className="flex items-center gap-2 py-1.5">
+    <div className="flex items-center gap-2 py-1.5" style={dead ? { opacity: 0.45 } : undefined}>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: SOURCE_TONE[k.source] }} />
           <span className="text-xs" style={{ color: "var(--text-secondary)" }}>{k.label}</span>
+          {dead && (
+            <span
+              title="Owned by the trade signature — each class carries its own cover, trail and ladder, fitted per class by the learning loop. Pinning this affects only legacy positions opened before signature routing."
+              className="rounded-sm border px-1 text-[9px] uppercase tracking-wide"
+              style={{ color: "var(--text-muted)", borderColor: "currentColor" }}
+            >
+              per-signature
+            </span>
+          )}
         </div>
-        <div className="pl-3 text-[10px]" style={{ color: "var(--text-muted)" }}>{k.hint}</div>
+        <div className="pl-3 text-[10px]" style={{ color: "var(--text-muted)" }}>
+          {dead ? "superseded — set in the Signature Console above" : k.hint}
+        </div>
       </div>
 
       {/* ghost recommendation from the policy + base default */}

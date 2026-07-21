@@ -22,8 +22,12 @@ import {
   resilientFetch,
   resolveOverrides,
   runForecast,
+  SIGNATURE_PROFILES,
   tickFrom,
   tradeDna,
+  withLearned,
+  type LearnedProfile,
+  type Signature,
   type ForecastResult,
   type ManagementCall,
   type TradeDna,
@@ -3462,4 +3466,136 @@ export async function getWinningFormula(windowHours = 24): Promise<WinningFormul
     else if (live.avgWinPct < paper.avgWinPct - 8) leak = "CAPTURE — winners banked too early (trail/ladder)";
   }
   return { windowHours, paper, live, leak };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIGNATURE CONSOLE — the trading desk, reorganised around the five genomes.
+//
+// The old terminal exposed one global exit geometry. That geometry now belongs
+// to the SIGNATURE: each class carries its own cover, trail, ladder and clock,
+// fitted per class against held-out tape by the learning loop. This view pairs
+// each signature's LIVE profile with what it has actually done, so the operator
+// can see the rule and its result in one row instead of tuning a global dial
+// that no longer reaches any position.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SignatureRow {
+  signature: Signature;
+  trade: boolean;
+  note: string;
+  /** Where the live profile came from — compiled default or a loop promotion. */
+  source: "default" | "learned";
+  // The live exit geometry.
+  size: number;
+  minSnap: number;
+  floor: number;
+  trail: number;
+  tp1: [number, number];
+  tp2: [number, number];
+  holdSec: number;
+  // Measured KPIs over the window — what the rule actually produced.
+  trades: number;
+  wins: number;
+  winPct: number;
+  evPerDollar: number; // realised return per $1 deployed
+  pnlUsd: number;
+  avgPeakMult: number;
+  openNow: number;
+  /** Candidates routed here in the window, whether or not they were traded. */
+  routed: number;
+}
+
+export interface SignatureConsoleView {
+  windowHours: number;
+  rows: SignatureRow[];
+  promotedAt: string | null;
+  totals: { trades: number; winPct: number; pnlUsd: number; routed: number };
+}
+
+export async function getSignatureConsole(windowHours = 24): Promise<SignatureConsoleView> {
+  const since = new Date(Date.now() - windowHours * 3_600_000);
+
+  const [learnedRow] = await db.select().from(config).where(eq(config.key, "signature_profiles"));
+  const learnedMap = (learnedRow?.value as Record<string, LearnedProfile & { updatedAt?: string }> | undefined) ?? {};
+  const promotedAt = typeof learnedMap.updatedAt === "string" ? learnedMap.updatedAt : null;
+
+  // Closed-position KPIs per signature. EV is realised return per $1 deployed —
+  // the same unit the learning loop optimises, so the console and the loop are
+  // reading the same number rather than two different definitions of "good".
+  const perf = await db
+    .select({
+      signature: positions.signature,
+      trades: sql<number>`count(*)::int`,
+      wins: sql<number>`count(*) filter (where ${positions.realizedPnlUsd} > 0)::int`,
+      pnl: sql<number>`coalesce(sum(${positions.realizedPnlUsd}), 0)::float8`,
+      deployed: sql<number>`coalesce(sum(${positions.sizeUsd}), 0)::float8`,
+      avgPeak: sql<number>`coalesce(avg(${positions.peakPriceUsd} / nullif(${positions.entryPriceUsd}, 0)), 0)::float8`,
+    })
+    .from(positions)
+    .where(and(eq(positions.lane, "paper"), eq(positions.status, "closed"), gte(positions.closedAt, since)))
+    .groupBy(positions.signature);
+
+  const openRows = await db
+    .select({ signature: positions.signature, n: sql<number>`count(*)::int` })
+    .from(positions)
+    .where(and(eq(positions.lane, "paper"), eq(positions.status, "open")))
+    .groupBy(positions.signature);
+
+  // Routed includes refusals, so RUG_RISK's workload is visible rather than
+  // silent — it discards the majority of the universe and that should be seen.
+  const routedRows = await db
+    .select({ signature: candidateOutcomes.signature, n: sql<number>`count(*)::int` })
+    .from(candidateOutcomes)
+    .where(and(sql`${candidateOutcomes.signature} is not null`, gte(candidateOutcomes.updatedAt, since)))
+    .groupBy(candidateOutcomes.signature);
+
+  const perfBy = new Map(perf.map((p) => [p.signature ?? "none", p]));
+  const openBy = new Map(openRows.map((o) => [o.signature ?? "none", o.n]));
+  const routedBy = new Map(routedRows.map((r) => [r.signature ?? "none", r.n]));
+
+  const rows: SignatureRow[] = (Object.keys(SIGNATURE_PROFILES) as Signature[]).map((sig) => {
+    const learned = learnedMap[sig] ?? null;
+    const p = withLearned(sig, learned);
+    const m = perfBy.get(sig);
+    const trades = m?.trades ?? 0;
+    const wins = m?.wins ?? 0;
+    const deployed = m?.deployed ?? 0;
+    const pnl = m?.pnl ?? 0;
+    return {
+      signature: sig,
+      trade: p.trade,
+      note: p.note,
+      source: learned && typeof learned.trail === "number" ? "learned" : "default",
+      size: p.size,
+      minSnap: p.minSnap,
+      floor: p.floor,
+      trail: p.trail,
+      tp1: p.tp1,
+      tp2: p.tp2,
+      holdSec: p.holdSec,
+      trades,
+      wins,
+      winPct: trades > 0 ? (100 * wins) / trades : 0,
+      // Deployed can be 0 when nothing closed; report 0 rather than NaN/Infinity.
+      evPerDollar: deployed > 0 ? 1 + pnl / deployed : 0,
+      pnlUsd: pnl,
+      avgPeakMult: m?.avgPeak ?? 0,
+      openNow: openBy.get(sig) ?? 0,
+      routed: routedBy.get(sig) ?? 0,
+    };
+  });
+
+  const tTrades = rows.reduce((s, r) => s + r.trades, 0);
+  const tWins = rows.reduce((s, r) => s + r.wins, 0);
+  return {
+    windowHours,
+    rows,
+    promotedAt,
+    totals: {
+      trades: tTrades,
+      winPct: tTrades > 0 ? (100 * tWins) / tTrades : 0,
+      pnlUsd: rows.reduce((s, r) => s + r.pnlUsd, 0),
+      routed: rows.reduce((s, r) => s + r.routed, 0),
+    },
+  };
 }

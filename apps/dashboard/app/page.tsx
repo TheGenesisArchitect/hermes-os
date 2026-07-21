@@ -3,6 +3,7 @@ import { AccountingLedger } from "@/components/AccountingLedger";
 import { HarvestClock } from "@/components/HarvestClock";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ControlTerminal } from "@/components/ControlTerminal";
+import { SignatureConsole } from "@/components/SignatureConsole";
 import { EquityChart } from "@/components/EquityChart";
 import { FillsTable } from "@/components/FillsTable";
 import { HarvestButton } from "@/components/HarvestButton";
@@ -32,6 +33,7 @@ import {
   getIntelReport,
   getKillSwitch,
   getControlTerminal,
+  getSignatureConsole,
   getKpiStrip,
   getNews,
   getManagedPositions,
@@ -79,6 +81,7 @@ export default async function Overview() {
     news,
     timingGrid,
     controlTerminal,
+    signatureConsole,
     ponds,
     hourWindows,
     walletStatus,
@@ -110,6 +113,7 @@ export default async function Overview() {
     getNews(),
     getTimingGrid(),
     getControlTerminal(),
+    getSignatureConsole(),
     getPondRadar(),
     getHourlyWindows(),
     getWalletStatus(),
@@ -232,9 +236,16 @@ export default async function Overview() {
           reads the regime and recommends (ghost values); the operator's manual
           pins always win. Auto ships ADVISORY until a clean prime run gives the
           policy its favorable pole — see the one-pole caveat in overrides.ts. */}
+      {/* The desk, reorganised around the five genomes. Exit geometry belongs to
+          the signature now, so this sits ABOVE the control terminal — it is the
+          surface that actually governs how a position is managed. */}
+      <section className="card p-4">
+        <SignatureConsole view={signatureConsole} />
+      </section>
+
       <section className="card p-4">
         <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
-          Control terminal — live TP / stops / size · adaptive policy + manual override
+          Control terminal — exposure &amp; regime · adaptive policy + manual override
         </h2>
         <ControlTerminal view={controlTerminal} />
       </section>

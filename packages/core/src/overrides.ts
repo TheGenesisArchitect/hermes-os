@@ -47,6 +47,15 @@ export interface OverrideKnob {
   min: number;
   max: number;
   step: number;
+  /**
+   * Set when the TRADE SIGNATURE owns this decision. The signature's exit
+   * overrides are merged AFTER the effective config, so a pin on one of these
+   * has no effect on any position carrying a signature — only on legacy
+   * positions opened before signature routing. The terminal must render these
+   * as superseded rather than as live controls; a slider that silently does
+   * nothing is worse than no slider.
+   */
+  supersededBySignature?: boolean;
 }
 
 // The exposed knobs, in dashboard display order. Bands are deliberately generous
@@ -55,13 +64,13 @@ export const OVERRIDE_KNOBS: OverrideKnob[] = [
   { key: "PAPER_POSITION_USD", label: "Position size", hint: "base $/entry — off-hours throttle & per-candidate risk/quality apply on top", group: "size", unit: "$", min: 0.5, max: 200, step: 0.5 },
   { key: "OFF_HOURS_SIZE_MULT", label: "Off-hours throttle", hint: "× base size outside prime (18–23 UTC). 1.0 = full size off-hours (removes the probe cap)", group: "size", unit: "x", min: 0, max: 1, step: 0.05 },
   { key: "FARM_MAX_SLOTS", label: "Farm book cap", hint: "max concurrent farm-tape positions — dry powder waits for the organic pond", group: "size", unit: "slots", min: 0, max: 24, step: 1 },
-  { key: "TP0_MULT", label: "TP0", hint: "first tranche — bank into the blow-off", group: "tp", unit: "x", min: 1.02, max: 3, step: 0.01 },
-  { key: "TP1_MULT", label: "TP1", hint: "bank the bulk", group: "tp", unit: "x", min: 1.05, max: 5, step: 0.01 },
-  { key: "TP2_MULT", label: "TP2", hint: "most banked; remainder rides uncapped", group: "tp", unit: "x", min: 1.1, max: 20, step: 0.05 },
-  { key: "TRAIL_TIGHT_PCT", label: "Trail · tight", hint: "giveback in the 1–2.5x spike zone", group: "stop", unit: "%", min: 2, max: 40, step: 0.5 },
-  { key: "TRAIL_MID_PCT", label: "Trail · mid", hint: "giveback for a 2.5–6x runner", group: "stop", unit: "%", min: 2, max: 50, step: 0.5 },
-  { key: "TRAIL_WIDE_PCT", label: "Trail · wide", hint: "giveback for a ≥6x parabolic", group: "stop", unit: "%", min: 2, max: 60, step: 0.5 },
-  { key: "HARD_STOP_PCT", label: "Hard stop", hint: "pre-ignition cut on a confirmed entry that reverses", group: "stop", unit: "%", min: 1, max: 30, step: 0.5 },
+  { key: "TP0_MULT", label: "TP0", hint: "first tranche — bank into the blow-off", group: "tp", unit: "x", min: 1.02, max: 3, step: 0.01, supersededBySignature: true },
+  { key: "TP1_MULT", label: "TP1", hint: "bank the bulk", group: "tp", unit: "x", min: 1.05, max: 5, step: 0.01, supersededBySignature: true },
+  { key: "TP2_MULT", label: "TP2", hint: "most banked; remainder rides uncapped", group: "tp", unit: "x", min: 1.1, max: 20, step: 0.05, supersededBySignature: true },
+  { key: "TRAIL_TIGHT_PCT", label: "Trail · tight", hint: "giveback in the 1–2.5x spike zone", group: "stop", unit: "%", min: 2, max: 40, step: 0.5, supersededBySignature: true },
+  { key: "TRAIL_MID_PCT", label: "Trail · mid", hint: "giveback for a 2.5–6x runner", group: "stop", unit: "%", min: 2, max: 50, step: 0.5, supersededBySignature: true },
+  { key: "TRAIL_WIDE_PCT", label: "Trail · wide", hint: "giveback for a ≥6x parabolic", group: "stop", unit: "%", min: 2, max: 60, step: 0.5, supersededBySignature: true },
+  { key: "HARD_STOP_PCT", label: "Hard stop", hint: "pre-ignition cut on a confirmed entry that reverses", group: "stop", unit: "%", min: 1, max: 30, step: 0.5, supersededBySignature: true },
   { key: "PROFIT_LOCK_ARM_MULT", label: "Arm at", hint: "multiple that ignites the never-close-red floor", group: "stop", unit: "x", min: 1.02, max: 2, step: 0.01 },
   { key: "PROFIT_FLOOR_USD", label: "Arm at $", hint: "dollar profit that also arms the floor (base hits)", group: "stop", unit: "$", min: 0, max: 20, step: 0.05 },
 ];
@@ -217,18 +226,24 @@ export function computeAdaptivePolicy(stats: RegimeStats, now: number): Adaptive
   const label =
     hostility >= 0.66 ? "hostile — tighten & shrink" : hostility >= 0.4 ? "mixed — hold the line" : "favorable — let winners run";
 
-  // Poles chosen from the doctrine already in the code:
-  //  favorable → bigger base size, wider trails, more room before the hard stop,
-  //             TPs let to breathe (bank a touch later), fuller farm book allowed.
-  //  hostile   → probe size, tight trails, fast hard stop, bank TPs earlier,
-  //             fewer farm slots (dry powder waits for the organic pond).
+  // ── SCOPE: EXPOSURE, NOT EXIT GEOMETRY (2026-07-21) ────────────────────────
+  // The policy used to recommend TP0/TP1, the trails and the hard stop as well.
+  // Those knobs now belong to the TRADE SIGNATURE and the learning loop, which
+  // fit them per class against held-out tape — and they arrive at completely
+  // different numbers: winners give back 24-52% before their real high and dip
+  // to 0.30-0.40× of entry, while the poles below would have tightened trails to
+  // 3-8% and the stop to 4-7%. That is the configuration measured to be ejecting
+  // every climber and moonshot.
+  //
+  // Two systems with authority over one decision is the failure mode, not the
+  // numbers. Since the signature override is applied AFTER the effective config,
+  // the policy's exit recommendations could never take effect anyway — they were
+  // dead values that still displayed on the terminal as if they were live. So the
+  // policy now owns what it is genuinely good at: how much capital is exposed and
+  // how wide the farm book runs. How a position EXITS is the signature's job.
   const auto: Partial<Record<OverrideKey, number>> = {
     PAPER_POSITION_USD: round(lerp(50, 8, hostility), 2),
-    TRAIL_TIGHT_PCT: round(lerp(8, 3, hostility), 1),
-    TRAIL_MID_PCT: round(lerp(14, 8, hostility), 1),
-    HARD_STOP_PCT: round(lerp(7, 4, hostility), 1),
-    TP0_MULT: round(lerp(1.2, 1.12, hostility), 2),
-    TP1_MULT: round(lerp(1.35, 1.25, hostility), 2),
+    OFF_HOURS_SIZE_MULT: round(lerp(1, 0.4, hostility), 2),
     FARM_MAX_SLOTS: Math.round(lerp(10, 4, hostility)),
   };
   // Clamp every recommendation to its knob band.
