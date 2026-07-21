@@ -34,6 +34,25 @@ const WATCHED_PROGRAMS: WatchedProgram[] = [
     dex: "meteora-damm-v2",
     createMarker: /Instruction: InitializePool/i,
   },
+  // RAYDIUM — pre-wired 2026-07-21 while the stream is credit-blocked, so the
+  // flip back to STREAM_ENABLED=true carries the venue automatically. The 7-day
+  // census showed ~20 Raydium-family discoveries a WEEK against one of the
+  // largest launch flows on Solana, and a raw 60-pool GT sample held ZERO
+  // Raydium entries — GT does not index LaunchLab creations at launch speed, so
+  // polling cannot deliver this venue; only the push stream can. Program IDs
+  // validated against the chain (owner of known pools), not from memory. The
+  // /initialize/i markers are deliberately broad — refine to the exact
+  // instruction names from the first live events after re-enable.
+  {
+    address: "LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj",
+    dex: "raydium-launchlab",
+    createMarker: /initialize/i,
+  },
+  {
+    address: "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+    dex: "raydium-cpmm",
+    createMarker: /initialize/i,
+  },
 ];
 
 export interface StreamCandidate {
