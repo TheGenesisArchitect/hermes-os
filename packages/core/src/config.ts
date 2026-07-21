@@ -622,6 +622,22 @@ const envSchema = z.object({
   // The range is deliberately narrow: the old eight-factor chain spread sizes
   // 200× in six hours ($0.20 to $41.64) and put twenty-one cents on our
   // best-evidenced class. A bounded range cannot do that.
+  // ── RUNNER RATCHET ────────────────────────────────────────────────────────
+  // Above the top rung the remainder is pure upside. The floor already ratchets
+  // (peak × (1−w), and peak only rises); these control how the WIDTH scales with
+  // the size of the move, so the runner keeps room to breathe while young and
+  // the floor closes in as the gain becomes worth defending.
+  //
+  // Measured 2026-07-21: of trades reaching 2.35×, 46.7% go on to 3.2× but only
+  // 22.2% reach 4.25× and 13.3% reach 6×. So beyond ~3× every further multiple
+  // is progressively rarer, and a fixed give-back becomes progressively more
+  // expensive — Pumpman peaked 27.63× and survived only because a basket harvest
+  // happened to fire; Spam banked 45% off a 3.90× peak and still finished red
+  // because the 55% runner rode a full-width trail into the rug.
+  RUNNER_RATCHET_START: z.coerce.number().default(3.2), // engages just past the top rung
+  RUNNER_RATCHET_WIDE_PCT: z.coerce.number().default(40), // 3.2–8×: still developing, let it breathe
+  RUNNER_RATCHET_MID_PCT: z.coerce.number().default(28), // 8–20×: proven runner, start defending
+  RUNNER_RATCHET_TIGHT_PCT: z.coerce.number().default(18), // 20×+: a rare gain, defend it hard
   POSITION_FRAC_MIN: z.coerce.number().default(0.01), // 0★ residual — floor of the range
   POSITION_FRAC_MAX: z.coerce.number().default(0.05), // 2★ conviction — ceiling, policy may lower it
   CONFIRM_MIN_SNAP: z.coerce.number().default(0),

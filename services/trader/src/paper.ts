@@ -896,6 +896,31 @@ function trailWidthPct(
   } else {
     w = peakMult >= RUNNER_MULT ? cfg.TRAIL_WIDE_PCT : cfg.TRAIL_MID_PCT;
   }
+  // ── RUNNER RATCHET ────────────────────────────────────────────────────────
+  // Above the top rung the position is pure upside, and the goal is to let it
+  // run to a 20x or a 100x while a RISING floor follows it up. The floor already
+  // ratchets — it is peak × (1 − w), and peak only ever increases — so what
+  // matters here is how w scales with the size of the move.
+  //
+  // A fixed width is wrong at both ends. At 3x, 40% of give-back is the normal
+  // breathing of a token still developing, and cutting tighter shakes us out of
+  // the moves that become 20x. At 30x, that same 40% hands back twelve multiples
+  // of realised gain to catch a top we have no evidence of reaching — Pumpman
+  // peaked 27.63x and only kept it because a basket harvest happened to fire.
+  //
+  // So the width TIGHTENS as the multiple climbs: the trade keeps room to breathe
+  // while it is young, and the floor closes in as the gain becomes worth
+  // defending. The runner still runs; the floor just stops giving back a fortune.
+  if (peakMult >= cfg.RUNNER_RATCHET_START) {
+    const bands: [number, number][] = [
+      [cfg.RUNNER_RATCHET_START, cfg.RUNNER_RATCHET_WIDE_PCT], // just past the ladder — full breathing room
+      [8, cfg.RUNNER_RATCHET_MID_PCT], // a proven runner — start defending
+      [20, cfg.RUNNER_RATCHET_TIGHT_PCT], // a rare, large gain — defend it hard
+    ];
+    let ratchet = cfg.RUNNER_RATCHET_WIDE_PCT;
+    for (const [mult, pct] of bands) if (peakMult >= mult) ratchet = pct;
+    w = Math.min(w, ratchet);
+  }
   if (banked) w = Math.max(w, cfg.POST_BANK_TRAIL_PCT);
   if (call?.action === "RIDE" && peakMult >= RIDE_MIN_MULT && drawdownPct < SNUG_DD) {
     w += cfg.TRAIL_RIDE_BONUS_PCT; // earned: a real runner still printing highs
