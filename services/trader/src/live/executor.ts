@@ -1213,6 +1213,28 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       }
       if (value == null) {
         guardHits.delete(lp.id);
+        // NO SELL QUOTE. Transiently this is fine — a 504 or a momentary route gap
+        // should not cut a position. But for a token that has genuinely LOST its
+        // route this is true on every cycle, forever, and the loop skipped the
+        // genome exit before it was ever consulted. That stranded seven live
+        // positions tonight: all rugged, all quoteless, all sitting open 20-73
+        // minutes past a 12.7-minute clock with qty_remaining at 100%, while the
+        // ledger showed them as live exposure.
+        //
+        // So once a routed position is past its OWN clock, stop skipping and
+        // attempt the exit regardless. Either the sell lands, or it fails and
+        // liveSellPosition's strand write-off accumulates evidence until it books
+        // the loss honestly. Both outcomes close the position; skipping never does.
+        if (lp.signature) {
+          const ageSec = (Date.now() - new Date(lp.openedAt).getTime()) / 1000;
+          const clockSec = signatureExitOverrides(lp.signature as Signature).RUNNER_MAX_HOLD_SEC;
+          if (clockSec > 0 && ageSec >= clockSec) {
+            console.log(
+              `🧬 LIVE ${lp.signature} ${short(lp.mint)} — past its ${Math.round(clockSec / 60)}m clock with no sell quote, forcing the exit`,
+            );
+            await liveSellPosition(cfg, lp, 1, "runner_timeout", cfg.LIVE_STOP_SLIPPAGE_BPS);
+          }
+        }
         continue;
       }
       const cost = n(lp.sizeUsd);
