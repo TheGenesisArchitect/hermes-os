@@ -25,6 +25,8 @@ import type { HermesConfig } from "./config.js";
 export type OverrideKey =
   | "PAPER_POSITION_USD"
   | "OFF_HOURS_SIZE_MULT"
+  | "POSITION_FRAC_MIN"
+  | "POSITION_FRAC_MAX"
   | "TP0_MULT"
   | "TP1_MULT"
   | "TP2_MULT"
@@ -63,6 +65,8 @@ export interface OverrideKnob {
 export const OVERRIDE_KNOBS: OverrideKnob[] = [
   { key: "PAPER_POSITION_USD", label: "Position size", hint: "base $/entry — off-hours throttle & per-candidate risk/quality apply on top", group: "size", unit: "$", min: 0.5, max: 200, step: 0.5 },
   { key: "OFF_HOURS_SIZE_MULT", label: "Off-hours throttle", hint: "× base size outside prime (18–23 UTC). 1.0 = full size off-hours (removes the probe cap)", group: "size", unit: "x", min: 0, max: 1, step: 0.05 },
+  { key: "POSITION_FRAC_MIN", label: "Size floor", hint: "% of capital on a 0-star residual setup — the bottom of the policy range", group: "size", unit: "x", min: 0.001, max: 0.05, step: 0.001 },
+  { key: "POSITION_FRAC_MAX", label: "Size ceiling", hint: "% of capital on a 2-star conviction setup — the top of the policy range", group: "size", unit: "x", min: 0.002, max: 0.15, step: 0.001 },
   { key: "FARM_MAX_SLOTS", label: "Farm book cap", hint: "max concurrent farm-tape positions — dry powder waits for the organic pond", group: "size", unit: "slots", min: 0, max: 24, step: 1 },
   { key: "TP0_MULT", label: "TP0", hint: "first tranche — bank into the blow-off", group: "tp", unit: "x", min: 1.02, max: 3, step: 0.01, supersededBySignature: true },
   { key: "TP1_MULT", label: "TP1", hint: "bank the bulk", group: "tp", unit: "x", min: 1.05, max: 5, step: 0.01, supersededBySignature: true },
@@ -242,7 +246,15 @@ export function computeAdaptivePolicy(stats: RegimeStats, now: number): Adaptive
   // policy now owns what it is genuinely good at: how much capital is exposed and
   // how wide the farm book runs. How a position EXITS is the signature's job.
   const auto: Partial<Record<OverrideKey, number>> = {
-    PAPER_POSITION_USD: round(lerp(50, 8, hostility), 2),
+    // THE POLICY OWNS THE RANGE, the quality score picks the point inside it.
+    // Regime hostility decides how much capital may be at risk on any single
+    // trade; conviction then places a 2★ setup at the ceiling and a residual at
+    // the floor. Sizing as a FRACTION rather than a dollar amount is what lets
+    // paper and live share one formula — paper's capital is the bankroll, live's
+    // is the wallet balance, and both scale as the account moves.
+    POSITION_FRAC_MAX: round(lerp(0.05, 0.012, hostility), 4),
+    POSITION_FRAC_MIN: round(lerp(0.01, 0.004, hostility), 4),
+    PAPER_POSITION_USD: round(lerp(50, 8, hostility), 2), // legacy: unrouted positions only
     OFF_HOURS_SIZE_MULT: round(lerp(1, 0.4, hostility), 2),
     FARM_MAX_SLOTS: Math.round(lerp(10, 4, hostility)),
   };

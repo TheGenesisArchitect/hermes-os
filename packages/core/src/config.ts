@@ -600,6 +600,17 @@ const envSchema = z.object({
   // stays off until the sweep + holdout in replayTrigger.ts says which threshold
   // sits on a plateau rather than a spike — a peak found by searching is how the
   // ×2.0 band boost passed review and then went 0-for-4 with real money.
+  // ── POSITION SIZE AS A FRACTION OF CAPITAL ────────────────────────────────
+  // One formula for both lanes: size = capital × frac, where the POLICY sets the
+  // range by regime and the QUALITY SCORE (conviction stars) picks the point
+  // inside it. Paper's capital is the bankroll, live's is the wallet balance, so
+  // both scale as the account moves — a fixed dollar size silently becomes a
+  // different risk as the balance changes, and the two lanes drift apart.
+  // The range is deliberately narrow: the old eight-factor chain spread sizes
+  // 200× in six hours ($0.20 to $41.64) and put twenty-one cents on our
+  // best-evidenced class. A bounded range cannot do that.
+  POSITION_FRAC_MIN: z.coerce.number().default(0.01), // 0★ residual — floor of the range
+  POSITION_FRAC_MAX: z.coerce.number().default(0.05), // 2★ conviction — ceiling, policy may lower it
   CONFIRM_MIN_SNAP: z.coerce.number().default(0),
   // Drawdown ceiling once snapped (the dip is the signal). Only consulted when
   // CONFIRM_MIN_SNAP > 0 and the candidate cleared it.

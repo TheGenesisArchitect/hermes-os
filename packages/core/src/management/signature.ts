@@ -271,6 +271,29 @@ export function convictionOf(s: Signature, i: Partial<SignatureInputs>): Convict
   return { stars: 0, sizeMult: 0.75, why: `${s} — unidentified residual, sized down` };
 }
 
+/**
+ * POSITION SIZE AS A FRACTION OF CAPITAL — one formula, both lanes.
+ *
+ *   size = capital × frac,  frac = min + (max − min) × quality
+ *
+ * The POLICY owns the range: regime hostility sets how much capital may be at
+ * risk per trade at all. The QUALITY SCORE picks the point inside it: a two-star
+ * setup deploys the top of the range, a residual gets the floor. Nothing else
+ * multiplies in — the 200× spread that sized RISER at twenty-one cents came from
+ * eight independent factors compounding, and a bounded range cannot do that.
+ *
+ * Expressing it as a fraction rather than a dollar amount is what lets paper and
+ * live share it: paper's capital is the bankroll, live's is the wallet balance,
+ * and both scale automatically as the account grows or shrinks. A fixed dollar
+ * size silently becomes a different risk as the balance moves.
+ */
+export function sizeFraction(stars: number, fracMin: number, fracMax: number): number {
+  const lo = Math.max(0, Math.min(fracMin, fracMax));
+  const hi = Math.max(fracMin, fracMax);
+  const quality = Math.max(0, Math.min(1, stars / 2)); // 0★ → floor, 1★ → mid, 2★ → ceiling
+  return lo + (hi - lo) * quality;
+}
+
 export const profileOf = (s: Signature): SignatureProfile => SIGNATURE_PROFILES[s];
 export const isMoon = (s: Signature): boolean => s.startsWith("MOON");
 

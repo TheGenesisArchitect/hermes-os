@@ -62,6 +62,7 @@ export {
   profileOf,
   convictionOf,
   isMoon,
+  sizeFraction,
   signatureExitOverrides,
   withLearned,
   SIGNATURE_PROFILES,

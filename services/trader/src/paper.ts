@@ -9,6 +9,7 @@ import {
   fetchTokenMarkets,
   convictionOf,
   profileOf,
+  sizeFraction,
   signatureExitOverrides,
   tickFrom,
   type HermesConfig,
@@ -352,9 +353,15 @@ async function openFromSignal(
   // should be sized by how strongly the evidence backs it, not by a product of
   // heuristics that predate the signatures. Unrouted positions keep the chain.
   const conv = sig ? convictionOf(sig.signature, { holders: sig.holders, top10Pct: sig.top10Pct, largestHolderPct: sig.largestHolderPct }) : null;
+  // A ROUTED position sizes as a PERCENT OF CAPITAL: the policy sets the range by
+  // regime, the quality score picks the point inside it, and the signature's own
+  // class multiplier scales it. Capital here is the paper bankroll; the live lane
+  // runs the identical formula against the wallet balance, so the two lanes stay
+  // on one risk model instead of drifting as the account moves.
+  const frac = conv ? sizeFraction(conv.stars, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) : 0;
   const sizeUsd = Number(
     (conv
-      ? cfg.PAPER_POSITION_USD * sizeMult * sessionMult * sigMult * conv.sizeMult
+      ? cfg.PAPER_BANKROLL_USD * frac * sizeMult * sessionMult * sigMult
       : cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult * sigMult
     ).toFixed(2),
   );
