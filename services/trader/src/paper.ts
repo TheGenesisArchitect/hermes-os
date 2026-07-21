@@ -1604,6 +1604,12 @@ export async function fastFloorSweep(cfg: HermesConfig): Promise<void> {
         and(
           eq(positions.lane, "paper"),
           eq(positions.status, "open"),
+          // A signature-routed position is governed ONLY by its own genome. This
+          // sweep runs outside the per-position config merge, so the exclusion
+          // has to happen in the query — otherwise the class's cover and trail
+          // would be silently undercut by a global floor the learning loop never
+          // simulated. Legacy positions (no signature) keep the sweep.
+          sql`${positions.signature} is null`,
           sql`${positions.peakPriceUsd}::numeric >= ${positions.entryPriceUsd}::numeric * ${cfg.FAST_FLOOR_ARM_MULT}`,
         ),
       );
@@ -1937,7 +1943,11 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     // micro-gain before the stall round-trips it. This is a TP, not a loss cut: the cohort
     // nets POSITIVE (−$48 held → +$36 banked). Peak-based, so a proven lifter is NEVER
     // banked here (it rides the ladder); a user "ride" override still wins.
-    if (cfg.DUD_CUT_ENABLED && intent !== "ride") {
+    // Also exempt for routed positions: this is a global time-and-lift rule, and
+    // a class whose median run is 1.43-1.56× and whose clock is its OWN (MOON at
+    // 4m, CLIMBER at 2.5m) must not be banked out early by a shared 2.25m stall
+    // test the learning loop never modelled.
+    if (cfg.DUD_CUT_ENABLED && intent !== "ride" && !position.signature) {
       const ageMin = (Date.now() - new Date(position.openedAt).getTime()) / 60_000;
       const peakMult = peak / n(position.entryPriceUsd);
       const markMult = market.priceUsd / n(position.entryPriceUsd);
@@ -1956,7 +1966,14 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     // 2. Classifier — recycle DEAD losers only (faded/underwater and never got
     //    into profit). A position that has shown green is NEVER cut here: the
     //    ratcheting profit-trail banks it instead, so a runner is never capped.
-    if (cfg.CLASSIFIER_MODE === "active" && call && intent !== "ride") {
+    //
+    //    SIGNATURE-ROUTED POSITIONS ARE EXEMPT. The `armed` guard above keys off
+    //    PROFIT_LOCK_ARM_MULT, which the genome disables — so leaving this active
+    //    would invert its purpose and make the classifier cut MORE freely on
+    //    exactly the classes built to sit through a drawdown (CLIMBER's cover is
+    //    0.37×, and its worst London loss exited `classifier_stall` at −$2.06).
+    //    The class's own cover and trail decide when a routed trade dies.
+    if (cfg.CLASSIFIER_MODE === "active" && call && intent !== "ride" && !position.signature) {
       if (call.action === "CUT" && !armed) {
         await sell(position, market, 1, `classifier_${call.regime.toLowerCase()}`);
         void mirrorLiveSell(cfg, position.mint, 1, "live_mirror_classifier");

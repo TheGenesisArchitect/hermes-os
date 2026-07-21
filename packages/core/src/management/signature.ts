@@ -184,6 +184,9 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
   TP2_MULT: number; TP2_CUM_SELL: number;
   TRAIL_TIGHT_PCT: number; TRAIL_MID_PCT: number; TRAIL_WIDE_PCT: number;
   HARD_STOP_PCT: number; RUNNER_MAX_HOLD_SEC: number;
+  TIME_FLOOR_AT_SEC: number; FAST_FLOOR_ENABLED: boolean;
+  PROFIT_LOCK_ARM_MULT: number; PROFIT_FLOOR_USD: number;
+  POST_BANK_TRAIL_PCT: number;
 } {
   const p = withLearned(s, learned);
   const cum1 = p.tp1[1];
@@ -203,5 +206,27 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
     TRAIL_TIGHT_PCT: trailPct, TRAIL_MID_PCT: trailPct, TRAIL_WIDE_PCT: trailPct,
     HARD_STOP_PCT: Math.round((1 - p.floor) * 100),
     RUNNER_MAX_HOLD_SEC: p.holdSec,
+    // ── THE GENOME IS THE SOLE AUTHORITY ──────────────────────────────────────
+    // Every global floor is disabled for a routed position. These were built for
+    // a world where one profile served every trade; now each class carries its
+    // own cover, and a second, tighter rule layered on top does not add safety —
+    // it overrides the class's identity with a decision it never asked for.
+    //
+    // Measured live 2026-07-21, London: three consecutive closes were decided by
+    // TIME_FLOOR before the signature's cover was ever consulted. RISER, whose
+    // learned cover is 0.40× (built to hold a −60% dip), was cut at −24%; BASE,
+    // cover 0.70×, was cut at −25%. The genome never got to make the call.
+    //
+    // It also keeps the LEARNING LOOP honest, which matters more. The loop's
+    // simulator models exactly four mechanisms — cover, trail, ladder, horizon.
+    // Anything else firing in production means we optimise one policy and run a
+    // different one, and every future generation inherits that distortion.
+    // A position with no signature keeps all of these; only routed trades are
+    // governed purely by their own fingerprint.
+    TIME_FLOOR_AT_SEC: 0, // breakeven-at-90s cut — the cover owns the downside
+    FAST_FLOOR_ENABLED: false, // sub-tick floor sweep — not in the fitted model
+    PROFIT_LOCK_ARM_MULT: Number.POSITIVE_INFINITY, // never-close-red ratchet: the trail owns give-back
+    PROFIT_FLOOR_USD: Number.POSITIVE_INFINITY, // dollar-profit arm for the same ratchet
+    POST_BANK_TRAIL_PCT: trailPct, // post-bank snug would re-tighten the class's own trail
   };
 }
