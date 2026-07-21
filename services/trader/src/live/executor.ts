@@ -564,7 +564,7 @@ async function anticipationMult(cfg: HermesConfig, mint: string): Promise<number
  *  the absolute backstop. Conviction + anticipation let the best setups in the
  *  hottest venues/windows size toward the 14% cap while the floor preserves
  *  breadth — "maximize don't minimize" within bounded caps. */
-function livePositionUsd(
+export function livePositionUsd(
   cfg: HermesConfig,
   balanceUsd: number,
   regimeMult: number,
@@ -588,11 +588,21 @@ function livePositionUsd(
   // Paper's realised fraction wins when we have it — it already carries the
   // conviction fraction, the class multiplier AND paper's risk-tier and session
   // tilts. Re-deriving only part of that is what put the lanes 3x apart.
+  // …but floored at LIVE_MIN_POSITION_FRAC. Paper pays no transaction cost and
+  // live does, so beneath a certain fraction the two lanes are not running the
+  // same trade: live's version hands a double-digit share of the move to fees
+  // before the genome gets to manage anything. Conviction still scales freely
+  // ABOVE the floor, so the range compresses rather than collapsing the way a
+  // flat dollar floor would.
+  const routedFrac = Math.max(
+    cfg.LIVE_MIN_POSITION_FRAC,
+    paperFrac != null && paperFrac > 0
+      ? paperFrac
+      : sizeFraction(sig?.stars ?? 0, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) *
+        (sig ? profileOf(sig.signature).size : 1),
+  );
   const base = sig
-    ? balanceUsd *
-      (paperFrac != null && paperFrac > 0
-        ? paperFrac
-        : sizeFraction(sig.stars ?? 0, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) * profileOf(sig.signature).size)
+    ? balanceUsd * routedFrac
     : balanceUsd * cfg.LIVE_SIZE_FRAC * regimeMult * convictionMult * anticipationMult;
   // CAPS SCALE WITH THE BALANCE, FLOORS DO NOT.
   // LIVE_MIN_POSITION_USD is a fee-viability floor, not a strategy knob — below
@@ -1420,5 +1430,5 @@ export function liveLaneStatus(cfg: HermesConfig): string {
   const selection = cfg.LIVE_MIRROR_PAPER
     ? `, venues [${cfg.LIVE_MIRROR_VENUES}] (∪ smart-money rescue ≥${cfg.LIVE_WALLET_RESCUE_MIN_WINNERS} winner-wallets); honeypot trap-only`
     : `${cfg.LIVE_PREMIUM_ONLY ? `, PREMIUM venues (∪ smart-money rescue ≥${cfg.LIVE_WALLET_RESCUE_MIN_WINNERS} winner-wallets)` : ""}`;
-  return `live lane: ARMED — wallet ${w.publicKey.toBase58()}, 🧬 SIGNATURE ROUTED (independent of paper, same signals): size ${(cfg.POSITION_FRAC_MIN * 100).toFixed(1)}–${(cfg.POSITION_FRAC_MAX * 100).toFixed(1)}% of balance by conviction ★, exits owned by the class genome (cover/trail/ladder/clock), skips under the $${cfg.LIVE_MIN_POSITION_USD} fee floor rather than inflating; caps ≤${(cfg.LIVE_MAX_POSITION_FRAC * 100).toFixed(0)}%/pos, exposure ≤${(cfg.LIVE_MAX_EXPOSURE_FRAC * 100).toFixed(0)}%, daily −$${cfg.LIVE_DAILY_LOSS_CAP_USD}, kill −$${cfg.LIVE_KILL_LOSS_USD}${selection}${cfg.LIVE_WALLET_GATE ? " + wallet-graph rug gate" : ""}${cfg.LIVE_REGIME_GATE ? ` + regime gate (${cfg.LIVE_MIRROR_PAPER ? `venue edge ≤−${(cfg.LIVE_MIRROR_REGIME_MAX_LOSS_PCT * 100).toFixed(0)}%` : `paper ≤−$${cfg.LIVE_REGIME_MAX_LOSS_USD}`}/${cfg.LIVE_REGIME_WINDOW_MIN}m stands down)` : ""}${cfg.LIVE_GUARD_ENABLED ? ` + legacy guard (unrouted rows only: cut at −${cfg.LIVE_STOP_PCT}% / dump @ ${(cfg.LIVE_STOP_SLIPPAGE_BPS / 100).toFixed(0)}%)` : ""}${cfg.LIVE_ANTICIPATION_ENABLED ? ` + anticipation tilt (venue-momentum × tail-odds, ${cfg.LIVE_ANTICIPATION_MIN}–${cfg.LIVE_ANTICIPATION_MAX}×)` : ""}${cfg.LIVE_ANTICIPATION_GATE ? ` + anticipation GATE (stand down when cold, <${cfg.LIVE_ANTICIPATION_GATE_MIN}×)` : ""}`;
+  return `live lane: ARMED — wallet ${w.publicKey.toBase58()}, 🧬 SIGNATURE ROUTED (independent of paper, same signals): size ${(cfg.LIVE_MIN_POSITION_FRAC * 100).toFixed(1)}–${(cfg.POSITION_FRAC_MAX * 100).toFixed(1)}% of balance (paper's realised fraction, floored at ${(cfg.LIVE_MIN_POSITION_FRAC * 100).toFixed(1)}% so fees don't eat the trade), exits owned by the class genome (cover/trail/ladder/clock), min $${cfg.LIVE_MIN_POSITION_USD.toFixed(2)}/position; caps ≤${(cfg.LIVE_MAX_POSITION_FRAC * 100).toFixed(0)}%/pos, exposure ≤${(cfg.LIVE_MAX_EXPOSURE_FRAC * 100).toFixed(0)}%, daily −$${cfg.LIVE_DAILY_LOSS_CAP_USD}, kill −$${cfg.LIVE_KILL_LOSS_USD}${selection}${cfg.LIVE_WALLET_GATE ? " + wallet-graph rug gate" : ""}${cfg.LIVE_REGIME_GATE ? ` + regime gate (${cfg.LIVE_MIRROR_PAPER ? `venue edge ≤−${(cfg.LIVE_MIRROR_REGIME_MAX_LOSS_PCT * 100).toFixed(0)}%` : `paper ≤−$${cfg.LIVE_REGIME_MAX_LOSS_USD}`}/${cfg.LIVE_REGIME_WINDOW_MIN}m stands down)` : ""}${cfg.LIVE_GUARD_ENABLED ? ` + legacy guard (unrouted rows only: cut at −${cfg.LIVE_STOP_PCT}% / dump @ ${(cfg.LIVE_STOP_SLIPPAGE_BPS / 100).toFixed(0)}%)` : ""}${cfg.LIVE_ANTICIPATION_ENABLED ? ` + anticipation tilt (venue-momentum × tail-odds, ${cfg.LIVE_ANTICIPATION_MIN}–${cfg.LIVE_ANTICIPATION_MAX}×)` : ""}${cfg.LIVE_ANTICIPATION_GATE ? ` + anticipation GATE (stand down when cold, <${cfg.LIVE_ANTICIPATION_GATE_MIN}×)` : ""}`;
 }

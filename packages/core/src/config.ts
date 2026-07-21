@@ -1074,6 +1074,15 @@ const envSchema = z.object({
   // premium venue) GATES entry; magnitude is balance×regime only for night one
   // (quality-magnitude modulation deferred until validated).
   LIVE_MIN_POSITION_USD: z.coerce.number().default(3.5), // floor — below this the tx fee drag is too high
+  // LIVE-ONLY SIZE FLOOR, as a fraction of the live balance. Paper's realised
+  // fraction still drives the size and conviction still scales ABOVE this; the
+  // floor exists because paper pays no transaction cost and live does. Measured
+  // 2026-07-21: live averaged $2.33 on a ~$168 wallet against paper's $5.53 on
+  // $1,000, and at those sizes a round trip surrendered ~14% to fees alone (pow).
+  // This is a DELIBERATE departure from strict 1:1 with paper — the parity that
+  // matters is relative risk, and a position too small to clear its own fee is
+  // not the same trade paper took.
+  LIVE_MIN_POSITION_FRAC: z.coerce.number().default(0.015),
   LIVE_SIZE_FRAC: z.coerce.number().default(0.1), // base position = 10% of balance
   LIVE_MAX_POSITION_FRAC: z.coerce.number().default(0.14), // ≤14% of balance in any one position
   LIVE_MAX_EXPOSURE_FRAC: z.coerce.number().default(0.75), // deploy ≤75% of balance (reserve for fees/rent)
