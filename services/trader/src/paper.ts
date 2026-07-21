@@ -301,6 +301,33 @@ async function openFromSignal(
     console.log(`⛔ SKIP   ${token.symbol ?? "?"} ${short(signal.mint)} — ${sig?.signature}: ${sigProfile.note}`);
     return false;
   }
+  // PER-CLASS CONFIRMATION BAR — each genome must clear its OWN snap off the low
+  // before capital is committed. The profiles have carried a minSnap since they
+  // were written (RISER 0.15, BASE 0.20, MOON 0.35) but nothing enforced it: the
+  // gate was still one global rule, so every class was admitted on the same
+  // terms it was explicitly measured NOT to share.
+  //
+  // The cost of that shows in the tape — roughly 40% of entries never move at
+  // all (peak < 1.10×), uniformly across every signature. Those are not exits
+  // going wrong; no cover, trail or clock can rescue a position that never
+  // rises. The snap is the one confirmation proven durable: positive EV in every
+  // dip band (+8.4% to +30.6%), while the candidates that fell and merely crawled
+  // back are the largest avoidable loss pool in the dataset.
+  if (sigProfile && sigProfile.minSnap > 0 && sig) {
+    const snap = sig.snapPct;
+    if (snap == null || snap < sigProfile.minSnap) {
+      await audit("entry_filtered", {
+        mint: signal.mint,
+        reason: `${sig.signature} snap ${snap == null ? "unknown" : `+${(snap * 100).toFixed(0)}%`} < required +${(sigProfile.minSnap * 100).toFixed(0)}%`,
+      });
+      // NOT dismissed — the candidate stays armed and may confirm on a later
+      // tick. A weak snap now is a timing verdict, not a permanent one.
+      console.log(
+        `⏳ WAIT   ${token.symbol ?? "?"} ${short(signal.mint)} — ${sig.signature} needs +${(sigProfile.minSnap * 100).toFixed(0)}% off the low, has ${snap == null ? "n/a" : `+${(snap * 100).toFixed(0)}%`}`,
+      );
+      return false;
+    }
+  }
   const sigMult = sigProfile?.size ?? 1;
   const sizeUsd = Number((cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult * sigMult).toFixed(2));
   const slip = slippagePct(sizeUsd, market.liquidityUsd);
