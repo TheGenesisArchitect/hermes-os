@@ -58,6 +58,16 @@ export {
   type EntryTriggerConfig,
 } from "./management/entryTrigger.js";
 export {
+  routeSignature,
+  profileOf,
+  isMoon,
+  signatureExitOverrides,
+  SIGNATURE_PROFILES,
+  type Signature,
+  type SignatureInputs,
+  type SignatureProfile,
+} from "./management/signature.js";
+export {
   runForecast,
   type ForecastOptions,
   type ForecastResult,

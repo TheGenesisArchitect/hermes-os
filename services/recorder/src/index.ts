@@ -10,6 +10,7 @@ import {
   fetchTokenMarket,
   fetchTokenMarkets,
   loadConfig,
+  routeSignature,
   scoreConviction,
   scoreRugProb,
   tickFrom,
@@ -309,7 +310,21 @@ async function observe(
           markMultiple: effMark,
           drawdownPct: t.drawdownFromPeakPct,
           buyShare: t.buyShareM5,
+          dipDepth: 0,
+          snapPct: 0,
+          snapRate: 0,
         };
+    // TRADE SIGNATURE — routed from the trajectory shape at THIS tick. Computed
+    // for every armed candidate, traded or not, so the refusal population stays
+    // measurable instead of invisible. The trader looks the exit profile up from
+    // this rather than from the global config.
+    const signature = routeSignature({
+      liq0: firstTrustedLiq,
+      liqNow: market.liquidityUsd,
+      buyShare: t.buyShareM5,
+      dipDepth: trig.dipDepth,
+      snapRate: trig.snapRate,
+    });
     // RE-ENTRY (the VICE 8.4x lesson, 2026-07-16): one-shot `!o.entered`
     // permanently burned any candidate we ever touched — overnight, 67
     // entered-then-closed-flat candidates went on to peak ≥2x (avg 3.1x)
@@ -388,6 +403,13 @@ async function observe(
               // THE EDGE — pool growth at arm. Persisted on every armed read so
               // the trader sizes by it and so it stays continuously measurable.
               ...(liqGrowth !== null && Number.isFinite(liqGrowth) ? { liqGrowth: String(liqGrowth) } : {}),
+              // The routed signature and the shape that produced it. Refreshed on
+              // every armed read so the ledger shows what we acted on, not a
+              // first-arm fossil.
+              signature,
+              dipDepth: String(trig.dipDepth),
+              snapPct: String(trig.snapPct),
+              snapRate: String(trig.snapRate),
             }
           : {}),
         ...(wallet

@@ -7,9 +7,12 @@ import {
   fetchJupiterPrices,
   fetchTokenMarket,
   fetchTokenMarkets,
+  profileOf,
+  signatureExitOverrides,
   tickFrom,
   type HermesConfig,
   type ManagementCall,
+  type Signature,
   type TokenMarket,
 } from "@hermes/core";
 import {
@@ -136,6 +139,10 @@ async function openFromSignal(
   // exit-zone selection knows the token already proved e.g. 4.9x — an entry-
   // relative 1.2x on such a token is a RUNNER, not a spike (ARGENTINU lesson).
   triggerMult: number | null = null,
+  // TRADE SIGNATURE routed by the recorder at the trigger tick, with the shape
+  // that produced it. Governs size here and the entire exit profile later; a
+  // position is managed under its own genome, not the global config.
+  sig: { signature: Signature; dipDepth: number | null; snapPct: number | null; snapRate: number | null } | null = null,
 ): Promise<boolean> {
   const market = await fetchTokenMarket(signal.mint).catch(() => null);
   if (!market) {
@@ -281,7 +288,20 @@ async function openFromSignal(
   const sizeMult = typeof risk?.sizeMultiplier === "number" ? risk.sizeMultiplier : 1;
   // Session sizing — survive the dead zone, grow in the moonshot window.
   const sessionMult = await hourSessionMult(cfg);
-  const sizeUsd = Number((cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult).toFixed(2));
+  // SIGNATURE SIZING — each genome carries its own conviction. RISER and BASE
+  // confirmed on both sides of the split and size full; the moon grades and
+  // CLIMBER are sample-limited (17-96 observations per side) and size down, so
+  // they accumulate evidence under real conditions without betting the book on
+  // an unconfirmed edge. RUG_RISK never opens.
+  const sigProfile = sig ? profileOf(sig.signature) : null;
+  if (sigProfile && !sigProfile.trade) {
+    await audit("entry_filtered", { mint: signal.mint, reason: `signature ${sig?.signature} — ${sigProfile.note}` });
+    await db.update(signals).set({ status: "dismissed" }).where(eq(signals.id, signal.id));
+    console.log(`⛔ SKIP   ${token.symbol ?? "?"} ${short(signal.mint)} — ${sig?.signature}: ${sigProfile.note}`);
+    return false;
+  }
+  const sigMult = sigProfile?.size ?? 1;
+  const sizeUsd = Number((cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult * sigMult).toFixed(2));
   const slip = slippagePct(sizeUsd, market.liquidityUsd);
   // Never buy a corpse: a slip past the cap means the pool has drained since the
   // trigger fired (the 99%-slip dead-pool entries the 1e backlog produced).
@@ -339,6 +359,12 @@ async function openFromSignal(
       triggerMult: triggerMult !== null && Number.isFinite(triggerMult) ? String(triggerMult) : null,
       sizeUsd: String(sizeUsd),
       qualityMult: String(qualityMult),
+      // Pinned at open and never changed: the exit profile is looked up from
+      // this, and the ledger compares the signal we acted on to what we got.
+      signature: sig?.signature ?? null,
+      dipDepth: sig?.dipDepth != null ? String(sig.dipDepth) : null,
+      snapPct: sig?.snapPct != null ? String(sig.snapPct) : null,
+      snapRate: sig?.snapRate != null ? String(sig.snapRate) : null,
       qtyTokens: String(qty),
       qtyRemaining: String(qty),
       entryPriceUsd: String(entryPrice),
@@ -361,7 +387,7 @@ async function openFromSignal(
   await db.update(signals).set({ status: "traded_paper" }).where(eq(signals.id, signal.id));
 
   console.log(
-    `📈 OPEN   ${token.symbol ?? "?"} ${short(signal.mint)} $${sizeUsd} «${lane}» [${risk?.tier ?? "clean"}${qualityMult < 1 ? ` · quality ×${qualityMult}` : ""}${sessionMult < 1 ? ` · offhrs ×${sessionMult}` : ""}] @ $${entryPrice.toPrecision(4)} (liq $${Math.round(market.liquidityUsd).toLocaleString()}, slip ${slip.toFixed(2)}%, score ${signal.score}${note ? ` · ${note}` : ""})`,
+    `📈 OPEN   ${token.symbol ?? "?"} ${short(signal.mint)} $${sizeUsd} «${lane}» [${sig ? `🧬${sig.signature}${sigMult !== 1 ? ` ×${sigMult}` : ""} · ` : ""}${risk?.tier ?? "clean"}${qualityMult < 1 ? ` · quality ×${qualityMult}` : ""}${sessionMult < 1 ? ` · offhrs ×${sessionMult}` : ""}] @ $${entryPrice.toPrecision(4)} (liq $${Math.round(market.liquidityUsd).toLocaleString()}, slip ${slip.toFixed(2)}%, score ${signal.score}${note ? ` · ${note}` : ""})`,
   );
   return true;
 }
@@ -447,6 +473,10 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       walletKnown: candidateOutcomes.walletKnown,
       convictionScore: candidateOutcomes.convictionScore,
       liqGrowth: candidateOutcomes.liqGrowth,
+      signature: candidateOutcomes.signature,
+      dipDepth: candidateOutcomes.dipDepth,
+      snapPct: candidateOutcomes.snapPct,
+      snapRate: candidateOutcomes.snapRate,
     })
     .from(candidateOutcomes)
     .innerJoin(signals, eq(signals.id, candidateOutcomes.signalId))
@@ -575,7 +605,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     return;
   }
 
-  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits, walletKnown, liqGrowth } of armed) {
+  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits, walletKnown, liqGrowth, signature, dipDepth, snapPct, snapRate } of armed) {
     if (total() >= cfg.PAPER_MAX_CONCURRENT) break; // global cap hit — leave the rest armed
 
     // Open-only duplicate guard — a CLOSED prior position no longer blocks
@@ -702,7 +732,17 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // venue / liquidity / slippage) leaves the candidate armed to re-attempt next
     // cycle — a transient miss or a momentarily-reserved lane never permanently
     // burns a token that then runs 3–24x.
-    if (await openFromSignal(cfg, signal, token, "confirmed", book, qualityMult, tm)) {
+    // Rows predating the signature rollout carry no routing — those enter under
+    // the global config exactly as before rather than being blocked.
+    const sigArg = signature
+      ? {
+          signature: signature as Signature,
+          dipDepth: dipDepth === null ? null : Number(dipDepth),
+          snapPct: snapPct === null ? null : Number(snapPct),
+          snapRate: snapRate === null ? null : Number(snapRate),
+        }
+      : null;
+    if (await openFromSignal(cfg, signal, token, "confirmed", book, qualityMult, tm, sigArg)) {
       // MIRROR the confirmed entry into the live lane (M5). Fire-and-forget:
       // a 45s on-chain confirm must never stall the entry scan; the executor
       // audits its own outcome and sweepLiveBook reconciles any miss.
@@ -1906,7 +1946,15 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     // 3. Ratcheting profit-trail (+ pre-profit hard stop). The classifier call
     //    shapes the trail width — RIDE widens the leash, blow-off/stall snugs it
     //    up. A RIDE intent suspends the stop for one tick to hold through a wick.
-    let exit = decideExit(cfg, position, market, peak, call);
+    // SIGNATURE EXITS — manage the position under its own genome. The cover,
+    // trail width, ladder and clock all come from the class it was routed to at
+    // entry, not from the global config: a climber's winners dip to 0.37× of
+    // entry and give back 34.6% before their real high, while a riser's give
+    // back 16% — one trail cannot serve both, and the global 5% served neither.
+    // Positions opened before the rollout carry no signature and keep the old
+    // behaviour exactly.
+    const ecfg = position.signature ? { ...cfg, ...signatureExitOverrides(position.signature as Signature) } : cfg;
+    let exit = decideExit(ecfg, position, market, peak, call);
     // Pre-arm hard-stop WICK CONFIRMATION: sell only after the read stays below
     // the stop for HARD_STOP_CONFIRM_TICKS consecutive polls. Every historical
     // hard-stop fired on a single below-stop tick and 63% recovered past TP0

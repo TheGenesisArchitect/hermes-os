@@ -114,6 +114,13 @@ export interface EntryTrigger {
   dipDepth: number;
   /** Rise off the trough at this tick. Confirms it. */
   snapPct: number;
+  /**
+   * Snap ÷ minutes since the trough — the tell's VELOCITY, and what grades a
+   * moon. Measured over 425 moon candidates the relationship is an inverted U:
+   * 150-400%/min rugs 11.6% with a 6.90× p90, while 400%+/min rugs 58.2% off a
+   * 58% median dip and loses money. Fast is ignition; violent is a dead cat.
+   */
+  snapRate: number;
 }
 
 /**
@@ -163,6 +170,12 @@ export function evaluateEntryTrigger(
   for (let i = 0; i <= troughIdx; i++) preHigh = Math.max(preHigh, series[i]?.markMultiple ?? 0);
   const dipDepth = preHigh > 0 && Number.isFinite(trough) ? Math.max(0, 1 - trough / preHigh) : 0;
   const snapPct = Number.isFinite(trough) && trough > 0 && last ? last.markMultiple / trough - 1 : 0;
+  // Velocity of the recovery. Uses tick age rather than a tick count so the grade
+  // is SAMPLING-RATE INDEPENDENT — changing the recorder's poll interval must not
+  // silently reclassify every moon.
+  const troughAge = troughIdx >= 0 ? (series[troughIdx]?.ageMinutes ?? 0) : 0;
+  const elapsedMin = Math.max((last?.ageMinutes ?? 0) - troughAge, 0.05);
+  const snapRate = snapPct / elapsedMin;
 
   const base = {
     markMultiple: last?.markMultiple ?? 0,
@@ -170,6 +183,7 @@ export function evaluateEntryTrigger(
     buyShare: last?.buyShareM5 ?? 0,
     dipDepth,
     snapPct,
+    snapRate,
   };
   const no = (reason: string): EntryTrigger => ({ triggered: false, reason, ...base });
 

@@ -79,6 +79,16 @@ export const positions = pgTable("positions", {
   // the confirm tick showed fading demand (buy-share below the quality floor).
   // Persisted at open so the Intel Report can compare tiers' live win rates.
   qualityMult: numeric("quality_mult"),
+  // TRADE SIGNATURE — which genome this position is being managed under. Set at
+  // open from the recorder's routing and never changed, so the ledger can compare
+  // the signal we acted on against the execution we got. The exit profile (cover,
+  // trail, ladder, clock) is looked up from this, not from the global config.
+  signature: text("signature"),
+  // The routing inputs, persisted alongside so a signature can be audited after
+  // the fact and re-graded if the thresholds move.
+  dipDepth: numeric("dip_depth"), // 1 − trough ÷ pre-dip high: the false step
+  snapPct: numeric("snap_pct"), // rise off the trough at entry: the confirmation
+  snapRate: numeric("snap_rate"), // snap ÷ minutes since trough: grades the moon
   qtyTokens: numeric("qty_tokens").notNull().default("0"),
   qtyRemaining: numeric("qty_remaining").notNull().default("0"),
   peakPriceUsd: numeric("peak_price_usd"),
@@ -288,6 +298,13 @@ export const candidateOutcomes = pgTable("candidate_outcomes", {
   // pool FLAT, so this is the one factor a fake move cannot manufacture.
   // Persisted at arm so the trader sizes by it and the edge stays measurable.
   liqGrowth: numeric("liq_growth"),
+  // Signature routed at the trigger tick, plus the inputs that produced it.
+  // Written for EVERY armed candidate including refusals, so the refusal
+  // population is measurable rather than invisible.
+  signature: text("signature"),
+  dipDepth: numeric("dip_depth"),
+  snapPct: numeric("snap_pct"),
+  snapRate: numeric("snap_rate"),
   // Timestamp of the most recent CONFIRMING observation — the tick on which the
   // entry gate actually passed. Distinct from updatedAt, which the recorder
   // stamps on every poll whether the candidate qualifies or not, and from
