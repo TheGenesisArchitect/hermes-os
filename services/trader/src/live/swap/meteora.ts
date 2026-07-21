@@ -251,12 +251,15 @@ export class MeteoraDammV2Provider implements SwapProvider {
     const q = cpAmm.getQuote({
       inAmount: new BN(amountRaw),
       inputTokenMint,
-      // ENTRY SLIPPAGE FLOOR, same lesson as the DBC curve: a minutes-old
-      // graduated pool moves faster than an AMM-calibrated 10% — real buys
-      // died in simulation with cp-amm ExceededSlippage (6002). Entries floor
-      // at 25% (sizes ~$2, minSwapOutAmount still bounds the fill); sells keep
-      // the caller's tolerance.
-      slippage: (isBuy ? Math.max(slippageBps, 2_500) : slippageBps) / 100, // SDK slippage is a percent
+      // UNITS, measured not assumed: the cp-amm `slippage` param is BASIS
+      // POINTS despite the docs reading like a percent. Probed on the exact
+      // mint that kept failing: passing 25 produced minOut 0.25% below the
+      // quote — so the "/100 to make it a percent" conversion had the provider
+      // running at ~0.25% effective tolerance, and every fresh pool blew
+      // through that between quote and simulation (the whole 6002 story).
+      // Entries floor at 2,500bps = 25% (sizes ~$2, minSwapOutAmount still
+      // bounds the fill); sells keep the caller's tolerance.
+      slippage: isBuy ? Math.max(slippageBps, 2_500) : slippageBps,
       poolState: st,
       currentTime: Math.floor(Date.now() / 1000),
       currentSlot,
