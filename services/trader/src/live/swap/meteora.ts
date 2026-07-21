@@ -50,11 +50,20 @@ async function meteoraPairs(mint: string): Promise<string[]> {
   return pools.map((p) => p.pairAddress);
 }
 
-interface MeteoraRaw {
+interface MeteoraDbcRaw {
   isBuy: boolean;
   mint: string;
   amountRaw: string;
-  slippageBps: number;
+  pool: string;
+  minimumAmountOut: string;
+}
+
+interface MeteoraDammRaw {
+  isBuy: boolean;
+  mint: string;
+  amountRaw: string;
+  pool: string;
+  minSwapOutAmount: string;
 }
 
 /** Compute-budget prefix + v0 wrap — identical intent to the PumpSwap tail. */
@@ -92,7 +101,7 @@ export class MeteoraDbcProvider implements SwapProvider {
   readonly name = "meteora-dbc";
 
   async quote(
-    _cfg: HermesConfig,
+    cfg: HermesConfig,
     inputMint: string,
     outputMint: string,
     amountRaw: bigint,
@@ -102,19 +111,14 @@ export class MeteoraDbcProvider implements SwapProvider {
     if (opts?.quoteOnly) return buildOnlyQuote(this.name, inputMint, outputMint, amountRaw);
     const isBuy = inputMint === WSOL_MINT;
     const mint = isBuy ? outputMint : inputMint;
-    const raw: MeteoraRaw = { isBuy, mint, amountRaw: amountRaw.toString(), slippageBps };
-    // Pool existence is checked in buildSwapTx (one RPC read either way); a
-    // non-DBC token throws there and the router fails over cleanly.
-    return { ...buildOnlyQuote(this.name, inputMint, outputMint, amountRaw), raw };
-  }
-
-  async buildSwapTx(cfg: HermesConfig, quote: SwapQuote, userPublicKey: string): Promise<string> {
-    const { isBuy, mint, amountRaw, slippageBps } = quote.raw as MeteoraRaw;
+    // POOL RESOLUTION MUST LIVE IN quote(). The router's failover walks
+    // providers at quote time only — buildSwapTx routes back to whichever
+    // provider quoted. The first live attempt (WIFBOOST) proved the failure:
+    // the DBC quote succeeded blind, the build found the curve had graduated,
+    // and the DAMM provider — which had the pool — never got its turn. Same
+    // rule as PumpSwap: resolve here, throw here, fail over here.
     const conn = rpcConnection(cfg);
     const client = DynamicBondingCurveClient.create(conn, "confirmed");
-    // Pool from DexScreener pairAddress, validated by decoding it as a DBC
-    // virtual pool — a DAMM/DLMM candidate fails the decode and the next is
-    // tried, so protocol separation needs no venue string at all.
     let poolKey: PublicKey | null = null;
     let virtualPool: Awaited<ReturnType<typeof client.state.getPool>> = null;
     for (const addr of await meteoraPairs(mint)) {
@@ -140,7 +144,9 @@ export class MeteoraDbcProvider implements SwapProvider {
       throw new Error(`meteora-dbc pool quotes in ${config.quoteMint.toBase58()}, not WSOL`);
     }
     const currentPoint = await getCurrentPoint(conn, config.activationType);
-    // Buy = spend quote (SOL) for base; sell = give base for quote.
+    // Buy = spend quote (SOL) for base; sell = give base for quote. A completed
+    // curve throws HERE ("Virtual pool is completed") — which is exactly the
+    // failover signal that hands the graduated token to the DAMM provider.
     const swapBaseForQuote = !isBuy;
     const q = client.pool.swapQuote({
       virtualPool,
@@ -152,12 +158,26 @@ export class MeteoraDbcProvider implements SwapProvider {
       eligibleForFirstSwapWithMinFee: false,
       currentPoint,
     });
+    const raw: MeteoraDbcRaw = {
+      isBuy,
+      mint,
+      amountRaw: amountRaw.toString(),
+      pool: poolKey.toBase58(),
+      minimumAmountOut: q.minimumAmountOut.toString(),
+    };
+    return { ...buildOnlyQuote(this.name, inputMint, outputMint, amountRaw), raw };
+  }
+
+  async buildSwapTx(cfg: HermesConfig, quote: SwapQuote, userPublicKey: string): Promise<string> {
+    const { isBuy, amountRaw, pool, minimumAmountOut } = quote.raw as MeteoraDbcRaw;
+    const conn = rpcConnection(cfg);
+    const client = DynamicBondingCurveClient.create(conn, "confirmed");
     const tx = await client.pool.swap({
       owner: new PublicKey(userPublicKey),
-      pool: poolKey,
+      pool: new PublicKey(pool),
       amountIn: new BN(amountRaw),
-      minimumAmountOut: q.minimumAmountOut,
-      swapBaseForQuote,
+      minimumAmountOut: new BN(minimumAmountOut),
+      swapBaseForQuote: !isBuy,
       referralTokenAccount: null,
     });
     return finalizeTx(cfg, tx.instructions, new PublicKey(userPublicKey));
@@ -169,7 +189,7 @@ export class MeteoraDammV2Provider implements SwapProvider {
   readonly name = "meteora-damm";
 
   async quote(
-    _cfg: HermesConfig,
+    cfg: HermesConfig,
     inputMint: string,
     outputMint: string,
     amountRaw: bigint,
@@ -179,17 +199,12 @@ export class MeteoraDammV2Provider implements SwapProvider {
     if (opts?.quoteOnly) return buildOnlyQuote(this.name, inputMint, outputMint, amountRaw);
     const isBuy = inputMint === WSOL_MINT;
     const mint = isBuy ? outputMint : inputMint;
-    const raw: MeteoraRaw = { isBuy, mint, amountRaw: amountRaw.toString(), slippageBps };
-    return { ...buildOnlyQuote(this.name, inputMint, outputMint, amountRaw), raw };
-  }
-
-  async buildSwapTx(cfg: HermesConfig, quote: SwapQuote, userPublicKey: string): Promise<string> {
-    const { isBuy, mint, amountRaw, slippageBps } = quote.raw as MeteoraRaw;
     const conn = rpcConnection(cfg);
     const cpAmm = new CpAmm(conn);
-    // Pool from DexScreener pairAddress (deepest first), decoded as a cp-amm
-    // pool and verified token↔WSOL — the same trust rule as PumpSwap's advisor
-    // check, enforced against the chain itself. A DBC/DLMM candidate fails the
+    // Pool resolution in quote() — the router only fails over at quote time
+    // (the WIFBOOST lesson, see the DBC provider). Candidates from DexScreener
+    // pairAddress (deepest first), decoded as a cp-amm pool and verified
+    // token↔WSOL against the chain itself. A DBC/DLMM candidate fails the
     // decode or the mint check and the next is tried.
     let poolKey: PublicKey | null = null;
     let st: Awaited<ReturnType<typeof cpAmm.fetchPoolState>> | null = null;
@@ -208,15 +223,15 @@ export class MeteoraDammV2Provider implements SwapProvider {
       }
     }
     if (!poolKey || !st) throw new Error("no meteora-damm-v2 pool");
-    const user = new PublicKey(userPublicKey);
 
     const tokenIsA = st.tokenAMint.toBase58() === mint;
     const inputTokenMint = new PublicKey(isBuy ? WSOL_MINT : mint);
-    const outputTokenMint = new PublicKey(isBuy ? mint : WSOL_MINT);
     // Decimals: WSOL is 9; the token's from its mint account (one cached read).
     const tokenDecimals = await mintDecimalsOf(cfg, mint);
     const [tokenADecimal, tokenBDecimal] = tokenIsA ? [tokenDecimals, 9] : [9, tokenDecimals];
     const currentSlot = await rpcPool(cfg).read((c) => c.getSlot("confirmed"));
+    // Throws on a drained pool ("liquidity must be greater than 0") — another
+    // correct failover/refusal signal that must fire before the router commits.
     const q = cpAmm.getQuote({
       inAmount: new BN(amountRaw),
       inputTokenMint,
@@ -227,13 +242,34 @@ export class MeteoraDammV2Provider implements SwapProvider {
       tokenADecimal,
       tokenBDecimal,
     });
+    const raw: MeteoraDammRaw = {
+      isBuy,
+      mint,
+      amountRaw: amountRaw.toString(),
+      pool: poolKey.toBase58(),
+      minSwapOutAmount: q.minSwapOutAmount.toString(),
+    };
+    return { ...buildOnlyQuote(this.name, inputMint, outputMint, amountRaw), raw };
+  }
+
+  async buildSwapTx(cfg: HermesConfig, quote: SwapQuote, userPublicKey: string): Promise<string> {
+    const { isBuy, mint, amountRaw, pool, minSwapOutAmount } = quote.raw as MeteoraDammRaw;
+    const conn = rpcConnection(cfg);
+    const cpAmm = new CpAmm(conn);
+    const poolKey = new PublicKey(pool);
+    // Re-fetch the (tiny) pool state for the vault/program accounts — the
+    // resolved pool address is trusted from quote(), the state read is fresh.
+    const st = await cpAmm.fetchPoolState(poolKey);
+    const user = new PublicKey(userPublicKey);
+    const inputTokenMint = new PublicKey(isBuy ? WSOL_MINT : mint);
+    const outputTokenMint = new PublicKey(isBuy ? mint : WSOL_MINT);
     const tx = await cpAmm.swap({
       payer: user,
       pool: poolKey,
       inputTokenMint,
       outputTokenMint,
       amountIn: new BN(amountRaw),
-      minimumAmountOut: q.minSwapOutAmount,
+      minimumAmountOut: new BN(minSwapOutAmount),
       tokenAMint: st.tokenAMint,
       tokenBMint: st.tokenBMint,
       tokenAVault: st.tokenAVault,
