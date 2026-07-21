@@ -571,6 +571,7 @@ function livePositionUsd(
   convictionMult: number,
   anticipationMult: number,
   sig?: { signature: Signature; stars: number | null } | null,
+  paperFrac?: number | null,
 ): number {
   // SIGNATURE SIZING — identical formula to paper, against the WALLET BALANCE
   // instead of the bankroll: the policy sets the range by regime, the quality
@@ -584,10 +585,14 @@ function livePositionUsd(
   // layering them on top means the two lanes deploy different capital against
   // identical signals, and the lane that is proving the model is the one without
   // them.
+  // Paper's realised fraction wins when we have it — it already carries the
+  // conviction fraction, the class multiplier AND paper's risk-tier and session
+  // tilts. Re-deriving only part of that is what put the lanes 3x apart.
   const base = sig
     ? balanceUsd *
-      sizeFraction(sig.stars ?? 0, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) *
-      profileOf(sig.signature).size
+      (paperFrac != null && paperFrac > 0
+        ? paperFrac
+        : sizeFraction(sig.stars ?? 0, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) * profileOf(sig.signature).size)
     : balanceUsd * cfg.LIVE_SIZE_FRAC * regimeMult * convictionMult * anticipationMult;
   // CAPS SCALE WITH THE BALANCE, FLOORS DO NOT.
   // LIVE_MIN_POSITION_USD is a fee-viability floor, not a strategy knob — below
@@ -625,6 +630,13 @@ export async function maybeLiveBuy(
     snapPct?: number | null;
     snapRate?: number | null;
   } | null = null,
+  /**
+   * The fraction of ITS capital paper just committed to this same signal. Live
+   * applies the identical share to its own balance, so relative risk matches by
+   * construction rather than by two code paths agreeing — which they did not:
+   * live was deploying 1.82% per trade against paper's 0.61%.
+   */
+  paperFrac: number | null = null,
 ): Promise<void> {
   try {
     // LATENCY: live trailed paper's entry by a measured 6–8s, and that lag
@@ -756,7 +768,7 @@ export async function maybeLiveBuy(
     // wallet unproductive: each one silently removes trades from the sample that
     // paper is winning on. So a routed position is floored to a fee-viable size
     // and TAKEN, never skipped.
-    const sized = Math.min(livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult, sig) * dailyThrottle, affordable);
+    const sized = Math.min(livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult, sig, paperFrac) * dailyThrottle, affordable);
     const usd = Math.max(cfg.LIVE_MIN_POSITION_USD, sized);
     const lamports = BigInt(Math.floor((usd / sol) * 1e9));
 

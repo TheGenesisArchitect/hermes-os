@@ -365,6 +365,17 @@ async function openFromSignal(
       : cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult * sigMult
     ).toFixed(2),
   );
+  // LIVE FIRES HERE — the instant paper's size is known, before its own insert.
+  // Live receives paper's REALISED fraction of capital rather than re-deriving it,
+  // because paper's size passes through risk-tier and session multipliers on top
+  // of the conviction fraction. Live applied only the fraction and so deployed
+  // 1.82% of a $169 balance per trade against paper's 0.61% of $1,000 — three
+  // times the relative risk on identical signals. Passing the realised fraction
+  // makes drift impossible by construction: whatever share of capital paper
+  // commits, live commits the same share of its own.
+  if (sig) {
+    void maybeLiveBuy(cfg, signal.mint, token.symbol, sig, sizeUsd / Math.max(cfg.PAPER_BANKROLL_USD, 1));
+  }
   const slip = slippagePct(sizeUsd, market.liquidityUsd);
   // Never buy a corpse: a slip past the cap means the pool has drained since the
   // trigger fired (the 99%-slip dead-pool entries the 1e backlog produced).
@@ -816,7 +827,6 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // same genome. That makes the two lanes a genuine comparison — same signals,
     // same rules, different balances — instead of one lane echoing the other.
     // Fire-and-forget: an on-chain confirm must never stall the entry scan.
-    void maybeLiveBuy(cfg, mint, token.symbol, sigArg);
     if (await openFromSignal(cfg, signal, token, "confirmed", book, qualityMult, tm, sigArg)) {
       // (The live buy already fired above, on the same signal and at the same
       // moment — it is no longer mirrored off this branch.)
