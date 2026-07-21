@@ -22,7 +22,7 @@ import { ComputeBudgetProgram, PublicKey, TransactionMessage, VersionedTransacti
 import BN from "bn.js";
 import { OnlinePumpAmmSdk, PumpAmmSdk } from "@pump-fun/pump-swap-sdk";
 import { resilientFetch, type HermesConfig } from "@hermes/core";
-import type { QuoteOpts, SwapProvider, SwapQuote } from "./provider.js";
+import { NoRouteError, type QuoteOpts, type SwapProvider, type SwapQuote } from "./provider.js";
 import { WSOL_MINT } from "./jupiterHosted.js";
 import { rpcConnection, rpcPool } from "../rpc/pool.js";
 
@@ -70,7 +70,7 @@ export class PumpSwapProvider implements SwapProvider {
     // throws and the router fails over to PumpPortal — clean venue separation
     // without a hardcoded venue check.
     const pool = await pumpswapPool(mint);
-    if (!pool) throw new Error("no pumpswap pool");
+    if (!pool) throw new NoRouteError("no pumpswap pool");
     const raw: PumpSwapRaw = { isBuy, mint, pool, amountRaw: amountRaw.toString(), slippageBps };
     return {
       inputMint,

@@ -27,7 +27,7 @@ import BN from "bn.js";
 import { CpAmm, getTokenProgram } from "@meteora-ag/cp-amm-sdk";
 import { DynamicBondingCurveClient, getCurrentPoint } from "@meteora-ag/dynamic-bonding-curve-sdk";
 import { resilientFetch, type HermesConfig } from "@hermes/core";
-import type { QuoteOpts, SwapProvider, SwapQuote } from "./provider.js";
+import { NoRouteError, type QuoteOpts, type SwapProvider, type SwapQuote } from "./provider.js";
 import { WSOL_MINT } from "./jupiterHosted.js";
 import { rpcConnection, rpcPool } from "../rpc/pool.js";
 
@@ -133,7 +133,7 @@ export class MeteoraDbcProvider implements SwapProvider {
         /* not a DBC pool — try the next candidate */
       }
     }
-    if (!poolKey || !virtualPool) throw new Error("no meteora-dbc pool");
+    if (!poolKey || !virtualPool) throw new NoRouteError("no meteora-dbc pool");
     // The SDK's VirtualPool nests its fields under `.poolState`; swapQuote
     // takes the whole wrapper. The quote mint lives on the CONFIG, not the pool.
     const config = await client.state.getPoolConfig(virtualPool.poolState.config);
@@ -156,16 +156,24 @@ export class MeteoraDbcProvider implements SwapProvider {
     // sells keep the caller's tolerance untouched (exit calls already choose
     // their own width for dying curves).
     const effBps = isBuy ? Math.max(slippageBps, 2_500) : slippageBps;
-    const q = client.pool.swapQuote({
-      virtualPool,
-      config,
-      swapBaseForQuote,
-      amountIn: new BN(amountRaw),
-      slippageBps: effBps,
-      hasReferral: false,
-      eligibleForFirstSwapWithMinFee: false,
-      currentPoint,
-    });
+    let q;
+    try {
+      q = client.pool.swapQuote({
+        virtualPool,
+        config,
+        swapBaseForQuote,
+        amountIn: new BN(amountRaw),
+        slippageBps: effBps,
+        hasReferral: false,
+        eligibleForFirstSwapWithMinFee: false,
+        currentPoint,
+      });
+    } catch (err) {
+      // "Virtual pool is completed" = graduated. That is FAILOVER to the DAMM
+      // provider, not a provider failure — surface it as a clean refusal so it
+      // never counts against this provider's breaker.
+      throw new NoRouteError(err instanceof Error ? err.message : String(err));
+    }
     const raw: MeteoraDbcRaw = {
       isBuy,
       mint,
@@ -230,7 +238,7 @@ export class MeteoraDammV2Provider implements SwapProvider {
         /* not a cp-amm pool — try the next candidate */
       }
     }
-    if (!poolKey || !st) throw new Error("no meteora-damm-v2 pool");
+    if (!poolKey || !st) throw new NoRouteError("no meteora-damm-v2 pool");
 
     const tokenIsA = st.tokenAMint.toBase58() === mint;
     const inputTokenMint = new PublicKey(isBuy ? WSOL_MINT : mint);
@@ -243,7 +251,12 @@ export class MeteoraDammV2Provider implements SwapProvider {
     const q = cpAmm.getQuote({
       inAmount: new BN(amountRaw),
       inputTokenMint,
-      slippage: slippageBps / 100, // SDK slippage is a percent
+      // ENTRY SLIPPAGE FLOOR, same lesson as the DBC curve: a minutes-old
+      // graduated pool moves faster than an AMM-calibrated 10% — real buys
+      // died in simulation with cp-amm ExceededSlippage (6002). Entries floor
+      // at 25% (sizes ~$2, minSwapOutAmount still bounds the fill); sells keep
+      // the caller's tolerance.
+      slippage: (isBuy ? Math.max(slippageBps, 2_500) : slippageBps) / 100, // SDK slippage is a percent
       poolState: st,
       currentTime: Math.floor(Date.now() / 1000),
       currentSlot,

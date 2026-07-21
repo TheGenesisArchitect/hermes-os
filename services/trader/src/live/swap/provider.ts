@@ -44,3 +44,13 @@ export interface SwapProvider {
   /** Build a signed-ready base64 VersionedTransaction for this quote + wallet. */
   buildSwapTx(cfg: HermesConfig, quote: SwapQuote, userPublicKey: string): Promise<string>;
 }
+
+/**
+ * A CLEAN REFUSAL — "this token is not my protocol" — as opposed to a provider
+ * FAILURE. The router walks past a NoRouteError without tripping the breaker:
+ * every non-Meteora token used to trip the Meteora providers one throw at a
+ * time, opening their circuits exactly when a real Meteora candidate needed
+ * them (measured: meteora-dbc circuit OPEN warnings every few minutes on
+ * ordinary pumpswap flow).
+ */
+export class NoRouteError extends Error {}

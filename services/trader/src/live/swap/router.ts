@@ -12,7 +12,7 @@
  * change. Scaling: one router instance serves every wallet.
  */
 import type { HermesConfig } from "@hermes/core";
-import type { QuoteOpts, SwapProvider, SwapQuote } from "./provider.js";
+import { NoRouteError, type QuoteOpts, type SwapProvider, type SwapQuote } from "./provider.js";
 import { JupiterHostedProvider } from "./jupiterHosted.js";
 import { JupiterSelfHostedProvider } from "./jupiterSelfHosted.js";
 import { FluxbeamProvider } from "./fluxbeam.js";
@@ -105,7 +105,10 @@ export class SwapRouter {
         this.lastProvider = p.name;
         return q;
       } catch (err) {
-        this.trip(p.name);
+        // A clean "not my protocol" refusal is FAILOVER, not failure — it must
+        // never open the breaker, or a healthy provider goes dark for 30s
+        // exactly when its venue's next candidate arrives.
+        if (!(err instanceof NoRouteError)) this.trip(p.name);
         lastErr = err;
       }
     }
