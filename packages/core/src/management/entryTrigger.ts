@@ -75,6 +75,33 @@ export interface EntryTriggerConfig {
    * other, and is where the 41.64×-then-zero class lives. 0 disables.
    */
   maxRiseIntoGate: number;
+  /**
+   * SNAP OFF THE LOW — the confirmation leg of the false-step model
+   * (docs/signature-trigger-spec.md). `minMult` anchors to watch-zero, but the
+   * predictive quantity is the rise off the candidate's OWN trough. For a
+   * candidate that never dipped these are the same test (its trough IS its
+   * reference); for one that dipped they diverge, and that divergence is the
+   * population we structurally miss.
+   *
+   * Measured 2026-07-15→21, n=11,896, leak-free, EV per $1 with the current
+   * ladder simulated so rugs are fully costed. A snap ≥+35% off the trough is
+   * positive-EV in EVERY dip band (+8.4% to +30.6%); the "limp" cohorts are
+   * negative, and break-then-limp is the largest avoidable loss pool in the data
+   * (n=433, −13.5%). NOTE the depth itself is NOT an established edge at this
+   * sample: the 40-60% bucket's +30.6% rests on a single 28.8× in 69 trades —
+   * remove it and EV falls to 0.90.
+   *
+   * 0 disables (default) — the gate is inert until swept and holdout-validated.
+   */
+  minSnap: number;
+  /**
+   * Drawdown ceiling that applies INSTEAD of maxDrawdownPct once the snap is
+   * satisfied, because for a snapped candidate the dip IS the signal. Required,
+   * not cosmetic: a candidate that broke 60%+ and snapped back still carries
+   * ~46% drawdown-from-peak at its qualifying tick, so the standard 40% ceiling
+   * hard-rejects the highest-5× cohort in the dataset (11.9% vs 3.0%).
+   */
+  maxDdSnapped: number;
 }
 
 export interface EntryTrigger {
@@ -83,6 +110,10 @@ export interface EntryTrigger {
   markMultiple: number;
   drawdownPct: number;
   buyShare: number;
+  /** Depth of the false step: 1 − trough ÷ pre-dip high. Classifies the signature. */
+  dipDepth: number;
+  /** Rise off the trough at this tick. Confirms it. */
+  snapPct: number;
 }
 
 /**
@@ -115,10 +146,30 @@ export function evaluateEntryTrigger(
   cfg: EntryTriggerConfig,
 ): EntryTrigger {
   const last = series[series.length - 1];
+  // FALSE STEP + SNAP — computed on every evaluation (even when the gate is off)
+  // so the recorder can persist them for shadow analysis. The trough is the low
+  // so far; the pre-dip high is the peak at or before it, so `dipDepth` measures
+  // the fall from what it HAD been, not from watch-zero.
+  let trough = Number.POSITIVE_INFINITY;
+  let troughIdx = -1;
+  for (let i = 0; i < series.length; i++) {
+    const m = series[i]?.markMultiple ?? 0;
+    if (m > 0 && m < trough) {
+      trough = m;
+      troughIdx = i;
+    }
+  }
+  let preHigh = 0;
+  for (let i = 0; i <= troughIdx; i++) preHigh = Math.max(preHigh, series[i]?.markMultiple ?? 0);
+  const dipDepth = preHigh > 0 && Number.isFinite(trough) ? Math.max(0, 1 - trough / preHigh) : 0;
+  const snapPct = Number.isFinite(trough) && trough > 0 && last ? last.markMultiple / trough - 1 : 0;
+
   const base = {
     markMultiple: last?.markMultiple ?? 0,
     drawdownPct: last?.drawdownFromPeakPct ?? 0,
     buyShare: last?.buyShareM5 ?? 0,
+    dipDepth,
+    snapPct,
   };
   const no = (reason: string): EntryTrigger => ({ triggered: false, reason, ...base });
 
@@ -129,7 +180,20 @@ export function evaluateEntryTrigger(
   if (ctx.observationCount < cfg.minTicks) return no(`insufficient trajectory (${ctx.observationCount} < ${cfg.minTicks} ticks)`);
   if (ctx.action === "CUT") return no("classifier says CUT — do not enter");
   if (last.markMultiple < cfg.minMult) return no(`not green enough (${last.markMultiple.toFixed(2)}x < ${cfg.minMult}x)`);
-  if (last.drawdownFromPeakPct > cfg.maxDrawdownPct) return no(`rolled off peak (${last.drawdownFromPeakPct.toFixed(0)}% > ${cfg.maxDrawdownPct}%)`);
+  // SNAP — the confirmation leg. A candidate that fell and is limping back is the
+  // single largest avoidable loss pool in the tape (break-then-limp: n=433, EV
+  // 0.865); the same fall followed by a real snap is positive-EV in every band.
+  // Inert while minSnap is 0, so enabling it is a deliberate act.
+  const snapped = cfg.minSnap > 0 && snapPct >= cfg.minSnap;
+  if (cfg.minSnap > 0 && !snapped)
+    return no(
+      `no snap off the low (+${(snapPct * 100).toFixed(0)}% off a ${(dipDepth * 100).toFixed(0)}% dip, need +${(cfg.minSnap * 100).toFixed(0)}%)`,
+    );
+  // Once snapped, the dip IS the signal, so the standard ceiling would reject the
+  // very cohort we are trying to admit (a 60%+ break that snaps back still shows
+  // ~46% off peak at its qualifying tick).
+  const ddCeiling = snapped ? cfg.maxDdSnapped : cfg.maxDrawdownPct;
+  if (last.drawdownFromPeakPct > ddCeiling) return no(`rolled off peak (${last.drawdownFromPeakPct.toFixed(0)}% > ${ddCeiling}%)`);
   if (last.buyShareM5 < cfg.minBuyShare) return no(`buy flow faded (${(last.buyShareM5 * 100).toFixed(0)}% < ${(cfg.minBuyShare * 100).toFixed(0)}%)`);
   // Neutral-churn dead zone (calibrated 2026-07-19 on liquidity-collapse-clean
   // labels, n=5988 triggers): buy share in [0.50, 0.55) at the confirm tick =
@@ -209,6 +273,8 @@ export function entryTriggerConfigFrom(cfg: {
   CONFIRM_DEAD_BUYSHARE_HI: number;
   CONFIRM_LIQ_GROWTH_EXEMPT: number;
   CONFIRM_MAX_RISE_INTO_GATE: number;
+  CONFIRM_MIN_SNAP: number;
+  CONFIRM_MAX_DD_SNAPPED: number;
 }): EntryTriggerConfig {
   return {
     enabled: cfg.CONFIRM_ENTRY_ENABLED,
@@ -223,5 +289,7 @@ export function entryTriggerConfigFrom(cfg: {
     deadBuyShareHi: cfg.CONFIRM_DEAD_BUYSHARE_HI,
     liqGrowthExempt: cfg.CONFIRM_LIQ_GROWTH_EXEMPT,
     maxRiseIntoGate: cfg.CONFIRM_MAX_RISE_INTO_GATE,
+    minSnap: cfg.CONFIRM_MIN_SNAP,
+    maxDdSnapped: cfg.CONFIRM_MAX_DD_SNAPPED,
   };
 }

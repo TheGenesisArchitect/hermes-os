@@ -595,6 +595,15 @@ const envSchema = z.object({
   // 1.26× entry at 2.1m and permitted a 14.42× entry at 3.7m on a token that
   // peaked 41.64× and was worthless 90 seconds later. Now a ceiling only.
   CONFIRM_MAX_RISE_INTO_GATE: z.coerce.number().default(1.0), // reject ≥+100% in one window
+  // SNAP OFF THE LOW — see docs/signature-trigger-spec.md. DEFAULT 0 = INERT.
+  // The gate re-anchors entry from watch-zero to the candidate's own trough. It
+  // stays off until the sweep + holdout in replayTrigger.ts says which threshold
+  // sits on a plateau rather than a spike — a peak found by searching is how the
+  // ×2.0 band boost passed review and then went 0-for-4 with real money.
+  CONFIRM_MIN_SNAP: z.coerce.number().default(0),
+  // Drawdown ceiling once snapped (the dip is the signal). Only consulted when
+  // CONFIRM_MIN_SNAP > 0 and the candidate cleared it.
+  CONFIRM_MAX_DD_SNAPPED: z.coerce.number().default(70),
 
   // ── POOL-INFLOW SIZING — the edge, applied to capital ──────────────────────
   // Pool growth is the one signal a fake move cannot manufacture: wash trading
