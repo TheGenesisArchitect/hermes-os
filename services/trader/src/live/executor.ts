@@ -648,6 +648,20 @@ export async function maybeLiveBuy(
    */
   paperFrac: number | null = null,
 ): Promise<void> {
+  // IN-FLIGHT CLAIM, taken before ANY async work. The gate's "already held"
+  // check is read-then-write: two concurrent calls for the same signal both
+  // pass it before either has inserted a row, and unlike paper the DB cannot
+  // arbitrate — live's row is written AFTER the on-chain swap, so a unique
+  // index would strand real tokens. grimace opened TWICE at $2.00 (real
+  // capital, one decision) exactly this way. The claim is process-local, which
+  // is sufficient: every live buy flows through this one function in this one
+  // daemon — and the single-daemon invariant is now actively enforced at
+  // startup after the duplicate-daemon incident.
+  if (liveBuyInFlight.has(mint)) {
+    await audit("live_buy_skipped", { mint, reason: "buy already in flight (claim race)" }).catch(() => {});
+    return;
+  }
+  liveBuyInFlight.add(mint);
   try {
     // LATENCY: live trailed paper's entry by a measured 6–8s, and that lag
     // propagates straight to the exit (THUNDERCAT: paper out at 1.018×, live 7s
@@ -855,8 +869,14 @@ export async function maybeLiveBuy(
   } catch (err) {
     await audit("live_buy_failed", { mint, error: err instanceof Error ? err.message : String(err) }).catch(() => {});
     console.error(`live buy failed ${short(mint)}: ${err instanceof Error ? err.message : err}`);
+  } finally {
+    liveBuyInFlight.delete(mint);
   }
 }
+// Mints with a live buy currently executing — the claim behind the race guard
+// at the top of maybeLiveBuy. Cleared in its finally, so a failed buy frees the
+// mint for the next legitimate attempt.
+const liveBuyInFlight = new Set<string>();
 
 /**
  * Sell a fraction of an open live position (token → SOL). The sell amount is
