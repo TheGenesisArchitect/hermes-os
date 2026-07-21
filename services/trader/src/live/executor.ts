@@ -138,7 +138,15 @@ async function engageLiveKill(reason: string, stats: Record<string, unknown>): P
 }
 
 /** Every precondition for a live BUY, checked in cheap→expensive order. */
-async function liveBuyGate(cfg: HermesConfig, mint: string): Promise<LiveGate> {
+// `routed` = this buy carries a trade signature, i.e. it is the SAME decision
+// paper just made. Paper has none of the strategy gates below — no venue
+// restriction, no regime stand-down, no wallet veto, no anticipation gate — and
+// paper is the book proving the model. Every one of these silently removes
+// trades from live that paper is winning on, which is precisely what kept the
+// live wallet unproductive. Only the SOLVENCY checks (kill switch, daily cap,
+// sell-route) apply to a routed buy; those protect the wallet rather than
+// express a strategy opinion.
+async function liveBuyGate(cfg: HermesConfig, mint: string, routed = false): Promise<LiveGate> {
   if (!cfg.LIVE_TRADING_ENABLED) return { ok: false, reason: "disabled" };
   if (!liveWallet()) return { ok: false, reason: "no wallet key" };
   if (await liveKillEngaged()) return { ok: false, reason: "live_kill engaged" };
@@ -186,7 +194,7 @@ async function liveBuyGate(cfg: HermesConfig, mint: string): Promise<LiveGate> {
   // realized over the recent window is deeply negative, the environment is
   // hostile — live refuses NEW entries so real capital doesn't follow the paper
   // book into the bleed. Open live positions still manage/exit normally.
-  if (cfg.LIVE_REGIME_GATE) {
+  if (cfg.LIVE_REGIME_GATE && !routed) {
     // In mirror mode, measure the bleed signal on ONLY the venues we mirror. The
     // whole-book signal is dominated by the high-churn bleeder (meteora-damm-v2,
     // 140 trades) which we deliberately exclude — letting it drag the window
@@ -294,7 +302,7 @@ async function liveBuyGate(cfg: HermesConfig, mint: string): Promise<LiveGate> {
         .filter(Boolean),
     );
     if (!venue || !executable.has(venue)) return { ok: false, reason: `venue not live-executable (${venue ?? "unknown"})` };
-  } else if (cfg.LIVE_PREMIUM_ONLY && !smartMoneyRescue) {
+  } else if (cfg.LIVE_PREMIUM_ONLY && !routed && !smartMoneyRescue) {
     const premium = await livePremiumSet(cfg);
     if (!venue || !premium.has(venue)) return { ok: false, reason: `venue not premium (${venue ?? "unknown"})` };
   }
@@ -302,7 +310,7 @@ async function liveBuyGate(cfg: HermesConfig, mint: string): Promise<LiveGate> {
   // WALLET-GRAPH GATE: keep real capital out of a serial-rugger holder set that
   // has NO smart-money offset. VALIDATED — rug-rep holders suppress winners
   // (7.7% vs 12.4% base). Missing score = no data → we do not block on absence.
-  if (cfg.LIVE_WALLET_GATE && rugHits > 0 && winnerHits === 0) {
+  if (cfg.LIVE_WALLET_GATE && !routed && rugHits > 0 && winnerHits === 0) {
     return { ok: false, reason: "wallet: serial-rugger holders, no smart-money" };
   }
 
@@ -570,12 +578,16 @@ function livePositionUsd(
   // lanes therefore share one risk model and stay on it as the account moves;
   // a flat LIVE_SIZE_FRAC would give a 2-star MOON_FAST and a 0-star residual
   // the same size, which is exactly the divergence we just removed from paper.
+  // A routed position sizes on EXACTLY what paper uses: the conviction fraction
+  // of capital times the class multiplier. Nothing else. The regime, conviction-
+  // band and anticipation tilts are live-only inputs paper has never applied —
+  // layering them on top means the two lanes deploy different capital against
+  // identical signals, and the lane that is proving the model is the one without
+  // them.
   const base = sig
     ? balanceUsd *
       sizeFraction(sig.stars ?? 0, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) *
-      profileOf(sig.signature).size *
-      regimeMult *
-      anticipationMult
+      profileOf(sig.signature).size
     : balanceUsd * cfg.LIVE_SIZE_FRAC * regimeMult * convictionMult * anticipationMult;
   // CAPS SCALE WITH THE BALANCE, FLOORS DO NOT.
   // LIVE_MIN_POSITION_USD is a fee-viability floor, not a strategy knob — below
@@ -617,7 +629,7 @@ export async function maybeLiveBuy(
     // to finish before the other two have even started.
     const solP = solPriceUsd(cfg).catch(() => null);
     const balP = liveBalance(cfg).catch(() => null);
-    const gate = await liveBuyGate(cfg, mint);
+    const gate = await liveBuyGate(cfg, mint, sig != null);
     if (!gate.ok) {
       if (cfg.LIVE_TRADING_ENABLED && gate.reason !== "disabled")
         await audit("live_buy_skipped", { mint, reason: gate.reason });
@@ -706,7 +718,7 @@ export async function maybeLiveBuy(
     // ANTICIPATION GATE — when the forecast is genuinely cold (venue cooling AND/OR
     // tail odds low), STAND DOWN and preserve runway. A thin wallet cannot afford
     // low-tail-probability shots (the kill autopsy: died dry on cold-window shots).
-    if (cfg.LIVE_ANTICIPATION_GATE && antiMult < cfg.LIVE_ANTICIPATION_GATE_MIN) {
+    if (cfg.LIVE_ANTICIPATION_GATE && !sig && antiMult < cfg.LIVE_ANTICIPATION_GATE_MIN) {
       await audit("live_buy_skipped", { mint, reason: `anticipation cold (×${antiMult.toFixed(2)} < ${cfg.LIVE_ANTICIPATION_GATE_MIN}) — preserving runway` });
       return;
     }
@@ -723,19 +735,15 @@ export async function maybeLiveBuy(
       const frac = Math.min(1, lossToday / cfg.LIVE_DAILY_LOSS_CAP_USD);
       dailyThrottle = 1 - frac * (1 - cfg.LIVE_DAILY_THROTTLE_MIN);
     }
+    // MIRROR PAPER EXACTLY. Paper takes every routed signal at whatever size the
+    // conviction produces — it never refuses a trade for being small, and that
+    // book is the one proving the model. A fee-floor SKIP is a guardrail paper
+    // does not have, and guardrails of exactly this kind are what kept the live
+    // wallet unproductive: each one silently removes trades from the sample that
+    // paper is winning on. So a routed position is floored to a fee-viable size
+    // and TAKEN, never skipped.
     const sized = Math.min(livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult, sig) * dailyThrottle, affordable);
-    // A routed position is never inflated to the fee floor — if its own conviction
-    // does not justify a fee-viable size, we SKIP rather than take a trade at a
-    // size the signature never asked for. Legacy (unrouted) live buys keep the
-    // old floor-up behaviour.
-    if (sig && sized < cfg.LIVE_MIN_POSITION_USD) {
-      await audit("live_buy_skipped", {
-        mint,
-        reason: `${sig.signature} ${sig.stars ?? 0}★ sizes to $${sized.toFixed(2)}, under the $${cfg.LIVE_MIN_POSITION_USD} fee floor — balance too small to express this conviction`,
-      });
-      return;
-    }
-    const usd = sig ? sized : Math.max(cfg.LIVE_MIN_POSITION_USD, sized);
+    const usd = Math.max(cfg.LIVE_MIN_POSITION_USD, sized);
     const lamports = BigInt(Math.floor((usd / sol) * 1e9));
 
     const wallet = liveWallet();
