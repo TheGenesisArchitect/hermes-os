@@ -2,6 +2,9 @@ import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
 // repo-root .env — services run with cwd at their own package dir
 loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
+// ONE RECORDER ONLY — a duplicate daemon exits at boot instead of trading.
+import { acquireSingletonLock } from "@hermes/core";
+acquireSingletonLock(resolve(import.meta.dirname, "../../../.hermes-recorder.pid"), "recorder");
 import {
   canonicalVenue,
   classify,

@@ -18,3 +18,4 @@ pgdata/
 # QUARANTINE — prompt-injection research artifact, never commit or extract into the project
 agent-os-pack-*.zip
 agents/agent-os-pack/
+.hermes-*.pid

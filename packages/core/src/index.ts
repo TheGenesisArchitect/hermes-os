@@ -115,3 +115,4 @@ export {
   type ThemeStat,
   type CategoryOnly,
 } from "./news/synthesize.js";
+export { acquireSingletonLock } from "./singleInstance.js";
