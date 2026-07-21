@@ -11,6 +11,7 @@ import {
   signatureExitOverrides,
   tickFrom,
   type HermesConfig,
+  type LearnedProfile,
   type ManagementCall,
   type Signature,
   type TokenMarket,
@@ -767,6 +768,26 @@ const RUNNER_MULT = 2.5; // above this it's an establishing runner, not a spike
 const PARABOLIC_MULT = 6; // above this, a proven parabolic runner — give it room
 const RIDE_MIN_MULT = 3; // RIDE only widens the leash once the move is this real
 const SNUG_DD = 8; // drawdown % that flips us from "let it run" to "lock it in"
+
+/**
+ * Profiles promoted by the learning loop, cached briefly so the manage loop can
+ * consult them every tick without hammering the config table. A promotion takes
+ * effect within LEARNED_TTL_MS — no restart, no deploy. On any read failure the
+ * compiled defaults stand, so a DB hiccup can never leave a position unmanaged.
+ */
+const LEARNED_TTL_MS = 60_000;
+let learnedCache: { at: number; map: Record<string, LearnedProfile> } = { at: 0, map: {} };
+async function learnedProfile(sig: Signature): Promise<LearnedProfile | null> {
+  if (Date.now() - learnedCache.at > LEARNED_TTL_MS) {
+    try {
+      const [row] = await db.select().from(config).where(eq(config.key, "signature_profiles"));
+      learnedCache = { at: Date.now(), map: (row?.value as Record<string, LearnedProfile> | undefined) ?? {} };
+    } catch {
+      learnedCache = { at: Date.now(), map: learnedCache.map };
+    }
+  }
+  return learnedCache.map[sig] ?? null;
+}
 
 function trailWidthPct(
   cfg: HermesConfig,
@@ -1953,7 +1974,9 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     // back 16% — one trail cannot serve both, and the global 5% served neither.
     // Positions opened before the rollout carry no signature and keep the old
     // behaviour exactly.
-    const ecfg = position.signature ? { ...cfg, ...signatureExitOverrides(position.signature as Signature) } : cfg;
+    const ecfg = position.signature
+      ? { ...cfg, ...signatureExitOverrides(position.signature as Signature, await learnedProfile(position.signature as Signature)) }
+      : cfg;
     let exit = decideExit(ecfg, position, market, peak, call);
     // Pre-arm hard-stop WICK CONFIRMATION: sell only after the read stays below
     // the stop for HARD_STOP_CONFIRM_TICKS consecutive polls. Every historical

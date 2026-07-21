@@ -154,14 +154,38 @@ export const isMoon = (s: Signature): boolean => s.startsWith("MOON");
  * the loaded config: `{...cfg, ...signatureExitOverrides(sig)}`. Everything the
  * signature does NOT specify keeps the global value, so this is additive.
  */
-export function signatureExitOverrides(s: Signature): {
+/**
+ * A profile promoted by the learning loop, as stored in the `signature_profiles`
+ * config row. Shape matches the loop's sweep grid; `hold` is in MINUTES.
+ */
+export interface LearnedProfile {
+  r1: number; f1: number; r2: number; f2: number; trail: number; floor: number; hold: number;
+}
+
+/** Fold a learned profile over the compiled default. Unknown keys are ignored. */
+export function withLearned(s: Signature, learned: LearnedProfile | null | undefined): SignatureProfile {
+  const base = SIGNATURE_PROFILES[s];
+  if (!learned || typeof learned.trail !== "number") return base;
+  return {
+    ...base,
+    tp1: [learned.r1, learned.f1],
+    tp2: [learned.r2, learned.f2],
+    trail: learned.trail,
+    floor: learned.floor,
+    // The loop's grid has no "never" option — a horizon is always named — so a
+    // hold at or beyond the observable ceiling means "no early time exit".
+    holdSec: learned.hold >= 999 ? 0 : Math.round(learned.hold * 60),
+  };
+}
+
+export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | null): {
   TP0_MULT: number; TP0_CUM_SELL: number;
   TP1_MULT: number; TP1_CUM_SELL: number;
   TP2_MULT: number; TP2_CUM_SELL: number;
   TRAIL_TIGHT_PCT: number; TRAIL_MID_PCT: number; TRAIL_WIDE_PCT: number;
   HARD_STOP_PCT: number; RUNNER_MAX_HOLD_SEC: number;
 } {
-  const p = SIGNATURE_PROFILES[s];
+  const p = withLearned(s, learned);
   const cum1 = p.tp1[1];
   const cum2 = cum1 + p.tp2[1];
   const trailPct = Math.round(p.trail * 100);
