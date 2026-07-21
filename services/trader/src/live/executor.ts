@@ -1234,6 +1234,7 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       // guard). Legacy unrouted rows keep quote-only marks: their tight
       // hard-stop is exactly what a glitched feed read could false-fire.
       let markSource: "sell-quote" | "feed" = "sell-quote";
+      let tickRecorded = false;
       if (value == null && lp.signature) {
         const entry0 = n(lp.entryPriceUsd);
         if (entry0 > 0) {
@@ -1243,14 +1244,35 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
             .where(eq(candidateTicks.mint, lp.mint))
             .orderBy(desc(candidateTicks.id))
             .limit(1);
-          if (
-            ct &&
-            Date.now() - ct.at.getTime() <= 60_000 &&
-            ct.liq != null && Number(ct.liq) >= 1_000 &&
-            Number(ct.priceUsd) > 0
-          ) {
-            value = n(lp.sizeUsd) * (Number(ct.priceUsd) / entry0);
-            markSource = "feed";
+          if (ct && Date.now() - ct.at.getTime() <= 60_000 && Number(ct.priceUsd) > 0) {
+            // TELEMETRY on any fresh price — recording is not acting. POOL's
+            // pool drained to liq 0 and the flicker guard silently swallowed
+            // the whole trajectory: the live card read "awaiting first
+            // observation" while the token sat at 0.10×. The card must tell
+            // that story; only DECISIONS demand a trusted read.
+            const feedMark = Number(ct.priceUsd) / entry0;
+            const feedPeak = Math.max(livePeakMark.get(lp.id) ?? 1, feedMark);
+            livePeakMark.set(lp.id, feedPeak);
+            void db
+              .insert(positionTicks)
+              .values({
+                positionId: lp.id,
+                priceUsd: String(entry0 * feedMark),
+                markMultiple: String(feedMark),
+                peakMultiple: String(feedPeak),
+                drawdownFromPeakPct: String(feedPeak > 0 ? ((feedPeak - feedMark) / feedPeak) * 100 : 0),
+                ageMinutes: String((Date.now() - lp.openedAt.getTime()) / 60_000),
+              })
+              .catch(() => {});
+            tickRecorded = true;
+            // ACTION only on real liquidity (≥$1k — the flicker guard): the
+            // genome may manage on this mark because paper manages on the same
+            // feed. A drained pool stays on the clock-force path — there is
+            // nothing to sell into, and pretending otherwise books fantasy.
+            if (ct.liq != null && Number(ct.liq) >= 1_000) {
+              value = n(lp.sizeUsd) * feedMark;
+              markSource = "feed";
+            }
           }
         }
       }
@@ -1340,18 +1362,21 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       // live Position Command card was impossible (DNA, spark and factors are
       // all computed from ticks). The mark here is the REAL sell-route value,
       // so live's trajectory is better-grounded than paper's price-feed marks.
-      // Best-effort: telemetry must never break the guard.
-      void db
-        .insert(positionTicks)
-        .values({
-          positionId: lp.id,
-          priceUsd: String(n(lp.entryPriceUsd) * markNow),
-          markMultiple: String(markNow),
-          peakMultiple: String(peakMark),
-          drawdownFromPeakPct: String(peakMark > 0 ? ((peakMark - markNow) / peakMark) * 100 : 0),
-          ageMinutes: String((Date.now() - lp.openedAt.getTime()) / 60_000),
-        })
-        .catch(() => {});
+      // Best-effort: telemetry must never break the guard. Skipped when the
+      // feed fallback already recorded this cycle's tick (no double-write).
+      if (!tickRecorded) {
+        void db
+          .insert(positionTicks)
+          .values({
+            positionId: lp.id,
+            priceUsd: String(n(lp.entryPriceUsd) * markNow),
+            markMultiple: String(markNow),
+            peakMultiple: String(peakMark),
+            drawdownFromPeakPct: String(peakMark > 0 ? ((peakMark - markNow) / peakMark) * 100 : 0),
+            ageMinutes: String((Date.now() - lp.openedAt.getTime()) / 60_000),
+          })
+          .catch(() => {});
+      }
       if (
         cfg.LIVE_PROFIT_FLOOR_ENABLED &&
         !genomeOwned &&
