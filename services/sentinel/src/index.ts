@@ -36,12 +36,14 @@ interface SentinelState {
   paperKill: boolean | null;
   liveKill: boolean | null;
   heartbeatStale: boolean;
-  /** epoch ms of the last 15-min TREND digest and hourly RECAP sent */
+  /** epoch ms of the last 20-min PULSE and hourly SUMMARY sent */
   lastTrendMs: number;
   lastRecapMs: number;
-  /** previous 15-min window P&L per lane, so TREND can show direction */
+  /** previous pulse-window P&L per lane, so PULSE can show direction */
   prevTrendPaper: number;
   prevTrendLive: number;
+  /** mints already announced as 🌙 moonshots — never ping the same one twice */
+  moonshotSeen: string[];
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -57,6 +59,7 @@ async function loadState(): Promise<SentinelState> {
     lastRecapMs: v.lastRecapMs ?? 0,
     prevTrendPaper: v.prevTrendPaper ?? 0,
     prevTrendLive: v.prevTrendLive ?? 0,
+    moonshotSeen: v.moonshotSeen ?? [],
   };
 }
 
@@ -79,7 +82,7 @@ async function saveState(s: SentinelState): Promise<void> {
  * body) — emoji in an HTTP header is not a ByteString and silently killed every
  * push in v1; JSON bodies are UTF-8 and immune.
  */
-type Category = "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP";
+type Category = "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP" | "PULSE" | "SUMMARY" | "MOONSHOT";
 
 async function notify(
   category: Category,
@@ -141,41 +144,60 @@ async function checkKillSwitches(s: SentinelState): Promise<void> {
   }
 }
 
-async function checkArms(s: SentinelState): Promise<void> {
+// ── 🌙 THE MOONSHOT ALERT — the one per-event ping that survives ─────────────
+// Per-trade pings are gone by operator directive; the scheduled PULSE and
+// SUMMARY carry the flow. The exception is the trade this whole system exists
+// to catch: a MOON-class candidate that qualifies at FULL 2★ conviction and
+// ARMS. That is rare (two independent evidence marks on top of the moon
+// fingerprint), it is the setup being perfected, and it deserves a phone
+// buzz with the whole story on one screen.
+async function checkMoonshots(s: SentinelState): Promise<void> {
   const rows = await db
-    .select({ id: auditLog.id, details: auditLog.details })
-    .from(auditLog)
-    .where(and(eq(auditLog.action, "entry_trigger"), gt(auditLog.id, s.lastTriggerAuditId)))
-    .orderBy(auditLog.id)
-    .limit(50);
+    .select({
+      mint: candidateOutcomes.mint,
+      sig: candidateOutcomes.signature,
+      stars: candidateOutcomes.stars,
+      dip: candidateOutcomes.dipDepth,
+      snap: candidateOutcomes.snapPct,
+      rate: candidateOutcomes.snapRate,
+      wWin: candidateOutcomes.walletWinnerHits,
+      trigMult: candidateOutcomes.triggerMultiple,
+      symbol: tokens.symbol,
+      dex: tokens.dex,
+    })
+    .from(candidateOutcomes)
+    .innerJoin(tokens, eq(tokens.mint, candidateOutcomes.mint))
+    .where(
+      and(
+        eq(candidateOutcomes.armed, true),
+        eq(candidateOutcomes.stars, 2),
+        sql`${candidateOutcomes.signature} like 'MOON%'`,
+        sql`${candidateOutcomes.updatedAt} > now() - interval '5 minutes'`,
+      ),
+    )
+    .limit(10);
   for (const r of rows) {
-    s.lastTriggerAuditId = r.id;
-    const d = (r.details ?? {}) as { mint?: string; reason?: string };
-    if (!d.mint) continue;
-    const [c] = await db
-      .select({
-        conv: candidateOutcomes.convictionScore,
-        wWin: candidateOutcomes.walletWinnerHits,
-        symbol: tokens.symbol,
-        dex: tokens.dex,
-      })
-      .from(candidateOutcomes)
-      .innerJoin(tokens, eq(tokens.mint, candidateOutcomes.mint))
-      .where(eq(candidateOutcomes.mint, d.mint));
-    const conv = c?.conv == null ? null : Number(c.conv);
-    const wWin = num(c?.wWin);
-    if ((conv !== null && conv >= cfg.SENTINEL_CONV_MIN) || wWin >= 3) {
-      await notify(
-        "ARM",
-        `${c?.symbol ?? short(d.mint)}${conv !== null ? ` · conviction ${(conv * 100).toFixed(0)}` : ""}`,
-        [
-          `venue: ${c?.dex ?? "?"}${wWin > 0 ? ` · winner-wallets: ${wWin}` : ""}`,
-          `gate: ${d.reason ?? "confirmed"}`,
-        ],
-        4,
-        ["zap"],
-      );
-    }
+    if (s.moonshotSeen.includes(r.mint)) continue;
+    s.moonshotSeen.push(r.mint);
+    if (s.moonshotSeen.length > 60) s.moonshotSeen = s.moonshotSeen.slice(-40);
+    const dipPct = r.dip == null ? null : Number(r.dip) * 100;
+    const snapPct = r.snap == null ? null : Number(r.snap) * 100;
+    const rate = r.rate == null ? null : Number(r.rate);
+    const grade = (r.sig ?? "MOON").replace("MOON_", "").toLowerCase();
+    await notify(
+      "MOONSHOT",
+      `${r.symbol ?? short(r.mint)} ★★ armed`,
+      [
+        `🌙 the ${grade} moon signature, at FULL conviction`,
+        dipPct != null && snapPct != null
+          ? `the tell: dipped ${dipPct.toFixed(0)}%, snapped +${snapPct.toFixed(0)}%${rate != null ? ` at ${rate.toFixed(1)}×/min` : ""}`
+          : `confirmed off the trough${r.trigMult != null ? ` at ${Number(r.trigMult).toFixed(2)}×` : ""}`,
+        `evidence: 2★${num(r.wWin) > 0 ? ` · ${num(r.wWin)} winner-rep wallet${num(r.wWin) > 1 ? "s" : ""} aboard` : " · retrace + holders confirm"}`,
+        `venue ${r.dex ?? "?"} · both lanes firing · 🚀 shooting for the moon`,
+      ],
+      4,
+      ["new_moon", "rocket"],
+    );
   }
 }
 
@@ -198,29 +220,14 @@ async function checkFills(s: SentinelState): Promise<void> {
     .where(gt(fills.id, s.lastFillId))
     .orderBy(fills.id)
     .limit(100);
+  // TRADE-FOR-TRADE PINGS REMOVED by operator directive (2026-07-21): every
+  // fill used to buzz the phone, which drowned the signal. The flow now lives
+  // in the 20-min PULSE and the hourly SUMMARY; the only per-event pings left
+  // are safety transitions (kill/heartbeat) and the 🌙 2★ MOONSHOT. The cursor
+  // still advances so re-enabling per-fill alerts later never replays history.
   for (const r of rows) {
     s.lastFillId = r.id;
-    const mult = num(r.entry) > 0 ? num(r.price) / num(r.entry) : 0;
-    const usd = num(r.qty) * num(r.price);
-    if (r.lane === "live") {
-      await notify(
-        "LIVE",
-        `${r.side.toUpperCase()} ${r.symbol} $${usd.toFixed(2)}`,
-        r.side === "sell"
-          ? [`fill: ${mult.toFixed(2)}x entry · exit: ${r.reason ?? "?"}`, `position pnl: ${num(r.pnl) >= 0 ? "+" : ""}$${num(r.pnl).toFixed(2)}`]
-          : [`entry filled — managing`],
-        4,
-        ["moneybag"],
-      );
-    } else if (r.side === "sell" && mult >= cfg.SENTINEL_RUNNER_MULT) {
-      await notify(
-        "RUNNER",
-        `${r.symbol} banked ${mult.toFixed(2)}x`,
-        [`lane: paper · exit: ${r.reason ?? "?"} · $${usd.toFixed(2)}`],
-        3,
-        ["chart_with_upwards_trend"],
-      );
-    }
+    void r;
   }
 }
 
@@ -282,22 +289,45 @@ function laneLine(tag: string, st: LaneStats, note?: string): string {
   return `${tag}: ${money(st.pnl)}${ofBal} · ${st.closes} closes · ${wr}% win${onDep}`;
 }
 
+// PULSE — 3× an hour, one screen, no jargon. Replaces both the 15-min TREND
+// and the per-trade pings: what the last 20 minutes did, how well the moves
+// were kept, what the router is finding, what's on right now.
 async function sendTrend(s: SentinelState): Promise<void> {
-  const [paper, live] = await Promise.all([laneStats("paper", 15), laneStats("live", 15)]);
+  const [paper, live] = await Promise.all([laneStats("paper", 20), laneStats("live", 20)]);
   const killed = s.liveKill === true;
   const dir = (now: number, prev: number): string => (now > prev + 0.01 ? "▲" : now < prev - 0.01 ? "▼" : "▬");
-  const [runners] = (await db.execute(sql`
-    select count(*)::int as n from fills f join positions p on p.id = f.position_id
-    where f.side='sell' and f.filled_at > now() - interval '15 minutes'
-      and f.price_usd >= 1.5 * p.entry_price_usd
-  `)) as unknown as { n: number }[];
+  // Capture over the window, pooled (dollars kept ÷ dollars the peaks offered).
+  const [cap] = (await db.execute(sql`
+    select case when coalesce(sum(size_usd*(peak_price_usd/nullif(entry_price_usd,0)-1))
+                   filter (where peak_price_usd/nullif(entry_price_usd,0) >= 1.22),0) > 0
+      then round((100*sum(realized_pnl_usd) filter (where peak_price_usd/nullif(entry_price_usd,0) >= 1.22)
+           /sum(size_usd*(peak_price_usd/nullif(entry_price_usd,0)-1))
+             filter (where peak_price_usd/nullif(entry_price_usd,0) >= 1.22))::numeric,0)::float
+      else null end as capture
+    from positions where lane='paper' and status='closed' and closed_at > now() - interval '20 minutes'
+  `)) as unknown as { capture: number | null }[];
+  const mix = (await db.execute(sql`
+    select coalesce(signature,'?') as sig, count(*)::int as n from candidate_outcomes
+    where updated_at > now() - interval '20 minutes' and signature is not null
+    group by 1 order by n desc
+  `)) as unknown as { sig: string; n: number }[];
+  const [open] = (await db.execute(sql`
+    select count(*) filter (where lane='paper')::int as p, count(*) filter (where lane='live')::int as l
+    from positions where status='open'
+  `)) as unknown as { p: number; l: number }[];
+  const refused = mix.find((m) => m.sig === "RUG_RISK")?.n ?? 0;
+  const found = mix.filter((m) => m.sig !== "RUG_RISK");
   const lines = [
     laneLine("paper", paper) + ` ${dir(paper.pnl, s.prevTrendPaper)}`,
     killed ? "live: standing down (kill engaged)" : laneLine("live", live) + ` ${dir(live.pnl, s.prevTrendLive)}`,
-    `runners ≥1.5×: ${num(runners?.n)}` +
-      (paper.best && paper.best.pnl > 0 ? ` · best ${paper.best.sym} ${money(paper.best.pnl)}` : ""),
+    (paper.best && paper.best.pnl > 0 ? `best ${paper.best.sym} ${money(paper.best.pnl)}` : "no standout") +
+      (cap?.capture != null ? ` · kept ${Math.round(Number(cap.capture))}% of the moves` : ""),
+    found.length
+      ? `finding: ${found.slice(0, 3).map((m) => `${m.sig.replace("MOON_", "m·").toLowerCase()} ${m.n}`).join(" · ")}${refused ? ` · refused ${refused}` : ""}`
+      : `quiet tape${refused ? ` · refused ${refused}` : ""}`,
+    `open now: ${num(open?.p)} paper · ${num(open?.l)} live`,
   ];
-  await notify("TREND", "15 min", lines, 2, ["chart_with_upwards_trend"]);
+  await notify("PULSE", "20 min", lines, 2, ["chart_with_upwards_trend"]);
   s.prevTrendPaper = paper.pnl;
   s.prevTrendLive = live.pnl;
 }
@@ -373,22 +403,24 @@ async function sendRecap(s: SentinelState): Promise<void> {
       `inflow edge: strong ${Number(inflow.strong_win).toFixed(0)}% win vs flat ${Number(inflow.flat_win).toFixed(0)}% · spread ${sp >= 0 ? "+" : ""}${sp.toFixed(0)}pp${sp <= 5 ? " ⚠ DECAYING" : ""}`,
     );
   }
-  await notify("RECAP", "hourly", lines, 3, ["bar_chart"]);
+  await notify("SUMMARY", "hour + forecast", lines, 3, ["bar_chart"]);
 }
 
 async function checkDigests(s: SentinelState): Promise<void> {
   if (!cfg.SENTINEL_DIGEST_ENABLED) return;
   const now = Date.now();
-  const QUARTER = 15 * 60_000;
+  const PULSE = 20 * 60_000; // 3× an hour, on :00 :20 :40
   const HOUR = 60 * 60_000;
-  // Fire on wall-clock boundaries (:00 :15 :30 :45) rather than drifting timers.
-  if (Math.floor(now / QUARTER) > Math.floor(s.lastTrendMs / QUARTER)) {
-    await sendTrend(s);
-    s.lastTrendMs = now;
-  }
-  if (Math.floor(now / HOUR) > Math.floor(s.lastRecapMs / HOUR)) {
+  // Fire on wall-clock boundaries rather than drifting timers. The hourly
+  // SUMMARY supersedes the :00 pulse — never send both in the same minute.
+  const hourDue = Math.floor(now / HOUR) > Math.floor(s.lastRecapMs / HOUR);
+  if (hourDue) {
     await sendRecap(s);
     s.lastRecapMs = now;
+    s.lastTrendMs = now;
+  } else if (Math.floor(now / PULSE) > Math.floor(s.lastTrendMs / PULSE)) {
+    await sendTrend(s);
+    s.lastTrendMs = now;
   }
 }
 
@@ -431,7 +463,7 @@ if (state.lastTriggerAuditId < 0) {
 while (true) {
   try {
     await checkKillSwitches(state);
-    await checkArms(state);
+    await checkMoonshots(state);
     await checkFills(state);
     await checkHeartbeat(state);
     await checkDigests(state);
