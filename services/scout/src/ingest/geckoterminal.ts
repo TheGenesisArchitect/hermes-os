@@ -32,16 +32,45 @@ function mintFromId(id: string): string {
  * Poll GeckoTerminal's keyless new-pools feed for Solana. Returns candidates
  * where the NEW token is paired against SOL or a stable (i.e. the tradeable leg).
  */
-export async function fetchNewPools(minLiquidityUsd: number): Promise<TokenCandidate[]> {
+export async function fetchNewPools(minLiquidityUsd: number, pages = 3): Promise<TokenCandidate[]> {
   // geckoterminal.com is SNI-filtered for undici (ECONNRESET); resilientFetch
   // retries via curl (through GoodbyeDPI). 5s cap so a silent drop fails fast and
   // the DexScreener fallback can fire instead of hanging the poll.
-  const res = await resilientFetch(NEW_POOLS_URL, { headers: { accept: "application/json" }, timeoutMs: 5000 });
-  if (!res.ok) throw new Error(`geckoterminal HTTP ${res.status}`);
-  const body = (await res.json()) as { data?: GtPool[] };
+  //
+  // MULTI-PAGE, newest-first. Page 1 alone is 20 pools, and at launch-hour flow
+  // the meteora/pump firehose pushes a Raydium LaunchLab or CPMM creation off
+  // that page inside one 45s poll — the 7-day census showed ~20 Raydium-family
+  // discoveries a WEEK against one of the largest launch flows on Solana. Three
+  // pages = the 60 newest pools per poll, which holds the whole window at peak
+  // flow. Budget: 3 calls / 45s ≈ 4/min, far under GT's free-tier limit. A
+  // failed deeper page returns what we have — page 1 failing still throws so
+  // the DexScreener fallback can fire.
+  const raw: GtPool[] = [];
+  for (let p = 1; p <= pages; p++) {
+    try {
+      const res = await resilientFetch(`${NEW_POOLS_URL}?page=${p}`, {
+        headers: { accept: "application/json" },
+        timeoutMs: 5000,
+      });
+      if (!res.ok) throw new Error(`geckoterminal HTTP ${res.status}`);
+      const body = (await res.json()) as { data?: GtPool[] };
+      raw.push(...(body.data ?? []));
+    } catch (err) {
+      if (p === 1) throw err; // primary page down = source down → let the fallback fire
+      break; // deeper page hiccup (rate limit, blip) — keep what we have
+    }
+  }
+  // Dedupe by pool address — pages can shift between requests.
+  const seen = new Set<string>();
+  const poolsRaw = raw.filter((pool) => {
+    const a = pool.attributes.address;
+    if (seen.has(a)) return false;
+    seen.add(a);
+    return true;
+  });
 
   const candidates: TokenCandidate[] = [];
-  for (const pool of body.data ?? []) {
+  for (const pool of poolsRaw) {
     const attrs = pool.attributes;
     const base = mintFromId(pool.relationships.base_token.data.id);
     const quote = mintFromId(pool.relationships.quote_token.data.id);
