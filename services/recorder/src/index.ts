@@ -376,6 +376,9 @@ async function observe(
       buyShare: t.buyShareM5,
       dipDepth: trig.dipDepth,
       snapRate: trig.snapRate,
+      // Total rise off the trough — convictionOf checks it against the class
+      // snap bar for the confirmed-retrace mark (dip 25-45% + snap = bet bigger).
+      snapPct: trig.snapPct,
       largestHolderPct: holder.largestPct,
       top10Pct: holder.top10Pct,
       holders: holder.holders,

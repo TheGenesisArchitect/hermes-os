@@ -45,6 +45,8 @@ export interface SignatureInputs {
   dipDepth: number;
   /** Percent recovered off the trough PER MINUTE: the tell's velocity. */
   snapRate: number;
+  /** Total rise off the trough, 0..n — measured against the class snap bar. */
+  snapPct?: number | null;
   /**
    * HOLDER DISPERSION at discovery — the cleanest class separator measured, and
    * available before a single tick of trajectory exists. Median largest-holder
@@ -217,7 +219,11 @@ export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
     // here: the moon grades carry the highest rug rates in the system, and the
     // early tranche is precisely what pays for those rugs. Elon peaked 1.43×,
     // missed the old rung by two hundredths, banked nothing and cost −$8.02.
-    tp0: [1.25, 0.2], tp1: [2.35, 0.2], tp2: [3.2, 0.2], holdSec: CLOCK_SEC, size: 0.8,
+    // SIZE 0.8 → 1.0: the "sample-limited" haircut was a minimizing posture on
+    // the OPPORTUNITY class. MOON_FAST rugs at 11.6% — LESS than RISER's 12.7%,
+    // which sizes 1.0 — with a 6.90× p90. Its own measured risk earns parity;
+    // the confirmed-retrace conviction mark handles the bet-bigger case on top.
+    tp0: [1.25, 0.2], tp1: [2.35, 0.2], tp2: [3.2, 0.2], holdSec: CLOCK_SEC, size: 1.0,
     note: "thin pool, dispersed, 150-400%/min recovery — rugs 11.6%, p90 6.90×",
   },
   MOON_STEADY: {
@@ -337,11 +343,27 @@ export function convictionOf(s: Signature, i: Partial<SignatureInputs>): Convict
   if ((i.walletWinnerHits ?? 0) > 0 && (i.walletEdge ?? 0) > 0) {
     marks.push(`${i.walletWinnerHits} winner-rep holder${(i.walletWinnerHits ?? 0) > 1 ? "s" : ""} (2.2× lift)`);
   }
+  // THE CONFIRMED RETRACE — on a moonshot the pullback IS the signature, so a
+  // moon that retraced and snapped is a bet-BIGGER moment, not a size-down one.
+  // Measured by dip band at entry (moon-routed): <15% rides launch momentum
+  // (+14.4% on capital), 15-30% is chop (−32.7%), 30-45% is the TRUE RETRACE —
+  // +30.6% on capital, avg peak 8.7×, 9/14 reach 2× — and 45%+ is a breakdown,
+  // not a pullback (−71.8%, MOON_VIOLENT's 58%-rug territory starts here). So
+  // the mark is the confirmed band only, entered from 25% to align with the
+  // router's own dip threshold: deep enough to be a real step, shy of the
+  // breakdown zone, and the class snap bar must actually have been cleared.
+  const retraceConfirmed =
+    s.startsWith("MOON") &&
+    i.dipDepth != null && i.dipDepth >= 0.25 && i.dipDepth < 0.45 &&
+    (i.snapPct ?? 0) >= p.minSnap;
+  if (retraceConfirmed) marks.push("confirmed retrace 25-45% + snap (the moon tell, +30.6% band)");
 
   // The evidenced classes: RISER confirmed on both sides of the split, MOON_FAST
   // the lowest-rug cohort measured. BASE is the residual bucket by construction —
-  // it can never star, because "unidentified" is not conviction.
-  const evidenced = s === "RISER" || s === "MOON_FAST";
+  // it can never star, because "unidentified" is not conviction. A moon with a
+  // CONFIRMED RETRACE is evidence in itself — that is the fingerprint the moon
+  // class was defined by, so it stars on the same terms as the evidenced classes.
+  const evidenced = s === "RISER" || s === "MOON_FAST" || retraceConfirmed;
   const strong = s === "RISER" || s === "MOON_FAST" || s === "MOON_STEADY" || s === "CLIMBER";
 
   if (evidenced && marks.length >= 2) {
