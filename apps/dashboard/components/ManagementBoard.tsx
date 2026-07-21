@@ -25,11 +25,17 @@ const money = (v: number, digits = 2) =>
  * this engine was built to kill).
  */
 function FloatSummary({ positions }: { positions: ManagedPositionView[] }) {
-  const netTotal = positions.reduce((s, p) => s + p.unrealizedNetUsd, 0);
-  const grossTotal = positions.reduce((s, p) => s + p.unrealizedGrossUsd, 0);
-  const green = positions.filter((p) => p.unrealizedNetUsd > 0);
-  const red = positions.filter((p) => p.unrealizedNetUsd <= 0);
-  const best = [...positions].sort((a, b) => b.unrealizedNetUsd - a.unrealizedNetUsd)[0];
+  // LANE SEPARATION — the headline is the PAPER float; live gets its own tile.
+  // Blending real-capital float into the paper number would corrupt both
+  // ledgers at a glance (the lane-separation standard).
+  const paper = positions.filter((p) => p.lane !== "live");
+  const live = positions.filter((p) => p.lane === "live");
+  const liveNet = live.reduce((s, p) => s + p.unrealizedNetUsd, 0);
+  const netTotal = paper.reduce((s, p) => s + p.unrealizedNetUsd, 0);
+  const grossTotal = paper.reduce((s, p) => s + p.unrealizedGrossUsd, 0);
+  const green = paper.filter((p) => p.unrealizedNetUsd > 0);
+  const red = paper.filter((p) => p.unrealizedNetUsd <= 0);
+  const best = [...paper].sort((a, b) => b.unrealizedNetUsd - a.unrealizedNetUsd)[0];
   const slipHaircut = grossTotal - netTotal;
   const netTone = netTotal >= 0 ? "var(--status-good)" : "var(--status-critical)";
 
@@ -52,6 +58,16 @@ function FloatSummary({ positions }: { positions: ManagedPositionView[] }) {
           <div className="tabular text-xl font-semibold" style={{ color: "var(--text-secondary)" }}>{red.length}</div>
           <div className="text-xs" style={{ color: "var(--text-muted)" }}>underwater</div>
         </div>
+        {live.length > 0 ? (
+          <div>
+            <div className="tabular text-xl font-semibold" style={{ color: liveNet >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>
+              ◆ {money(liveNet)}
+            </div>
+            <div className="text-xs" style={{ color: "var(--status-serious)" }}>
+              live float · {live.length} open · real capital
+            </div>
+          </div>
+        ) : null}
         {best && best.unrealizedNetUsd > 0 ? (
           <div className="ml-auto text-right">
             <div className="text-xs" style={{ color: "var(--text-muted)" }}>top floater</div>
@@ -177,14 +193,27 @@ function Card({ p }: { p: ManagedPositionView }) {
   const regime = p.call?.regime ?? "WATCH";
   const color = ACTION_COLOR[action];
   const score = p.call?.continuationScore ?? 50;
+  const isLive = p.lane === "live";
 
   const engage = (intent: "ride" | "cut") => start(() => setManagementIntent(p.id, intent));
 
   return (
-    <div className="card overflow-hidden p-4">
+    <div
+      className="card overflow-hidden p-4"
+      style={isLive ? { borderColor: "var(--status-serious)" } : undefined}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
+            {isLive ? (
+              <span
+                title="LIVE wallet — real capital, genome-owned exits"
+                className="rounded px-1.5 py-px text-[10px] font-bold tracking-wide"
+                style={{ background: "color-mix(in srgb, var(--status-serious) 18%, transparent)", color: "var(--status-serious)", border: "1px solid var(--status-serious)" }}
+              >
+                ◆ LIVE
+              </span>
+            ) : null}
             <Link href={`/token/${p.mint}`} className="font-semibold hover:underline" style={{ color: "var(--text-primary)" }}>
               {p.symbol ?? "?"}
             </Link>
@@ -251,6 +280,14 @@ function Card({ p }: { p: ManagedPositionView }) {
         </div>
       ) : null}
 
+      {isLive ? (
+        // No RIDE/CUT on a live card — the intent channel is consumed by paper's
+        // manage loop only; a queued CUT here would sit unapplied forever while
+        // looking armed. The genome (cover/trail/ladder/clock) owns these exits.
+        <div className="mt-3 border-t pt-3 text-center text-xs" style={{ borderColor: "var(--gridline)", color: "var(--text-muted)" }}>
+          🧬 genome-owned — exits decided by the same formula as paper, executed on-chain
+        </div>
+      ) : (
       <div className="mt-3 flex items-center gap-2 border-t pt-3" style={{ borderColor: "var(--gridline)" }}>
         <button
           onClick={() => engage("ride")}
@@ -271,7 +308,8 @@ function Card({ p }: { p: ManagedPositionView }) {
           ✕ Cut now
         </button>
       </div>
-      {p.pendingIntent ? (
+      )}
+      {!isLive && p.pendingIntent ? (
         <div className="mt-1.5 text-center text-xs" style={{ color: p.pendingIntent === "cut" ? "var(--status-critical)" : "var(--status-good)" }}>
           ⏳ {p.pendingIntent === "cut" ? "CUT" : "RIDE"} queued — applies on the next trader poll
         </div>

@@ -411,6 +411,8 @@ const num = (v: string | null): number => (v === null ? 0 : Number(v));
 
 export interface ManagedPosition {
   id: number;
+  /** "paper" | "live" — live cards carry real capital and are genome-owned. */
+  lane: string;
   mint: string;
   symbol: string | null;
   dex: string | null;
@@ -452,6 +454,7 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
   const open = await db
     .select({
       id: positions.id,
+      lane: positions.lane,
       mint: positions.mint,
       symbol: tokens.symbol,
       dex: tokens.dex,
@@ -465,7 +468,10 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
     })
     .from(positions)
     .innerJoin(tokens, eq(tokens.mint, positions.mint))
-    .where(and(eq(positions.lane, "paper"), eq(positions.status, "open")))
+    // BOTH LANES — live records position_ticks from the guard now, so its cards
+    // carry the same DNA/spark/factors as paper. Callers doing paper-bankroll
+    // math (equity, harvest) must filter lane='paper' themselves.
+    .where(eq(positions.status, "open"))
     .orderBy(desc(positions.openedAt));
 
   const out: ManagedPosition[] = [];
@@ -522,6 +528,7 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
     const dna = call ? tradeDna(call, last ? num(last.ageMinutes) : 0, markMultiple, peakMultiple) : null;
     out.push({
       id: p.id,
+      lane: p.lane,
       mint: p.mint,
       symbol: p.symbol,
       dex: p.dex,

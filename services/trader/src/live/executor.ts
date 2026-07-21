@@ -35,7 +35,7 @@ import {
   type HermesConfig,
   type Signature,
 } from "@hermes/core";
-import { auditLog, candidateOutcomes, db, fills, pnlSnapshots, positions, safetyChecks, tokens } from "@hermes/db";
+import { auditLog, candidateOutcomes, db, fills, pnlSnapshots, positionTicks, positions, safetyChecks, tokens } from "@hermes/db";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { rpcPool } from "./rpc/pool.js";
 import { JupiterHostedProvider, WSOL_MINT } from "./swap/jupiterHosted.js";
@@ -1299,6 +1299,24 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       const markNow = cost > 0 ? value / cost : 1;
       const peakMark = Math.max(livePeakMark.get(lp.id) ?? 1, markNow);
       livePeakMark.set(lp.id, peakMark);
+      // TELEMETRY, 1:1 WITH PAPER. Paper persists a position_tick every manage
+      // poll; live never did — 27 live positions, 0 ticks — so the Trade Matrix
+      // silently dropped every live bar (`if (!points.length) continue`) and a
+      // live Position Command card was impossible (DNA, spark and factors are
+      // all computed from ticks). The mark here is the REAL sell-route value,
+      // so live's trajectory is better-grounded than paper's price-feed marks.
+      // Best-effort: telemetry must never break the guard.
+      void db
+        .insert(positionTicks)
+        .values({
+          positionId: lp.id,
+          priceUsd: String(n(lp.entryPriceUsd) * markNow),
+          markMultiple: String(markNow),
+          peakMultiple: String(peakMark),
+          drawdownFromPeakPct: String(peakMark > 0 ? ((peakMark - markNow) / peakMark) * 100 : 0),
+          ageMinutes: String((Date.now() - lp.openedAt.getTime()) / 60_000),
+        })
+        .catch(() => {});
       if (
         cfg.LIVE_PROFIT_FLOOR_ENABLED &&
         !genomeOwned &&

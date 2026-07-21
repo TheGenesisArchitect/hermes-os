@@ -138,25 +138,33 @@ export default async function Overview() {
   ]);
 
   const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
+  // PAPER SUBSET for every paper-bankroll aggregate below — `managed` now
+  // carries BOTH lanes (the live baseball cards), and mixing live float into
+  // the paper equity tile would corrupt the ledger it headlines.
+  const paperManaged = managed.filter((p) => p.lane === "paper");
 
-  // Harvest clock — book-average moonshot clock across all open trades right now.
+  // Harvest clock — book-average moonshot clock across the PAPER book (the
+  // harvest button drives paper's sweep; live runs its own basket harvest).
   const harvest = harvestClock(
-    managed
+    paperManaged
       .map((p) => p.dna)
       .filter((d): d is NonNullable<typeof d> => d != null)
       .map((d) => ({ clockPct: d.clockPct, pastPrime: d.pastPrime })),
   );
-  // mint→DNA map — reused by the Timing Grid (open bars) and Wallet matrix (live = paper twin).
+  // mint→DNA map — reused by the Timing Grid (open bars) and Wallet matrix.
+  // Live first, paper second, so when both lanes hold a mint the richer paper
+  // trajectory wins.
   const dnaByMint: Record<string, TradeDna> = {};
-  for (const p of managed) if (p.dna) dnaByMint[p.mint] = p.dna;
+  for (const p of managed) if (p.lane === "live" && p.dna) dnaByMint[p.mint] = p.dna;
+  for (const p of paperManaged) if (p.dna) dnaByMint[p.mint] = p.dna;
 
-  // Live float read for the Intel Report — realizable (post-slippage) unrealized P&L.
-  const greenPositions = managed.filter((p) => p.unrealizedNetUsd > 0);
+  // Float read for the Intel Report — realizable (post-slippage) unrealized P&L.
+  const greenPositions = paperManaged.filter((p) => p.unrealizedNetUsd > 0);
   const liveRead = {
-    openPositions: managed.length,
-    floatNetUsd: managed.reduce((s, p) => s + p.unrealizedNetUsd, 0),
+    openPositions: paperManaged.length,
+    floatNetUsd: paperManaged.reduce((s, p) => s + p.unrealizedNetUsd, 0),
     greenCount: greenPositions.length,
-    redCount: managed.filter((p) => p.unrealizedNetUsd <= 0).length,
+    redCount: paperManaged.filter((p) => p.unrealizedNetUsd <= 0).length,
   };
   const greenUsd = greenPositions.reduce((s, p) => s + p.unrealizedNetUsd, 0);
   // Harvest promises only what the trader's sweep can DELIVER this cycle: greens
