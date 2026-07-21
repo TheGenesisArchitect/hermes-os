@@ -419,7 +419,7 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
   TRAIL_TIGHT_PCT: number; TRAIL_MID_PCT: number; TRAIL_WIDE_PCT: number;
   HARD_STOP_PCT: number; HARD_STOP_PCT_THIN: number; RUNNER_MAX_HOLD_SEC: number;
   TIME_FLOOR_AT_SEC: number; FAST_FLOOR_ENABLED: boolean;
-  PROFIT_LOCK_ARM_MULT: number; PROFIT_LOCK_FLOOR_MULT: number; PROFIT_FLOOR_USD: number;
+  PROFIT_LOCK_ARM_MULT: number; PROFIT_LOCK_FLOOR_MULT: number; PROFIT_LOCK_GAIN_LOCK: number; PROFIT_FLOOR_USD: number;
   POST_BANK_TRAIL_PCT: number; TIMEBOX_FLAT_MULT: number;
 } {
   const p = withLearned(s, learned);
@@ -491,12 +491,31 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
     // mathematically guarantees a loss on ANY peak below 1.82× (1 ÷ 0.55).
     // Audited over 75 minutes, profit_trail was the largest loss pool in the
     // book — 12 exits, average peak 1.28×, average exit 0.66×, −$15.47.
-    // So once a position has genuinely gone green it may not close red: arm at
-    // +3% and floor at +2%. Below the arm the class COVER still owns the
-    // downside, so a trade that never establishes is unaffected; above it the
-    // trail governs give-back but can never breach breakeven-plus-fees.
-    PROFIT_LOCK_ARM_MULT: 1.03,
-    PROFIT_LOCK_FLOOR_MULT: 1.02,
+    // …but +3% IS NOT "GENUINELY GREEN" — it is noise, and arming there was
+    // strangling the book. Arming is a SWITCH: the instant it flips, the class
+    // cover stops applying and the only downside left is max(entry × 1.02,
+    // trailFloor). At a 1.05× peak the trail floor is 0.58×, so the binding stop
+    // is 1.02× — a 2% leash on a token that routinely moves 5% in a tick. The
+    // ledger reads exactly like that: profit_trail firing at 4s, 6s, 8s, 14s,
+    // 20s, 25s on peaks of 1.04–1.14×, exiting 0.91–1.01×.
+    //
+    // The counterfactual settles it. position_ticks stops at our exit, but the
+    // recorder keeps watching in candidate_ticks, so the path after we cut is
+    // recoverable. Of 28 trades scratched out of the 1.03–1.20 band, WITHIN
+    // THEIR OWN CLOCK: 16 (57%) went on to reach 1.20×, 11 reached 1.50×, four
+    // reached 2.00×, average subsequent high 1.35×. Replaying them under this
+    // arm: −$29.90 against the −$53.59 actually booked, and it stays ahead until
+    // the slippage assumption exceeds ~15% (the convex model gives 0.1–0.3% at
+    // these sizes).
+    //
+    // So arm at the FIRST RUNG instead. Below 1.20× the class cover owns the
+    // downside exactly as every genome intends — RISER is built to hold a dip to
+    // 0.40× and must be allowed to. Above it the trail governs give-back and
+    // still can never breach breakeven-plus-fees, which is what the 13:48 fix
+    // was actually for.
+    PROFIT_LOCK_ARM_MULT: 1.2,
+    PROFIT_LOCK_FLOOR_MULT: 1.02, // absolute minimum; the gain lock below is what actually binds
+    PROFIT_LOCK_GAIN_LOCK: 0.65,
     PROFIT_FLOOR_USD: Number.POSITIVE_INFINITY, // never arm on a dollar amount
     POST_BANK_TRAIL_PCT: trailPct, // post-bank snug would re-tighten the class's own trail
     // STOP_FLAT — recycles any position whose peak hasn't cleared 1.1× after 3

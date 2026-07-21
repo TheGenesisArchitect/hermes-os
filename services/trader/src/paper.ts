@@ -1174,7 +1174,16 @@ export function decideExit(
       cfg.TRAIL_MODE === "gain"
         ? gainTrailFloor(cfg, entry, peak)
         : peak * (1 - trailWidthPct(cfg, provenMult, drawdownPct, call, bankedRunner, market.pairAgeMinutes ?? null) / 100);
-    const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, trailFloor);
+    // GAIN LOCK — the floor keeps a share of the move, not just breakeven.
+    // A flat entry-relative floor lets a trade climb and still exit flat: at
+    // 1.02 the binding stop stays 1.02 until peak×(1−w) overtakes it at 1.42×,
+    // so the whole 1.20–1.42 band scratches out at zero and books a loss after
+    // slippage. That is the same defect as arming at 1.03, moved up the chart.
+    // Replayed over the real tapes of 30 scratched trades: floor 1.02 −$23.14,
+    // lock 50% +$10.18, lock 65% +$16.50, lock 85% +$8.92 — every gain-locking
+    // variant positive, every breakeven variant negative.
+    const gainLock = entry * (1 + (peakMult - 1) * cfg.PROFIT_LOCK_GAIN_LOCK);
+    const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, gainLock, trailFloor);
     if (price <= stop) return { reason: "profit_trail", fraction: 1 };
   } else {
     // Not yet in profit — the pre-profit hard stop is the only floor.

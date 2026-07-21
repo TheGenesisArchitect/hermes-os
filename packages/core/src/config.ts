@@ -180,8 +180,17 @@ const envSchema = z.object({
   // the effective stop is the HIGHER of this floor and the trailing floor, so a
   // position making new highs is still governed by the trail, which widens as it
   // runs. It only closes the dead zone where we previously had nothing.
-  PROFIT_LOCK_ARM_MULT: z.coerce.number().default(1.03),
+  PROFIT_LOCK_ARM_MULT: z.coerce.number().default(1.2), // the first rung — +3% is noise, not "green"
   PROFIT_LOCK_FLOOR_MULT: z.coerce.number().default(1.02),
+  // Once armed, the floor locks THIS SHARE OF THE GAIN rather than sitting at
+  // breakeven. A fixed 1.02 floor means a trade can climb 20% and still exit
+  // flat — the stop is max(1.02, peak×(1−w)) and peak×0.72 doesn't clear 1.02
+  // until peak 1.42×, so everything from 1.20 to 1.42 scratches out. Replayed
+  // over the 30 real tapes of trades we scratched: floor 1.02 → −$23.14, lock
+  // 50% → +$10.18, lock 65% → +$16.50, lock 85% → +$8.92 (too tight, hands the
+  // exit back to the trail). All the gain-locking variants are positive and all
+  // the breakeven variants negative, so this is a plateau, not a fitted point.
+  PROFIT_LOCK_GAIN_LOCK: z.coerce.number().default(0.65),
   // TIME-BASED FLOOR — the operator's model: the floor goes under the trade at
   // ~3.5min of watch time, i.e. roughly 90s after a 2-2.5min entry, REGARDLESS
   // of how far price has moved. The price-triggered lock (above) only arms once
