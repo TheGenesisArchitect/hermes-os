@@ -10,6 +10,7 @@ import {
   fetchTokenMarket,
   fetchTokenMarkets,
   loadConfig,
+  convictionOf,
   routeSignature,
   scoreConviction,
   scoreRugProb,
@@ -366,7 +367,7 @@ async function observe(
     // Cached per mint for the life of the watch: ownership at discovery is a
     // fixed fact, so re-reading it every tick would be pure query load.
     const holder = await holderShape(o.mint);
-    const signature = routeSignature({
+    const sigInputs = {
       liq0: firstTrustedLiq,
       liqNow: market.liquidityUsd,
       buyShare: t.buyShareM5,
@@ -375,7 +376,11 @@ async function observe(
       largestHolderPct: holder.largestPct,
       top10Pct: holder.top10Pct,
       holders: holder.holders,
-    });
+    };
+    const signature = routeSignature(sigInputs);
+    // CONVICTION — how well THIS instance matches the fingerprint of the ones
+    // that paid. Computed here because the recorder holds the holder markers.
+    const conviction = convictionOf(signature, sigInputs);
     // RE-ENTRY (the VICE 8.4x lesson, 2026-07-16): one-shot `!o.entered`
     // permanently burned any candidate we ever touched — overnight, 67
     // entered-then-closed-flat candidates went on to peak ≥2x (avg 3.1x)
@@ -461,6 +466,7 @@ async function observe(
               dipDepth: String(trig.dipDepth),
               snapPct: String(trig.snapPct),
               snapRate: String(trig.snapRate),
+              stars: conviction.stars,
             }
           : {}),
         ...(wallet

@@ -89,6 +89,9 @@ export const positions = pgTable("positions", {
   dipDepth: numeric("dip_depth"), // 1 − trough ÷ pre-dip high: the false step
   snapPct: numeric("snap_pct"), // rise off the trough at entry: the confirmation
   snapRate: numeric("snap_rate"), // snap ÷ minutes since trough: grades the moon
+  // CONVICTION at entry: 0-2 stars from the signature plus the measured holder
+  // markers. Drives sizing and flags the strongest setups on every surface.
+  stars: integer("stars"),
   qtyTokens: numeric("qty_tokens").notNull().default("0"),
   qtyRemaining: numeric("qty_remaining").notNull().default("0"),
   peakPriceUsd: numeric("peak_price_usd"),
@@ -305,6 +308,9 @@ export const candidateOutcomes = pgTable("candidate_outcomes", {
   dipDepth: numeric("dip_depth"),
   snapPct: numeric("snap_pct"),
   snapRate: numeric("snap_rate"),
+  // CONVICTION at entry: 0-2 stars from the signature plus the measured holder
+  // markers. Drives sizing and flags the strongest setups on every surface.
+  stars: integer("stars"),
   // Timestamp of the most recent CONFIRMING observation — the tick on which the
   // entry gate actually passed. Distinct from updatedAt, which the recorder
   // stamps on every poll whether the candidate qualifies or not, and from

@@ -224,6 +224,53 @@ export function routeSignature(i: SignatureInputs): Signature {
   return "BASE";
 }
 
+/**
+ * CONVICTION — how strongly the evidence backs THIS setup, 0 to 2 stars.
+ *
+ * The signature says what a candidate is; conviction says how well this specific
+ * instance matches the fingerprint of the ones that paid. It exists so the
+ * strongest setups are recognisable the moment they appear — the whole mission
+ * is picking winners early, and a two-star MOON_FAST should never be sized like
+ * a residual BASE.
+ *
+ * Star criteria are the measured markers, not judgement calls:
+ *   · MOON_FAST rugs 11.6% — LOWER than RISER — with a 6.90× p90. The strongest
+ *     cohort in the dataset.
+ *   · Holder count 100-250 reaches 5× at 4.4% against a 1.3% baseline.
+ *   · Top-10 under 5% reaches 5× at 4.4% against 1.4%.
+ * Two independent markers on an evidenced class is the bar for a second star.
+ */
+export interface Conviction {
+  stars: 0 | 1 | 2;
+  sizeMult: number;
+  why: string;
+}
+
+export function convictionOf(s: Signature, i: Partial<SignatureInputs>): Conviction {
+  const p = SIGNATURE_PROFILES[s];
+  if (!p.trade) return { stars: 0, sizeMult: 0, why: "refused" };
+
+  const marks: string[] = [];
+  if (i.holders != null && i.holders >= 100 && i.holders <= 250) marks.push("holders 100-250 (4.4% reach 5×)");
+  if (i.top10Pct != null && i.top10Pct < 5) marks.push("top-10 <5% (4.4% reach 5×)");
+  if (i.largestHolderPct != null && i.largestHolderPct <= 6) marks.push("crowd-held");
+
+  // The evidenced classes: RISER confirmed on both sides of the split, MOON_FAST
+  // the lowest-rug cohort measured. BASE is the residual bucket by construction —
+  // it can never star, because "unidentified" is not conviction.
+  const evidenced = s === "RISER" || s === "MOON_FAST";
+  const strong = s === "RISER" || s === "MOON_FAST" || s === "MOON_STEADY" || s === "CLIMBER";
+
+  if (evidenced && marks.length >= 2) {
+    return { stars: 2, sizeMult: 1.5, why: `${s} + ${marks.join(" + ")}` };
+  }
+  if (evidenced && marks.length === 1) {
+    return { stars: 1, sizeMult: 1.25, why: `${s} + ${marks[0]}` };
+  }
+  if (strong) return { stars: 1, sizeMult: 1.0, why: `${s} — evidenced class, no extra markers` };
+  return { stars: 0, sizeMult: 0.75, why: `${s} — unidentified residual, sized down` };
+}
+
 export const profileOf = (s: Signature): SignatureProfile => SIGNATURE_PROFILES[s];
 export const isMoon = (s: Signature): boolean => s.startsWith("MOON");
 

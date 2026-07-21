@@ -7,6 +7,7 @@ import {
   fetchJupiterPrices,
   fetchTokenMarket,
   fetchTokenMarkets,
+  convictionOf,
   profileOf,
   signatureExitOverrides,
   tickFrom,
@@ -143,7 +144,16 @@ async function openFromSignal(
   // TRADE SIGNATURE routed by the recorder at the trigger tick, with the shape
   // that produced it. Governs size here and the entire exit profile later; a
   // position is managed under its own genome, not the global config.
-  sig: { signature: Signature; dipDepth: number | null; snapPct: number | null; snapRate: number | null } | null = null,
+  sig: {
+    signature: Signature;
+    dipDepth: number | null;
+    snapPct: number | null;
+    snapRate: number | null;
+    stars: number | null;
+    holders?: number | null;
+    top10Pct?: number | null;
+    largestHolderPct?: number | null;
+  } | null = null,
 ): Promise<boolean> {
   const market = await fetchTokenMarket(signal.mint).catch(() => null);
   if (!market) {
@@ -329,7 +339,25 @@ async function openFromSignal(
     }
   }
   const sigMult = sigProfile?.size ?? 1;
-  const sizeUsd = Number((cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult * sigMult).toFixed(2));
+  // ── SIZING: REGIME × SIGNATURE, not eight heuristics multiplied ────────────
+  // PAPER_POSITION_USD is the regime's capital call (the adaptive policy's only
+  // remaining job) and the signature supplies the precision on top: its class
+  // multiplier, times conviction from the measured holder markers.
+  //
+  // The legacy chain — buyShare × rug × conviction × wallet × hot × liq × late ×
+  // band — is bypassed for routed positions. Eight factors compounding produced
+  // a 200× spread ($0.20 to $41.64 in six hours) and sized our best-evidenced
+  // class at 21 cents: WIKICAT and NTFS both routed RISER, both cleared the
+  // confirmation bar, both got $0.21. A position that clears its genome's bar
+  // should be sized by how strongly the evidence backs it, not by a product of
+  // heuristics that predate the signatures. Unrouted positions keep the chain.
+  const conv = sig ? convictionOf(sig.signature, { holders: sig.holders, top10Pct: sig.top10Pct, largestHolderPct: sig.largestHolderPct }) : null;
+  const sizeUsd = Number(
+    (conv
+      ? cfg.PAPER_POSITION_USD * sizeMult * sessionMult * sigMult * conv.sizeMult
+      : cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult * sigMult
+    ).toFixed(2),
+  );
   const slip = slippagePct(sizeUsd, market.liquidityUsd);
   // Never buy a corpse: a slip past the cap means the pool has drained since the
   // trigger fired (the 99%-slip dead-pool entries the 1e backlog produced).
@@ -393,6 +421,7 @@ async function openFromSignal(
       dipDepth: sig?.dipDepth != null ? String(sig.dipDepth) : null,
       snapPct: sig?.snapPct != null ? String(sig.snapPct) : null,
       snapRate: sig?.snapRate != null ? String(sig.snapRate) : null,
+      stars: sig?.stars ?? null,
       qtyTokens: String(qty),
       qtyRemaining: String(qty),
       entryPriceUsd: String(entryPrice),
@@ -415,7 +444,7 @@ async function openFromSignal(
   await db.update(signals).set({ status: "traded_paper" }).where(eq(signals.id, signal.id));
 
   console.log(
-    `📈 OPEN   ${token.symbol ?? "?"} ${short(signal.mint)} $${sizeUsd} «${lane}» [${sig ? `🧬${sig.signature}${sigMult !== 1 ? ` ×${sigMult}` : ""} · ` : ""}${risk?.tier ?? "clean"}${qualityMult < 1 ? ` · quality ×${qualityMult}` : ""}${sessionMult < 1 ? ` · offhrs ×${sessionMult}` : ""}] @ $${entryPrice.toPrecision(4)} (liq $${Math.round(market.liquidityUsd).toLocaleString()}, slip ${slip.toFixed(2)}%, score ${signal.score}${note ? ` · ${note}` : ""})`,
+    `📈 OPEN   ${token.symbol ?? "?"} ${short(signal.mint)} $${sizeUsd} «${lane}» [${sig ? `${"★".repeat(conv?.stars ?? 0)}🧬${sig.signature}${sigMult !== 1 ? ` ×${sigMult}` : ""}${conv && conv.stars > 0 ? ` · ${conv.why}` : ""} · ` : ""}${risk?.tier ?? "clean"}${qualityMult < 1 ? ` · quality ×${qualityMult}` : ""}${sessionMult < 1 ? ` · offhrs ×${sessionMult}` : ""}] @ $${entryPrice.toPrecision(4)} (liq $${Math.round(market.liquidityUsd).toLocaleString()}, slip ${slip.toFixed(2)}%, score ${signal.score}${note ? ` · ${note}` : ""})`,
   );
   return true;
 }
@@ -505,6 +534,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       dipDepth: candidateOutcomes.dipDepth,
       snapPct: candidateOutcomes.snapPct,
       snapRate: candidateOutcomes.snapRate,
+      stars: candidateOutcomes.stars,
     })
     .from(candidateOutcomes)
     .innerJoin(signals, eq(signals.id, candidateOutcomes.signalId))
@@ -633,7 +663,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     return;
   }
 
-  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits, walletKnown, liqGrowth, signature, dipDepth, snapPct, snapRate } of armed) {
+  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits, walletKnown, liqGrowth, signature, dipDepth, snapPct, snapRate, stars } of armed) {
     if (total() >= cfg.PAPER_MAX_CONCURRENT) break; // global cap hit — leave the rest armed
 
     // Open-only duplicate guard — a CLOSED prior position no longer blocks
@@ -768,6 +798,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
           dipDepth: dipDepth === null ? null : Number(dipDepth),
           snapPct: snapPct === null ? null : Number(snapPct),
           snapRate: snapRate === null ? null : Number(snapRate),
+          stars: stars ?? null,
         }
       : null;
     if (await openFromSignal(cfg, signal, token, "confirmed", book, qualityMult, tm, sigArg)) {

@@ -60,11 +60,13 @@ export {
 export {
   routeSignature,
   profileOf,
+  convictionOf,
   isMoon,
   signatureExitOverrides,
   withLearned,
   SIGNATURE_PROFILES,
   type LearnedProfile,
+  type Conviction,
   type Signature,
   type SignatureInputs,
   type SignatureProfile,
