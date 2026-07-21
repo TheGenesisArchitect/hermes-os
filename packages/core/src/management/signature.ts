@@ -151,12 +151,23 @@ export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
   // so profit is swept along the path and a 30% runner still carries the tail.
   RISER: {
     trade: true, minSnap: 0.15, floor: 0.4, trail: 0.45,
-    tp0: [1.5, 0.2], tp1: [2.2, 0.25], tp2: [3.2, 0.25], holdSec: CLOCK_SEC, size: 1.0,
+    // SWEEP RUNG 1.50 → 1.22 (2026-07-21). The rung must sit INSIDE the
+    // population's median outcome or the common trade banks nothing. For
+    // dispersed tokens the median run is 1.25× and only 23.8% ever reach 1.5×,
+    // so a rung at 1.50 refused to take a cent on three quarters of the class.
+    // Live cost tonight: Apple 1.35×, Amazon 1.43×, ACT:S 1.43× and Tim 1.17×
+    // all moved, banked nothing and round-tripped to full losses at −$5.85 each;
+    // Rigby stopped two cents short at 1.48×. A rung at 1.22 also fires far more
+    // reliably — price lingers near 1.22 but passes through a 1.66 spike between
+    // 10s polls, which is how BUNK peaked 1.66× and still lost 70%.
+    tp0: [1.22, 0.2], tp1: [2.2, 0.25], tp2: [3.2, 0.25], holdSec: CLOCK_SEC, size: 1.0,
     note: "dispersed ownership, steady accumulation — the microwin engine (86% win)",
   },
   BASE: {
     trade: true, minSnap: 0.2, floor: 0.7, trail: 0.45,
-    tp0: [1.5, 0.2], tp1: [2.1, 0.25], tp2: [2.85, 0.25], holdSec: CLOCK_SEC, size: 1.0,
+    // Same recut as RISER: BASE is mostly dispersed tape, and Rigby peaked 1.48×
+    // — two cents short of the old rung — for a −$1.29 loss on a 48% move.
+    tp0: [1.22, 0.2], tp1: [2.1, 0.25], tp2: [2.85, 0.25], holdSec: CLOCK_SEC, size: 1.0,
     note: "unclassified mover with pool support (57% win)",
   },
   // ── sample-limited: traded small to accumulate evidence ──
@@ -169,7 +180,11 @@ export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
     // refuses to tune it. Shrunk rather than paused deliberately — pausing means
     // it never crosses the sample floor and stays permanently unresolved, so a
     // small live allocation keeps the evidence accruing at a third of the bleed.
-    tp0: [1.55, 0.2], tp1: [2.35, 0.25], tp2: [3.0, 0.25], holdSec: CLOCK_SEC, size: 0.2,
+    // SWEEP RUNG 1.55 → 1.40. Whale-held tokens reach 1.5× at 46% — double the
+    // dispersed rate — with a 1.46× median run, so the old 1.55 rung sat just
+    // ABOVE the band this population actually delivers. Its 35.2% rug rate has
+    // to be paid for by an early tranche, and 1.40 sits inside the move.
+    tp0: [1.4, 0.2], tp1: [2.35, 0.25], tp2: [3.0, 0.25], holdSec: CLOCK_SEC, size: 0.2,
     note: "whale accumulation into a deep book — 1.6% rug measured, but 0-for-3 live",
   },
   MOON_FAST: {
