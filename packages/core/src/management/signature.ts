@@ -140,8 +140,17 @@ const DISPERSED_TOP10_PCT = 35; // MOON 16.9 / RISER 14.8 vs DUD 81.1 / CLIMBER 
 const CONCENTRATED_LARGEST_PCT = 30; // ≥ this = whale-held (climber/dud/rug)
 
 /** Grade a moon by the velocity of its recovery — an inverted U, not "faster is better". */
-function moonGrade(snapRate: number): Signature {
+function moonGrade(snapRate: number, dipDepth = 0): Signature {
   if (snapRate >= VIOLENT_RATE) return "MOON_VIOLENT";
+  // BREAKDOWN ZONE. A dip past 45% is not a pullback — measured by band, dip
+  // 45%+ runs −71.8% on capital while the true retrace (25–45%) runs +30.6%.
+  // Only a genuinely VIOLENT snap (400%/min+) has ever recovered that shape,
+  // and that class trades tiny (0.3×) precisely to keep collecting evidence.
+  // A mid-rate snap out of a breakdown is a dead-cat: ARROW routed MOON_FAST
+  // at dip 50% / 1.9×-min, peaked at 1.00× and cost −$6.25 in one trade. The
+  // conviction mark already refuses to star this shape; the router now
+  // refuses to trade it.
+  if (dipDepth >= 0.45) return "RUG_RISK";
   if (snapRate >= FAST_RATE) return "MOON_FAST";
   if (snapRate >= STEADY_RATE) return "MOON_STEADY";
   return "MOON_SLOW";
@@ -294,13 +303,13 @@ export function routeSignature(i: SignatureInputs): Signature {
   if (dispersed) {
     // A dispersed book that also shows the moon microstructure is the strongest
     // combination in the data; otherwise it is the reliable microwin class.
-    if (i.liq0 < THIN_POOL || i.buyShare < 0.5 || i.dipDepth >= 0.25) return moonGrade(i.snapRate);
+    if (i.liq0 < THIN_POOL || i.buyShare < 0.5 || i.dipDepth >= 0.25) return moonGrade(i.snapRate, i.dipDepth);
     return "RISER";
   }
   if (concentrated && growth >= CLIMBER_GROWTH) return "CLIMBER";
 
   if (growth >= CLIMBER_GROWTH && i.liq0 >= THIN_POOL) return "CLIMBER";
-  if (i.liq0 < THIN_POOL || i.buyShare < 0.5 || i.dipDepth >= 0.25) return moonGrade(i.snapRate);
+  if (i.liq0 < THIN_POOL || i.buyShare < 0.5 || i.dipDepth >= 0.25) return moonGrade(i.snapRate, i.dipDepth);
   if (i.buyShare >= 0.8) return "RISER";
   return "BASE";
 }

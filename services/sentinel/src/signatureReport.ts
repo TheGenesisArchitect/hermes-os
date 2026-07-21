@@ -18,7 +18,7 @@
  *   LEARNING     — what the loop last promoted and when, so a profile change is
  *                  never invisible.
  */
-import { db, positions, candidateOutcomes, config } from "@hermes/db";
+import { db, fills, positions, candidateOutcomes, config } from "@hermes/db";
 import { and, eq, gte, sql } from "drizzle-orm";
 
 export interface SignatureLine {
@@ -31,6 +31,13 @@ export interface SignatureLine {
   ev: number;
   deadPct: number;
   bestPeak: number;
+  // ── PIPELINE QUALITY (the Trade Performance Analyzer's checkpoints) ────────
+  /** Pooled capture: $ kept ÷ $ the peaks offered, over trades that reached a rung. Null = none reached. */
+  captureP: number | null;
+  /** Of trades that reached a rung, share that actually banked one. Null = none reached. */
+  bankedRate: number | null;
+  /** Winners (peak >1.05×) that still closed red — the management failure P&L hides. */
+  trailedRed: number;
 }
 
 export interface SignatureReport {
@@ -58,6 +65,15 @@ export async function buildSignatureReport(windowHours = 8): Promise<SignatureRe
       // an exit one — the distinction the blended number used to hide.
       dead: sql<number>`count(*) filter (where ${positions.peakPriceUsd} / nullif(${positions.entryPriceUsd},0) < 1.10)::int`,
       bestPeak: sql<number>`coalesce(max(${positions.peakPriceUsd} / nullif(${positions.entryPriceUsd},0)),0)::float8`,
+      // Pipeline checkpoints, same math as the Trade Performance Analyzer:
+      // capture pools dollars kept over dollars the peaks offered (never an
+      // average of ratios — the smallest denominator dominates those), gated on
+      // the first rung (~1.22×). Banked = a take_profit fill actually exists.
+      reached: sql<number>`count(*) filter (where ${positions.peakPriceUsd} / nullif(${positions.entryPriceUsd},0) >= 1.22)::int`,
+      banked: sql<number>`count(*) filter (where ${positions.peakPriceUsd} / nullif(${positions.entryPriceUsd},0) >= 1.22 and exists (select 1 from fills f where f.position_id = ${positions.id} and f.reason like 'take_profit%'))::int`,
+      gainAvail: sql<number>`coalesce(sum(${positions.sizeUsd} * (${positions.peakPriceUsd} / nullif(${positions.entryPriceUsd},0) - 1)) filter (where ${positions.peakPriceUsd} / nullif(${positions.entryPriceUsd},0) >= 1.22),0)::float8`,
+      gainKept: sql<number>`coalesce(sum(${positions.realizedPnlUsd}) filter (where ${positions.peakPriceUsd} / nullif(${positions.entryPriceUsd},0) >= 1.22),0)::float8`,
+      trailedRed: sql<number>`count(*) filter (where ${positions.peakPriceUsd} / nullif(${positions.entryPriceUsd},0) > 1.05 and ${positions.realizedPnlUsd} < 0)::int`,
     })
     .from(positions)
     .where(and(eq(positions.lane, "paper"), eq(positions.status, "closed"), gte(positions.closedAt, since)))
@@ -74,6 +90,9 @@ export async function buildSignatureReport(windowHours = 8): Promise<SignatureRe
       ev: p.deployed > 0 ? 1 + p.pnl / p.deployed : 0,
       deadPct: p.n > 0 ? (100 * p.dead) / p.n : 0,
       bestPeak: p.bestPeak,
+      captureP: p.gainAvail > 0 ? (100 * p.gainKept) / p.gainAvail : null,
+      bankedRate: p.reached > 0 ? (100 * p.banked) / p.reached : null,
+      trailedRed: p.trailedRed,
     }))
     .sort((a, b) => b.pnl - a.pnl);
 
@@ -149,14 +168,36 @@ export function renderSignatureReport(r: SignatureReport): string[] {
     }
   }
 
-  // Only surface dead-on-arrival when it is bad enough to act on. A class whose
-  // entries never move is a SELECTION problem — no exit rule can fix it — and
-  // that is the one diagnostic worth waking someone for.
-  const bad = r.lines.filter((l) => l.n >= 3 && l.deadPct >= 40).sort((a, b) => b.deadPct - a.deadPct);
-  if (bad.length) {
+  // ── HOW WELL TRADES WERE MANAGED — the analyzer's checkpoints, every hour.
+  // P&L says whether a class won; capture and banked-rate say whether its
+  // trades were MANAGED well, and those come apart constantly. This is the
+  // standing review the one-off audits kept re-discovering by hand.
+  const managed = r.lines.filter((l) => l.captureP != null && l.n >= 2);
+  if (managed.length) {
     out.push("");
-    out.push("⚠️ ENTRIES THAT NEVER MOVED");
-    for (const l of bad) out.push(`   ${l.deadPct.toFixed(0)}% of ${pretty(l.sig)} (${l.n} trades)`);
+    out.push("🔬 HOW WE MANAGED THE MOVES");
+    for (const l of managed.sort((a, b) => (b.captureP ?? 0) - (a.captureP ?? 0))) {
+      out.push(`   ${pretty(l.sig)}: kept ${l.captureP!.toFixed(0)}% of the move, banked ${l.bankedRate!.toFixed(0)}% of rungs${l.trailedRed > 0 ? `, ${l.trailedRed} winner${l.trailedRed === 1 ? "" : "s"} closed red` : ""}`);
+    }
+  }
+
+  // ── GAPS, auto-flagged. The rule set encodes every defect class found by
+  // hand on 2026-07-21, so the next occurrence names itself instead of hiding
+  // until someone reruns the audit.
+  const gaps: string[] = [];
+  for (const l of r.lines) {
+    if (l.n >= 3 && l.captureP != null && l.captureP < 0)
+      gaps.push(`${pretty(l.sig)} gives back MORE than the move offered (capture ${l.captureP.toFixed(0)}%)`);
+    if (l.n >= 3 && l.bankedRate != null && l.bankedRate < 60)
+      gaps.push(`${pretty(l.sig)} ladder firing only ${l.bankedRate.toFixed(0)}% of the time`);
+    if (l.trailedRed >= 2) gaps.push(`${pretty(l.sig)}: ${l.trailedRed} winners managed into losses`);
+    if (l.n >= 3 && l.deadPct >= 40)
+      gaps.push(`${l.deadPct.toFixed(0)}% of ${pretty(l.sig)} entries never moved — selection, not exits`);
+  }
+  if (gaps.length) {
+    out.push("");
+    out.push("⚠️ GAPS TO CLOSE");
+    for (const g of gaps.slice(0, 5)) out.push(`   ${g}`);
   }
 
   if (r.routed.length) {
