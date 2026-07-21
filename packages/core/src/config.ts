@@ -510,7 +510,18 @@ const envSchema = z.object({
   // poll-tolerance slack the trigger now carries (pollToleranceMin is derived
   // from this value, so it scales automatically and nothing re-tunes silently).
   // The continuation gate is likewise sampling-rate independent by construction.
-  RECORDER_POLL_MS: z.coerce.number().default(6_000),
+  // 6s → 2s (2026-07-21), matching MANAGE_POLL_MS so the signal a candidate is
+  // judged on is as fresh as the mark an open position is managed on. Entry
+  // resolution is bounded by this: Hieromojis printed its ONLY qualifying tick
+  // 2.9s inside the window floor and peaked 4.12× untraded, and the 2-3m gate is
+  // just 30 samples wide at 6s. Finer sampling means a candidate is evaluated
+  // closer to the state it is actually in, which is what "qualified" is supposed
+  // to mean. Batched fetch, keyless source — request volume does not scale with
+  // the number of candidates watched, only the tick-write rate does (~3× more
+  // rows in candidate_ticks, the cost of the resolution).
+  // pollToleranceMin and continuationLookback both derive from this value and
+  // rescale automatically, so no gate silently re-tunes.
+  RECORDER_POLL_MS: z.coerce.number().default(2_000),
   RECORDER_WINDOW_MIN: z.coerce.number().default(15),
   RECORDER_WIN_MULT: z.coerce.number().default(2),
   // A candidate is a RUG if it terminally collapsed to <= this multiple of the

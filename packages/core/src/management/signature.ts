@@ -453,8 +453,19 @@ export function signatureExitOverrides(s: Signature, learned?: LearnedProfile | 
     // which contradicts every genome: RISER is built to hold a dip to 0.40× and
     // was instead being cut at breakeven the moment it came back through entry.
     // Rob peaked 1.20×, fell through entry, and the exit gapped to −69%.
-    PROFIT_LOCK_ARM_MULT: 1.01,
-    PROFIT_LOCK_FLOOR_MULT: p.floor,
+    // NEVER TRAIL A WINNER INTO A LOSS.
+    // The stop is max(entry × FLOOR_MULT, trailFloor). Setting FLOOR_MULT to the
+    // class cover (0.40×) let the trail walk a green position all the way to a
+    // 30% loss: a 45% give-back off a 1.28× peak exits at 0.70×, and a 45% trail
+    // mathematically guarantees a loss on ANY peak below 1.82× (1 ÷ 0.55).
+    // Audited over 75 minutes, profit_trail was the largest loss pool in the
+    // book — 12 exits, average peak 1.28×, average exit 0.66×, −$15.47.
+    // So once a position has genuinely gone green it may not close red: arm at
+    // +3% and floor at +2%. Below the arm the class COVER still owns the
+    // downside, so a trade that never establishes is unaffected; above it the
+    // trail governs give-back but can never breach breakeven-plus-fees.
+    PROFIT_LOCK_ARM_MULT: 1.03,
+    PROFIT_LOCK_FLOOR_MULT: 1.02,
     PROFIT_FLOOR_USD: Number.POSITIVE_INFINITY, // never arm on a dollar amount
     POST_BANK_TRAIL_PCT: trailPct, // post-bank snug would re-tighten the class's own trail
     // STOP_FLAT — recycles any position whose peak hasn't cleared 1.1× after 3
