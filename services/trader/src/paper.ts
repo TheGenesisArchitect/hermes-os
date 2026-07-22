@@ -30,6 +30,7 @@ import {
   positions,
   signals,
   tokens,
+  journalFill,
 } from "@hermes/db";
 import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { maybeLiveBuy, mirrorLiveSell } from "./live/executor.js";
