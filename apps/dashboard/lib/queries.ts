@@ -75,12 +75,16 @@ function robustLiquidity(liqs: (number | null)[]): number | null {
 }
 
 export async function getEquitySeries() {
-  return db
+  // NEWEST 1000, chronological. Ascending+limit on 8k rows silently pinned the
+  // main equity curve to the OLDEST week of history — which also made the live
+  // overlay impossible (live snapshots did not exist yet in that window).
+  const rows = await db
     .select({ at: pnlSnapshots.snappedAt, equity: pnlSnapshots.equityUsd })
     .from(pnlSnapshots)
     .where(eq(pnlSnapshots.lane, "paper"))
-    .orderBy(pnlSnapshots.snappedAt)
+    .orderBy(desc(pnlSnapshots.snappedAt))
     .limit(1000);
+  return rows.reverse();
 }
 
 /**
@@ -104,12 +108,18 @@ export async function getLaneEquitySeries(): Promise<{
   liveTrend: number;
   liveActive: boolean;
 }> {
-  const [paper, live] = await Promise.all([
+  // MOST RECENT window, not the oldest: ascending-order + limit returned the
+  // FIRST 1000 snapshots ever taken — a window from days ago that never
+  // overlaps the equity chart, so the live line joined zero points and read
+  // "off" forever. Take the newest 1000 and restore chronological order.
+  const [paperDesc, liveDesc] = await Promise.all([
     db.select({ at: pnlSnapshots.snappedAt, equity: pnlSnapshots.equityUsd })
-      .from(pnlSnapshots).where(eq(pnlSnapshots.lane, "paper")).orderBy(pnlSnapshots.snappedAt).limit(1000),
+      .from(pnlSnapshots).where(eq(pnlSnapshots.lane, "paper")).orderBy(desc(pnlSnapshots.snappedAt)).limit(1000),
     db.select({ at: pnlSnapshots.snappedAt, equity: pnlSnapshots.equityUsd })
-      .from(pnlSnapshots).where(eq(pnlSnapshots.lane, "live")).orderBy(pnlSnapshots.snappedAt).limit(1000),
+      .from(pnlSnapshots).where(eq(pnlSnapshots.lane, "live")).orderBy(desc(pnlSnapshots.snappedAt)).limit(1000),
   ]);
+  const paper = paperDesc.reverse();
+  const live = liveDesc.reverse();
   const p0 = paper.length ? Number(paper[0]!.equity) : 0;
   const l0 = live.length ? Number(live[0]!.equity) : 0;
 
