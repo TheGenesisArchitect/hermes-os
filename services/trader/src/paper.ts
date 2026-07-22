@@ -844,6 +844,9 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
           snapPct: snapPct === null ? null : Number(snapPct),
           snapRate: snapRate === null ? null : Number(snapRate),
           stars: stars ?? null,
+          // Pool inflow at the trigger tick — live's probability-band gate
+          // reads it (1.30×+ wins 71.2% vs 44.8% below; 2×+ ran 18-for-18).
+          liqGrowth: liqGrowth === null ? null : Number(liqGrowth),
         }
       : null;
     // LIVE FIRES ON THE SAME SIGNAL, INDEPENDENTLY — not as a shadow of paper.

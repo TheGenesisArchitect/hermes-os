@@ -644,6 +644,8 @@ export async function maybeLiveBuy(
     dipDepth?: number | null;
     snapPct?: number | null;
     snapRate?: number | null;
+    /** Pool inflow multiple at the trigger tick — the probability-band gate. */
+    liqGrowth?: number | null;
   } | null = null,
   /**
    * The fraction of ITS capital paper just committed to this same signal. Live
@@ -689,7 +691,35 @@ export async function maybeLiveBuy(
     // evidence. Paper keeps trading everything as the zero-cost sensor.
     const blocked = new Set(cfg.LIVE_CLASS_BLOCKLIST.split(",").map((s) => s.trim()).filter(Boolean));
     if (sig && blocked.has(sig.signature)) {
-      await audit("live_buy_skipped", { mint, reason: `${sig.signature} — dead lane, live-blocked (paper −10.6%/live −58.2% class audit)` });
+      await audit("live_buy_skipped", { mint, reason: `${sig.signature} — dead lane, live-blocked by operator order` });
+      return;
+    }
+    // ── REGIME CLASS GATE ────────────────────────────────────────────────────
+    // The market is regime-centric (operator, 2026-07-22): CLIMBER went green
+    // in the very window after the static audit blocked it. So live capital
+    // follows the REGIME with evidence: a class is admitted when its trailing
+    // paper tape (the free 24/7 sensor) is profitable at real sample size, and
+    // benched when it is not. Below min sample, the audit's proven core
+    // (RISER / MOON_FAST / MOON_STEADY / MOON_SLOW) trades on its priors and
+    // everything else waits for paper to prove the turn.
+    if (sig && cfg.LIVE_REGIME_CLASS_GATE) {
+      const health = await classRegimeHealth(cfg, sig.signature);
+      if (!health.allowed) {
+        await audit("live_buy_skipped", { mint, reason: `${sig.signature} — regime gate: ${health.why}` });
+        return;
+      }
+    }
+    // ── INFLOW BAND GATE ─────────────────────────────────────────────────────
+    // Concentrate live capital in the measured high-probability band: pool
+    // inflow ≥1.30× at trigger wins 71.2% vs 44.8% below (rugs 11% vs 36%),
+    // and the 2×+ surge band ran 18-for-18 this week. A missing reading does
+    // not veto — absence of measurement is not evidence of weakness — but a
+    // MEASURED weak inflow is exactly the coin-flip cohort live cannot afford.
+    if (sig && sig.liqGrowth != null && sig.liqGrowth < cfg.LIVE_MIN_INFLOW) {
+      await audit("live_buy_skipped", {
+        mint,
+        reason: `inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.LIVE_MIN_INFLOW}× band (71% vs 45% win)`,
+      });
       return;
     }
     if (!sig) {
@@ -900,6 +930,48 @@ export async function maybeLiveBuy(
 // at the top of maybeLiveBuy. Cleared in its finally, so a failed buy frees the
 // mint for the next legitimate attempt.
 const liveBuyInFlight = new Set<string>();
+
+// ── regime class health, cached 5 min per class ──────────────────────────────
+// The audit's proven core trades on priors when the recent sample is thin;
+// every other class must show a profitable trailing paper window to touch
+// real capital. Paper is the free sensor — it keeps trading everything.
+const REGIME_CORE = new Set(["RISER", "MOON_FAST", "MOON_STEADY", "MOON_SLOW"]);
+const regimeCache = new Map<string, { at: number; allowed: boolean; why: string }>();
+async function classRegimeHealth(cfg: HermesConfig, signature: string): Promise<{ allowed: boolean; why: string }> {
+  const hit = regimeCache.get(signature);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit;
+  let out: { allowed: boolean; why: string };
+  try {
+    const rows = (await db.execute(sql`
+      SELECT count(*)::int AS n,
+        coalesce(sum(realized_pnl_usd), 0)::float8 AS pnl,
+        coalesce(sum(size_usd), 0)::float8 AS deployed
+      FROM positions
+      WHERE lane = 'paper' AND status = 'closed' AND signature = ${signature}
+        AND closed_at > now() - make_interval(hours => ${cfg.LIVE_REGIME_CLASS_WINDOW_H})`)) as unknown as {
+      n: number; pnl: number; deployed: number;
+    }[];
+    const r = rows[0] ?? { n: 0, pnl: 0, deployed: 0 };
+    const ret = r.deployed > 0 ? (100 * r.pnl) / r.deployed : 0;
+    if (r.n >= cfg.LIVE_REGIME_CLASS_MIN_N) {
+      out =
+        ret > 0
+          ? { allowed: true, why: `${cfg.LIVE_REGIME_CLASS_WINDOW_H}h paper +${ret.toFixed(1)}% on ${r.n}` }
+          : { allowed: false, why: `${cfg.LIVE_REGIME_CLASS_WINDOW_H}h paper ${ret.toFixed(1)}% on ${r.n} — regime not paying` };
+    } else {
+      out = REGIME_CORE.has(signature)
+        ? { allowed: true, why: `thin sample (${r.n}) — proven core trades on priors` }
+        : { allowed: false, why: `thin sample (${r.n}) — waiting for paper to prove the turn` };
+    }
+  } catch {
+    // A DB hiccup must never veto the proven core nor admit the unproven.
+    out = REGIME_CORE.has(signature)
+      ? { allowed: true, why: "health check unavailable — core priors" }
+      : { allowed: false, why: "health check unavailable" };
+  }
+  regimeCache.set(signature, { at: Date.now(), ...out });
+  return out;
+}
 
 /**
  * Sell a fraction of an open live position (token → SOL). The sell amount is

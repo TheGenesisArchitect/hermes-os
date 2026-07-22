@@ -1104,7 +1104,24 @@ const envSchema = z.object({
   // MOON_VIOLENT (−29.3%/−81.7%) join it on the same evidence. Paper keeps
   // trading all three as the zero-cost sensor so the loop can detect a
   // revival — live capital never touches them until the data turns.
-  LIVE_CLASS_BLOCKLIST: z.string().default("BASE,CLIMBER,MOON_VIOLENT"),
+  // Hard block = operator order (BASE: "it's a dead lane"). Everything else is
+  // REGIME-GATED below — the market is regime-centric, and a static blocklist
+  // lags the turn: CLIMBER went green in the very window after the audit
+  // blocked it. A class earns live capital from its own recent paper tape and
+  // loses it the same way.
+  LIVE_CLASS_BLOCKLIST: z.string().default("BASE"),
+  LIVE_REGIME_CLASS_GATE: z
+    .string()
+    .default("true")
+    .transform((v) => v !== "false"),
+  LIVE_REGIME_CLASS_WINDOW_H: z.coerce.number().default(24), // trailing paper window judged
+  LIVE_REGIME_CLASS_MIN_N: z.coerce.number().default(5), // below this, fall back to the audit core
+  // THE INFLOW BAND (operator: "concentrate trades in the bands with the
+  // highest probability"). Pool growth at the trigger tick, measured over 7d:
+  // 1.05-1.30x wins 44.8% (rugs 35.7%) · 1.30x+ wins 71.2% (rugs 11.1%) ·
+  // 2.0x+ went 18-for-18. Live requires the strong band; paper keeps trading
+  // every band as the sensor that re-measures this table.
+  LIVE_MIN_INFLOW: z.coerce.number().default(1.3),
   // 0★ live setups ran −55.3% on deployed — no evidence edge, full drag.
   // Live requires at least one conviction mark; paper still takes 0★.
   LIVE_MIN_STARS: z.coerce.number().default(1),
