@@ -581,7 +581,7 @@ export function livePositionUsd(
   regimeMult: number,
   convictionMult: number,
   anticipationMult: number,
-  sig?: { signature: Signature; stars: number | null } | null,
+  sig?: { signature: Signature; stars: number | null; walletWinnerHits?: number | null; walletRugHits?: number | null } | null,
   paperFrac?: number | null,
 ): number {
   // SIGNATURE SIZING — identical formula to paper, against the WALLET BALANCE
