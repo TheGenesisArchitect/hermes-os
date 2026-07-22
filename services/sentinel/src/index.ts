@@ -421,6 +421,25 @@ async function sendRecap(s: SentinelState): Promise<void> {
       `inflow edge: strong ${Number(inflow.strong_win).toFixed(0)}% win vs flat ${Number(inflow.flat_win).toFixed(0)}% · spread ${sp >= 0 ? "+" : ""}${sp.toFixed(0)}pp${sp <= 5 ? " ⚠ DECAYING" : ""}`,
     );
   }
+  // SMART-MONEY FORECAST TRACKING — the 30-day study (config smart_money_forecast)
+  // predicted equity bands from the measured edge and three execution-drag
+  // scenarios. Every summary scores live against the base band, so the team
+  // sees forecast-vs-actual daily instead of at post-mortem.
+  const fcRows = (await db.execute(sql`select value from config where key = 'smart_money_forecast'`)) as unknown as {
+    value: { createdAt: string; baselineUsd: number; horizonDays: number; scenarios: Record<string, { p10: number[]; p50: number[]; p90: number[] }> };
+  }[];
+  const fc = fcRows[0]?.value;
+  if (fc?.scenarios?.base) {
+    const day = Math.min(fc.horizonDays - 1, Math.max(0, Math.floor((Date.now() - new Date(fc.createdAt).getTime()) / 86_400_000)));
+    const [snap] = (await db.execute(sql`select equity_usd::float e from pnl_snapshots where lane='live' order by id desc limit 1`)) as unknown as { e: number }[];
+    if (snap && day >= 0) {
+      const b = fc.scenarios.base;
+      const vsP50 = snap.e - b.p50[day];
+      lines.push(
+        `📐 forecast d${day + 1}: $${snap.e.toFixed(0)} vs base p50 $${b.p50[day].toFixed(0)} (${vsP50 >= 0 ? "+" : ""}$${vsP50.toFixed(0)}) · band $${b.p10[day].toFixed(0)}–$${b.p90[day].toFixed(0)}${snap.e < b.p10[day] ? " ⚠ BELOW BAND" : snap.e > b.p90[day] ? " 🚀 ABOVE BAND" : ""}`,
+      );
+    }
+  }
   await notify("SUMMARY", "hour + forecast", lines, 3, ["bar_chart"]);
 }
 
