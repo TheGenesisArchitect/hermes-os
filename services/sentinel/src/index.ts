@@ -305,16 +305,25 @@ async function sendTrend(s: SentinelState): Promise<void> {
   const [paper, live] = await Promise.all([laneStats("paper", 20), laneStats("live", 20)]);
   const killed = s.liveKill === true;
   const dir = (now: number, prev: number): string => (now > prev + 0.01 ? "▲" : now < prev - 0.01 ? "▼" : "▬");
-  // Capture over the window, pooled (dollars kept ÷ dollars the peaks offered).
-  const [cap] = (await db.execute(sql`
-    select case when coalesce(sum(size_usd*(peak_price_usd/nullif(entry_price_usd,0)-1))
+  // Capture per lane, pooled (dollars kept ÷ dollars the peaks offered) over a
+  // rolling 2h — the operator's cycle-management metric, target 40%. Twenty
+  // minutes is too few moves to read; two hours is a stable signal that still
+  // turns within a session.
+  const capRows = (await db.execute(sql`
+    select lane, case when coalesce(sum(size_usd*(peak_price_usd/nullif(entry_price_usd,0)-1))
                    filter (where peak_price_usd/nullif(entry_price_usd,0) >= 1.22),0) > 0
       then round((100*sum(realized_pnl_usd) filter (where peak_price_usd/nullif(entry_price_usd,0) >= 1.22)
            /sum(size_usd*(peak_price_usd/nullif(entry_price_usd,0)-1))
              filter (where peak_price_usd/nullif(entry_price_usd,0) >= 1.22))::numeric,0)::float
       else null end as capture
-    from positions where lane='paper' and status='closed' and closed_at > now() - interval '20 minutes'
-  `)) as unknown as { capture: number | null }[];
+    from positions where status='closed' and closed_at > now() - interval '2 hours'
+    group by lane
+  `)) as unknown as { lane: string; capture: number | null }[];
+  const capOf = (lane: string) => capRows.find((r) => r.lane === lane)?.capture ?? null;
+  const capLine = (lane: string) => {
+    const c = capOf(lane);
+    return c == null ? "—" : `${Math.round(c)}%${c >= 40 ? " ✓" : ""}`;
+  };
   const mix = (await db.execute(sql`
     select coalesce(signature,'?') as sig, count(*)::int as n from candidate_outcomes
     where updated_at > now() - interval '20 minutes' and signature is not null
@@ -329,8 +338,8 @@ async function sendTrend(s: SentinelState): Promise<void> {
   const lines = [
     laneLine("paper", paper) + ` ${dir(paper.pnl, s.prevTrendPaper)}`,
     killed ? "live: standing down (kill engaged)" : laneLine("live", live) + ` ${dir(live.pnl, s.prevTrendLive)}`,
-    (paper.best && paper.best.pnl > 0 ? `best ${paper.best.sym} ${money(paper.best.pnl)}` : "no standout") +
-      (cap?.capture != null ? ` · kept ${Math.round(Number(cap.capture))}% of the moves` : ""),
+    (paper.best && paper.best.pnl > 0 ? `best ${paper.best.sym} ${money(paper.best.pnl)}` : "no standout"),
+    `capture 2h (target 40%): paper ${capLine("paper")} · live ${capLine("live")}`,
     found.length
       ? `finding: ${found.slice(0, 3).map((m) => `${m.sig.replace("MOON_", "m·").toLowerCase()} ${m.n}`).join(" · ")}${refused ? ` · refused ${refused}` : ""}`
       : `quiet tape${refused ? ` · refused ${refused}` : ""}`,
