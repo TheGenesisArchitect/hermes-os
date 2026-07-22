@@ -24,6 +24,7 @@ import { resolve } from "node:path";
 loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
 import { loadConfig, resilientFetch } from "@hermes/core";
 import { auditLog, candidateOutcomes, config, db, fills, positions, tokens } from "@hermes/db";
+import { runLedgerSync, runReconciler } from "./ledger2.js";
 import { and, eq, gt, sql } from "drizzle-orm";
 
 const cfg = loadConfig();
@@ -463,6 +464,10 @@ if (state.lastTriggerAuditId < 0) {
   state.lastTriggerAuditId = num(a?.m);
 }
 
+// LEDGER PHASE 2 — journal sync + chain reconciler, every ~5 minutes (10 ticks
+// at the 30s poll). Sync first so the reconciler always judges a fresh journal.
+let ledgerTick = 0;
+
 // eslint-disable-next-line no-constant-condition
 while (true) {
   try {
@@ -471,6 +476,15 @@ while (true) {
     await checkFills(state);
     await checkHeartbeat(state);
     await checkDigests(state);
+    if (ledgerTick++ % 10 === 0) {
+      try {
+        await runLedgerSync();
+        const line = await runReconciler(cfg, (title, lines) => notify("OPS", title, lines, 4, ["ledger"]));
+        console.log(`📒 ${line}`);
+      } catch (err) {
+        console.warn(`ledger phase-2 cycle failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
     await saveState(state);
   } catch (err) {
     console.error(`sentinel tick failed: ${err instanceof Error ? err.message : err}`);
