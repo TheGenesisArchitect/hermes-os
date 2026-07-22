@@ -1003,7 +1003,7 @@ async function classRegimeHealth(cfg: HermesConfig, signature: string): Promise<
  * exponentially (5s → 10s → 20s … capped) so a stuck position degrades itself
  * instead of the whole lane. Any success clears the counter immediately.
  */
-const sellBackoff = new Map<number, { fails: number; nextAttemptMs: number }>();
+const sellBackoff = new Map<number, { fails: number; holdouts?: number; nextAttemptMs: number }>();
 const SELL_BACKOFF_BASE_MS = 5_000;
 const SELL_BACKOFF_MAX_MS = 300_000;
 // A take-profit that reverts on tight tolerance retries on a FLAT short fuse, not
@@ -1069,13 +1069,30 @@ async function liveSellPosition(
     if (rawSell <= 0n) return false;
 
     // Explicit slippageBps (the guard) always wins over the classification above.
-    const slip =
+    const base =
       slippageBps ??
       (isProtective
         ? cfg.LIVE_STOP_SLIPPAGE_BPS
         : isTakeProfit
           ? cfg.LIVE_TP_SLIPPAGE_BPS
           : cfg.LIVE_SELL_SLIPPAGE_BPS);
+    // FIRE-SALE ESCALATION (72h tape, 2026-07-22): 7 write-offs at −$15.81 all
+    // died retrying the SAME tolerance into a draining pool (21× ExceededSlippage
+    // 6001), and AFTER peaked 7.84× yet filled at 0.52× because the TP held out
+    // at 10% the whole way down. A repeated revert IS the measurement that the
+    // pool is collapsing faster than the cap — so the cap must widen with each
+    // attempt, not stand still: trails double per fail, protective stops grow
+    // 1.5× per fail toward a 90% get-me-out ceiling, and a TP that has held out
+    // adds its base back per holdout until it hits stop tolerance. Banking a
+    // rung 20% under mark beats riding the position to zero.
+    const attempts = sellBackoff.get(position.id);
+    const escFails = attempts?.fails ?? 0;
+    const escHold = attempts?.holdouts ?? 0;
+    const slip = isProtective
+      ? Math.min(9_000, Math.round(base * 1.5 ** escFails))
+      : isTakeProfit
+        ? Math.min(cfg.LIVE_STOP_SLIPPAGE_BPS, base * (1 + escHold))
+        : Math.min(cfg.LIVE_STOP_SLIPPAGE_BPS, base * 2 ** escFails);
     const quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip);
     const b64 = await swapRouter.buildSwapTx(cfg, quote, wallet.publicKey.toBase58());
     const res = await executeSwap(cfg, b64, WSOL_MINT);
@@ -1138,16 +1155,21 @@ async function liveSellPosition(
     // token really is unsellable, the trail and guard exits reach this catch with a
     // protective reason and the write-off fires from there.
     if (isTakeProfit) {
-      const keep = sellBackoff.get(position.id)?.fails ?? 0;
-      sellBackoff.set(position.id, { fails: keep, nextAttemptMs: Date.now() + TP_RETRY_MS });
-      console.warn(`live TP held out ${short(position.mint)} (${reason}) — refused a fill worse than ${(cfg.LIVE_TP_SLIPPAGE_BPS / 100).toFixed(1)}%, retry ${TP_RETRY_MS / 1000}s: ${msg}`);
+      const prev = sellBackoff.get(position.id);
+      const holdouts = (prev?.holdouts ?? 0) + 1;
+      sellBackoff.set(position.id, { fails: prev?.fails ?? 0, holdouts, nextAttemptMs: Date.now() + TP_RETRY_MS });
+      console.warn(`live TP held out ${short(position.mint)} (${reason}) #${holdouts} — escalating tolerance next try, retry ${TP_RETRY_MS / 1000}s: ${msg}`);
       return false;
     }
     // Back off before anything else — a failing sell must not be free to retry.
-    const prev = sellBackoff.get(position.id)?.fails ?? 0;
-    const fails = prev + 1;
-    const waitMs = Math.min(SELL_BACKOFF_MAX_MS, SELL_BACKOFF_BASE_MS * 2 ** (fails - 1));
-    sellBackoff.set(position.id, { fails, nextAttemptMs: Date.now() + waitMs });
+    // The first two retries are FAST (2s): in a collapse the escalated slippage
+    // needs its shot while there is still a pool to hit — the old 5s→10s→20s
+    // walk-away gave the rug the whole window. The exponential fuse takes over
+    // from the third fail so a truly stuck position still degrades itself.
+    const prevEntry = sellBackoff.get(position.id);
+    const fails = (prevEntry?.fails ?? 0) + 1;
+    const waitMs = fails <= 2 ? 2_000 : Math.min(SELL_BACKOFF_MAX_MS, SELL_BACKOFF_BASE_MS * 2 ** (fails - 3));
+    sellBackoff.set(position.id, { fails, holdouts: prevEntry?.holdouts, nextAttemptMs: Date.now() + waitMs });
     // Audit only the first few failures; a stuck position must not spam the log.
     if (fails <= 3)
       await audit("live_sell_failed", { positionId: position.id, mint: position.mint, reason, error: msg, fails, backoffMs: waitMs }).catch(() => {});
@@ -1553,11 +1575,23 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
         const synthetic = { priceUsd: entry * markNow, liquidityUsd: 0, fdvUsd: 0, pairAddress: "", dexId: "" } as never;
         const dec = decideExit(ecfg, lp, synthetic, entry * peakMark, null);
         if (dec) {
+          // DUST-AWARE RUNGS: a partial rung on a micro position produces a sub-$1
+          // sell that venues reject (pumpportal build 400 ×4 on the $2-era tape) —
+          // the sweep never banks and the position rides unbanked into whatever
+          // comes next. Bump the fraction up until the rung clears the minimum
+          // sellable notional; the remainder still rides the trail, so runners
+          // stay uncapped — this banks the green instead of donating it.
+          let frac = dec.fraction;
+          if (frac < 0.999) {
+            const valueUsd = Number(lp.qtyRemaining) * entry * markNow;
+            if (valueUsd > 0 && frac * valueUsd < cfg.LIVE_MIN_SELL_NOTIONAL_USD)
+              frac = Math.min(1, cfg.LIVE_MIN_SELL_NOTIONAL_USD / valueUsd);
+          }
           console.log(
-            `🧬 LIVE ${lp.signature} ${short(lp.mint)} — ${dec.reason} at ${markNow.toFixed(2)}x (peak ${peakMark.toFixed(2)}x), selling ${(dec.fraction * 100).toFixed(0)}%`,
+            `🧬 LIVE ${lp.signature} ${short(lp.mint)} — ${dec.reason} at ${markNow.toFixed(2)}x (peak ${peakMark.toFixed(2)}x), selling ${(frac * 100).toFixed(0)}%${frac !== dec.fraction ? " (dust-bumped)" : ""}`,
           );
-          await liveSellPosition(cfg, lp, dec.fraction, dec.reason);
-          if (dec.fraction >= 0.999) {
+          await liveSellPosition(cfg, lp, frac, dec.reason);
+          if (frac >= 0.999) {
             guardHits.delete(lp.id);
             livePeakMark.delete(lp.id);
           }

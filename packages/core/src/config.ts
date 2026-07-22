@@ -1210,6 +1210,10 @@ const envSchema = z.object({
   // retry landed), and repeatedly failing to exit a winner round-trips it. 10%
   // ensures the exit fills; the guard's catastrophe/rug stops backstop the worst.
   LIVE_SELL_SLIPPAGE_BPS: z.coerce.number().default(1000),
+  // Smallest sell a venue reliably fills — rung fractions below this are bumped
+  // up at dispatch (pumpportal rejects sub-$1 builds with 400; the rung then
+  // never banks and the position rides unbanked).
+  LIVE_MIN_SELL_NOTIONAL_USD: z.coerce.number().default(1.5),
   // TAKE-PROFIT tolerance — the rungs bank INTO STRENGTH, so unlike a trail they
   // have no urgency and must not pay the trail's 10% to land. Measured 2026-07-20:
   // live TP0 filled at a 1.018× median against paper's 1.136× over the same tape,
