@@ -412,8 +412,19 @@ async function observe(
     const cooledDown =
       !book?.lastClosedAt ||
       Date.now() - new Date(book.lastClosedAt).getTime() >= cfg.REENTRY_COOLDOWN_MIN * 60_000;
+    // ENTRY-TIMING GENOME (2026-07-22, operator: "every pre-arm is a donation").
+    // The 48h delayed-entry replay: requiring arm-level proof (+20% beyond the
+    // confirm bar) turned RISER from +$4.67 into +$141.75 (n=133), fixed every
+    // slow class, and DESTROYED MOON_FAST (+$109.56 → +$0.44) — speed IS the
+    // fast classes' edge. Entry timing therefore belongs to the signature the
+    // same way exits do: fast classes enter on the snap, slow classes wait for
+    // the move to prove the arm before a single dollar deploys. Refused-but-
+    // labeled candidates keep the sensor honest without positions.
+    const FAST_ENTRY = signature === "MOON_FAST" || signature === "MOON_VIOLENT";
+    const armProof = FAST_ENTRY || trig.markMultiple >= triggerCfg.minMult * 1.2;
     const armed =
       trig.triggered &&
+      armProof &&
       (book?.openCount ?? 0) === 0 &&
       (book?.totalCount ?? 0) < cfg.REENTRY_MAX_ENTRIES &&
       cooledDown;
