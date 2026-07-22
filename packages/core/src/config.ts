@@ -1091,7 +1091,27 @@ const envSchema = z.object({
   // This is a DELIBERATE departure from strict 1:1 with paper — the parity that
   // matters is relative risk, and a position too small to clear its own fee is
   // not the same trade paper took.
-  LIVE_MIN_POSITION_FRAC: z.coerce.number().default(0.015),
+  LIVE_MIN_POSITION_FRAC: z.coerce.number().default(0.02),
+  // ── THE AGGRESSIVE CONCENTRATION (operator directive 2026-07-22) ──────────
+  // Side-by-side audit since routing went live: live was negative in EVERY
+  // class but MOON_SLOW, while paper's engines ran +16.8% on deployed (RISER
+  // +$135.92 at 69% win, MOON_STEADY +$35.53). The strategy: live trades ONLY
+  // the proven lanes, ONLY with evidence, at sizes that clear the measured
+  // 18.3pp/$2 drag. Fewer trades × better class × bigger clip.
+  //
+  // BASE is blocked by direct order ("it's a dead lane"): paper −10.6% on
+  // deployed, live −58.2% at 20% win. CLIMBER (−29.8%/−75.8%) and
+  // MOON_VIOLENT (−29.3%/−81.7%) join it on the same evidence. Paper keeps
+  // trading all three as the zero-cost sensor so the loop can detect a
+  // revival — live capital never touches them until the data turns.
+  LIVE_CLASS_BLOCKLIST: z.string().default("BASE,CLIMBER,MOON_VIOLENT"),
+  // 0★ live setups ran −55.3% on deployed — no evidence edge, full drag.
+  // Live requires at least one conviction mark; paper still takes 0★.
+  LIVE_MIN_STARS: z.coerce.number().default(1),
+  // 2★ = the fingerprint plus independent evidence (50% live win rate even
+  // through the drag era). The boost concentrates capital where the edge is
+  // proven: paper's fraction × this, still capped by LIVE_MAX_POSITION_FRAC.
+  LIVE_STAR2_BOOST: z.coerce.number().default(1.5),
   LIVE_SIZE_FRAC: z.coerce.number().default(0.1), // base position = 10% of balance
   LIVE_MAX_POSITION_FRAC: z.coerce.number().default(0.14), // ≤14% of balance in any one position
   LIVE_MAX_EXPOSURE_FRAC: z.coerce.number().default(0.75), // deploy ≤75% of balance (reserve for fees/rent)

@@ -594,12 +594,17 @@ export function livePositionUsd(
   // before the genome gets to manage anything. Conviction still scales freely
   // ABOVE the floor, so the range compresses rather than collapsing the way a
   // flat dollar floor would.
+  // 2★ AGGRESSION: full-conviction setups (the fingerprint plus independent
+  // evidence) size UP — paper's fraction × LIVE_STAR2_BOOST, still capped by
+  // LIVE_MAX_POSITION_FRAC below. A deliberate, documented departure from
+  // strict 1:1: at small balances only concentration clears the fee drag.
+  const starBoost = (sig?.stars ?? 0) >= 2 ? cfg.LIVE_STAR2_BOOST : 1;
   const routedFrac = Math.max(
     cfg.LIVE_MIN_POSITION_FRAC,
-    paperFrac != null && paperFrac > 0
+    (paperFrac != null && paperFrac > 0
       ? paperFrac
       : sizeFraction(sig?.stars ?? 0, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) *
-        (sig ? profileOf(sig.signature).size : 1),
+        (sig ? profileOf(sig.signature).size : 1)) * starBoost,
   );
   const base = sig
     ? balanceUsd * routedFrac
@@ -677,6 +682,24 @@ export async function maybeLiveBuy(
     // cannot take trades the reference lane declines.
     if (sig && !profileOf(sig.signature).trade) {
       await audit("live_buy_skipped", { mint, reason: `${sig.signature} — class is not traded` });
+      return;
+    }
+    // ── THE CONCENTRATION GATES (operator directive 2026-07-22) ─────────────
+    // Live deploys real capital only into the audit-proven lanes, only with
+    // evidence. Paper keeps trading everything as the zero-cost sensor.
+    const blocked = new Set(cfg.LIVE_CLASS_BLOCKLIST.split(",").map((s) => s.trim()).filter(Boolean));
+    if (sig && blocked.has(sig.signature)) {
+      await audit("live_buy_skipped", { mint, reason: `${sig.signature} — dead lane, live-blocked (paper −10.6%/live −58.2% class audit)` });
+      return;
+    }
+    if (!sig) {
+      // Unrouted flow ran −$22.95 on live since routing went live. A trade
+      // without a genome has no exit profile and no evidence — paper-only.
+      await audit("live_buy_skipped", { mint, reason: "unrouted — live takes signature-routed trades only" });
+      return;
+    }
+    if ((sig.stars ?? 0) < cfg.LIVE_MIN_STARS) {
+      await audit("live_buy_skipped", { mint, reason: `${sig.stars ?? 0}★ — below live evidence bar (0★ ran −55.3% on deployed)` });
       return;
     }
     const gate = await liveBuyGate(cfg, mint, sig != null);
