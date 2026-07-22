@@ -179,7 +179,12 @@ export default async function Overview() {
   // EQUITY CURVE DATA — paper, the live wallet, and a fitted paper trend on one
   // x-axis. Live carries null wherever it has no snapshot at that instant, so a
   // gap reads as "not trading" rather than a fabricated flat line.
-  const liveByTs = new Map(laneEquity.points.filter((p) => p.live != null).map((p) => [new Date(p.at).getTime(), p.live!]));
+  // Minute-bucketed join: paper and live snapshot ~500ms apart, so an exact-ms
+  // key never matched and the live line rendered permanently "off". Both sides
+  // now round to the minute — the cadence both lanes actually snapshot at.
+  const liveByTs = new Map(
+    laneEquity.points.filter((p) => p.live != null).map((p) => [Math.floor(new Date(p.at).getTime() / 60_000), p.live!]),
+  );
   const paperPts = series.map((p) => ({ t: p.at.getTime(), y: Number(p.equity) }));
   const meanT = paperPts.length ? paperPts.reduce((s, p) => s + p.t, 0) / paperPts.length : 0;
   const meanY = paperPts.length ? paperPts.reduce((s, p) => s + p.y, 0) / paperPts.length : 0;
@@ -189,7 +194,7 @@ export default async function Overview() {
   const chartData = series.map((p) => ({
     at: p.at.toISOString(),
     equity: Number(p.equity),
-    live: liveByTs.get(p.at.getTime()) ?? null,
+    live: liveByTs.get(Math.floor(p.at.getTime() / 60_000)) ?? null,
     trend: meanY + slope * (p.at.getTime() - meanT),
   }));
 
