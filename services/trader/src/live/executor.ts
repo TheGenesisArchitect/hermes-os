@@ -758,10 +758,16 @@ export async function maybeLiveBuy(
         .orderBy(desc(candidateTicks.id))
         .limit(1);
       const liqNow = lt?.liq != null ? Number(lt.liq) : null;
-      if (liqNow != null && liqNow < cfg.LIVE_MIN_ENTRY_LIQ_USD) {
+      // Smart-money-warm crowds (4.2% rug cohort) earn the lower floor: at $4-6
+      // size the impact math clears a $2.5k pool easily, and the wallet graph
+      // out-discriminates depth as a rug tell (Chillmothy, 2026-07-22).
+      const smWarm =
+        sig?.walletWinnerHits != null && sig.walletWinnerHits >= 2 && sig.walletWinnerHits - (sig.walletRugHits ?? 0) >= 1;
+      const depthFloor = smWarm ? cfg.LIVE_MIN_ENTRY_LIQ_SM_USD : cfg.LIVE_MIN_ENTRY_LIQ_USD;
+      if (liqNow != null && liqNow < depthFloor) {
         await audit("live_buy_skipped", {
           mint,
-          reason: `pool $${Math.round(liqNow)} below the $${cfg.LIVE_MIN_ENTRY_LIQ_USD} depth floor — no exit at size`,
+          reason: `pool ${Math.round(liqNow)} below the ${depthFloor} depth floor${smWarm ? " (smart-money floor)" : ""} — no exit at size`,
         });
         return;
       }

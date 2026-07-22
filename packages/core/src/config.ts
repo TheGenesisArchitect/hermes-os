@@ -1127,6 +1127,12 @@ const envSchema = z.object({
   // never had a real way back out. Signals grade the trajectory; this grades
   // the EXIT: a pool must be deep enough to sell the floor position into.
   LIVE_MIN_ENTRY_LIQ_USD: z.coerce.number().default(8_000),
+  // Smart-money-warm candidates (wh≥2, net≥1: 4.2% rug cohort) get a lower
+  // depth floor — the floor is a RUG proxy, not exit physics at $4-6 size
+  // (0.3% impact on a $2k pool), and the wallet graph discriminates rugs
+  // better than depth does. Chillmothy (2★, w3/r0, 2.47× at 86% capture)
+  // was refused at $1,972 by the flat floor while paper banked +$37.97.
+  LIVE_MIN_ENTRY_LIQ_SM_USD: z.coerce.number().default(2_500),
   // 0★ live setups ran −55.3% on deployed — no evidence edge, full drag.
   // Live requires at least one conviction mark; paper still takes 0★.
   LIVE_MIN_STARS: z.coerce.number().default(1),
