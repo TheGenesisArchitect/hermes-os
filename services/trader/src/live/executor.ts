@@ -766,6 +766,30 @@ export async function maybeLiveBuy(
         return;
       }
     }
+    // ── CLONE-WAVE GATE (live only) ──────────────────────────────────────────
+    // Bear Ripper ×2 (2026-07-22): same ticker relaunched minutes after its
+    // sibling rugged; both live entries died −$4 unsellable while the paper
+    // clone-wave cohort ran net POSITIVE (+$68, 68% win, 48h) — paper can mark-
+    // sell, real capital cannot exit a drained pool. So live refuses a ticker
+    // whose sibling rugged in the last hour or is still open live; paper keeps
+    // exploring the wave and earns the sensor data.
+    if (symbol) {
+      const [wave] = (await db.execute(sql`
+        SELECT 1 FROM positions p JOIN tokens t ON t.mint = p.mint
+        WHERE t.symbol = ${symbol} AND p.mint <> ${mint}
+          AND ((p.status = 'closed' AND p.closed_at > now() - interval '60 minutes'
+                AND (p.exit_reason IN ('dust_rug','live_unsellable','delisted')
+                     OR p.realized_pnl_usd::float <= -0.8 * p.size_usd::float))
+               OR (p.status = 'open' AND p.lane = 'live'))
+        LIMIT 1`)) as unknown as unknown[];
+      if (wave) {
+        await audit("live_buy_skipped", {
+          mint,
+          reason: `clone wave: ${symbol} rugged or still open on another mint <60m — live refuses relaunches (paper keeps exploring)`,
+        });
+        return;
+      }
+    }
     // ── WALLET-GRAPH ANTI-GATE ───────────────────────────────────────────────
     // 7d study (n=9,771 armed+labeled): holder sets whose known wallets net out
     // NEGATIVE (more rug history than winner history) ran 9.6% win / 49.3% rug /
