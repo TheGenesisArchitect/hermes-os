@@ -36,6 +36,11 @@ import { refreshWalletReputation, scoreCandidateWalletEdge } from "./walletReput
 
 const cfg = loadConfig();
 const triggerCfg = entryTriggerConfigFrom(cfg);
+// ENTRY-TIMING GENOME state: mark at each candidate's first qualifying tick.
+// Slow classes must run +20% beyond this pin before a dollar deploys (fast
+// classes are exempt). In-memory by design: a recorder restart re-pins on the
+// next qualifying tick, which is conservative, never permissive.
+const slowEntryPin = new Map<string, number>();
 
 const num = (v: string | null | undefined): number => (v == null ? 0 : Number(v));
 const short = (mint: string) => `${mint.slice(0, 4)}…${mint.slice(-4)}`;
@@ -421,7 +426,18 @@ async function observe(
     // the move to prove the arm before a single dollar deploys. Refused-but-
     // labeled candidates keep the sensor honest without positions.
     const FAST_ENTRY = signature === "MOON_FAST" || signature === "MOON_VIOLENT";
-    const armProof = FAST_ENTRY || trig.markMultiple >= triggerCfg.minMult * 1.2;
+    // The proof is RELATIVE to the tick that first qualified — DUCK confirmed
+    // already above an absolute 1.62× bar and sailed straight through the first
+    // version of this gate to a pre-arm death. Pin the mark at first qualify;
+    // demand +20% beyond IT. The pin resets when the candidate stops
+    // qualifying, so a fresh trough-snap cycle earns a fresh reference.
+    if (trig.triggered) {
+      if (!slowEntryPin.has(o.mint)) slowEntryPin.set(o.mint, trig.markMultiple);
+    } else {
+      slowEntryPin.delete(o.mint);
+    }
+    const pinned = slowEntryPin.get(o.mint) ?? trig.markMultiple;
+    const armProof = FAST_ENTRY || trig.markMultiple >= pinned * 1.2;
     const armed =
       trig.triggered &&
       armProof &&
