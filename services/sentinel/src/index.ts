@@ -432,11 +432,12 @@ async function sendRecap(s: SentinelState): Promise<void> {
   if (fc?.scenarios?.base) {
     const day = Math.min(fc.horizonDays - 1, Math.max(0, Math.floor((Date.now() - new Date(fc.createdAt).getTime()) / 86_400_000)));
     const [snap] = (await db.execute(sql`select equity_usd::float e from pnl_snapshots where lane='live' order by id desc limit 1`)) as unknown as { e: number }[];
-    if (snap && day >= 0) {
-      const b = fc.scenarios.base;
-      const vsP50 = snap.e - b.p50[day];
+    const b = fc.scenarios.base;
+    const p50 = b.p50[day], p10 = b.p10[day], p90 = b.p90[day];
+    if (snap && p50 != null && p10 != null && p90 != null) {
+      const vsP50 = snap.e - p50;
       lines.push(
-        `📐 forecast d${day + 1}: $${snap.e.toFixed(0)} vs base p50 $${b.p50[day].toFixed(0)} (${vsP50 >= 0 ? "+" : ""}$${vsP50.toFixed(0)}) · band $${b.p10[day].toFixed(0)}–$${b.p90[day].toFixed(0)}${snap.e < b.p10[day] ? " ⚠ BELOW BAND" : snap.e > b.p90[day] ? " 🚀 ABOVE BAND" : ""}`,
+        `📐 forecast d${day + 1}: $${snap.e.toFixed(0)} vs base p50 $${p50.toFixed(0)} (${vsP50 >= 0 ? "+" : ""}$${vsP50.toFixed(0)}) · band $${p10.toFixed(0)}–$${p90.toFixed(0)}${snap.e < p10 ? " ⚠ BELOW BAND" : snap.e > p90 ? " 🚀 ABOVE BAND" : ""}`,
       );
     }
   }
