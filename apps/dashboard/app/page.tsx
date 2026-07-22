@@ -9,6 +9,7 @@ import { HarvestButton } from "@/components/HarvestButton";
 import { IntelReport } from "@/components/IntelReport";
 import { IntelTerminal } from "@/components/IntelTerminal";
 import { KillSwitch } from "@/components/KillSwitch";
+import { LaneFilter } from "@/components/LaneFilter";
 import { ManagementBoard } from "@/components/ManagementBoard";
 import { RecorderBoard } from "@/components/RecorderBoard";
 import { PondRadar } from "@/components/PondRadar";
@@ -60,8 +61,13 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function Overview() {
+export default async function Overview({ searchParams }: { searchParams: Promise<{ lane?: string }> }) {
   const cfg = loadConfig();
+  // GLOBAL WALLET FILTER — ?lane=paper|live isolates one book across every
+  // lane-aware panel; aggregates recompute server-side, never hidden rows.
+  const laneParam = (await searchParams).lane;
+  const laneFilter: "paper" | "live" | undefined =
+    laneParam === "paper" || laneParam === "live" ? laneParam : undefined;
   const [
     series,
     stats,
@@ -118,7 +124,7 @@ export default async function Overview() {
     getControlTerminal(),
     getSignatureConsole(),
     getLaneScorecard(),
-    getTradePerformance(),
+    getTradePerformance(6, laneFilter),
     getLaneEquitySeries(),
     getPondRadar(),
     getHourlyWindows(),
@@ -132,7 +138,21 @@ export default async function Overview() {
     getInflowEdge(),
   ]);
 
-  const managedView = managed.map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
+  const gridView = laneFilter
+    ? { ...timingGrid, trades: timingGrid.trades.filter((t) => t.lane === laneFilter) }
+    : timingGrid;
+  const ledgerView = laneFilter
+    ? {
+        ...ledgerWorkspace,
+        books: ledgerWorkspace.books.filter((b) => b.book === laneFilter),
+        daily: ledgerWorkspace.daily.filter((d) => d.book === laneFilter),
+        bySignature: ledgerWorkspace.bySignature.filter((s) => s.book === laneFilter),
+        journal: ledgerWorkspace.journal.filter((j) => j.book === laneFilter),
+      }
+    : ledgerWorkspace;
+  const managedView = managed
+    .filter((p) => !laneFilter || p.lane === laneFilter)
+    .map((p) => ({ ...p, openedAt: p.openedAt.toISOString() }));
   // PAPER SUBSET for every paper-bankroll aggregate below — `managed` now
   // carries BOTH lanes (the live baseball cards), and mixing live float into
   // the paper equity tile would corrupt the ledger it headlines.
@@ -203,8 +223,13 @@ export default async function Overview() {
       <AutoRefresh />
 
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Paper lane</h1>
-        <KillSwitch engaged={killSwitch} />
+        <h1 className="text-xl font-semibold">
+          {laneFilter === "live" ? "◆ Live wallet" : laneFilter === "paper" ? "Paper lane" : "Both wallets"}
+        </h1>
+        <div className="flex items-center gap-3">
+          <LaneFilter />
+          <KillSwitch engaged={killSwitch} />
+        </div>
       </div>
 
       {killSwitch ? (
@@ -264,7 +289,7 @@ export default async function Overview() {
         <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
           Trade matrix — live positions, price locked in as they rise · click a bar to close
         </h2>
-        <TimingGrid view={timingGrid} dnaByMint={dnaByMint} />
+        <TimingGrid view={gridView} dnaByMint={dnaByMint} />
       </section>
 
       {/* Control terminal — the live trading desk. Every tunable exit/size knob
@@ -372,7 +397,7 @@ export default async function Overview() {
           derives from the append-only journal, the header carries the
           chain-verification heartbeat, and the full event stream lives in the
           drawer. Legacy tables remain the write path until Phase 4. */}
-      <LedgerWorkspace view={ledgerWorkspace} />
+      <LedgerWorkspace view={ledgerView} />
     </div>
   );
 }

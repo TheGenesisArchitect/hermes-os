@@ -477,7 +477,7 @@ async function openFromSignal(
   if (!position) return false;
   if (book) book[lane] += 1; // book the fill into the shared capacity ledger
 
-  await db.insert(fills).values({
+  const [buyFill] = await db.insert(fills).values({
     positionId: position.id,
     side: "buy",
     qtyTokens: String(qty),
@@ -485,7 +485,12 @@ async function openFromSignal(
     slippagePct: String(slip),
     feeUsd: String(feeUsd),
     reason: note || "blind", // entry path: confirmed | blind
-  });
+  }).returning({ id: fills.id });
+  // Phase 4b: journal at the moment money moves; the sweep converges on the
+  // same idempotency key and heals any missed emit.
+  if (buyFill) void journalFill({ fillId: buyFill.id, book: "paper", side: "buy", filledAt: new Date(),
+    positionId: position.id, mint: signal.mint, qty, priceUsd: entryPrice, feeUsd, entryPriceUsd: entryPrice,
+    reason: note || "blind" });
   await db.update(signals).set({ status: "traded_paper" }).where(eq(signals.id, signal.id));
 
   console.log(
@@ -1255,7 +1260,7 @@ async function sell(
     closing,
   });
 
-  await db.insert(fills).values({
+  const [sellFill] = await db.insert(fills).values({
     positionId: position.id,
     side: "sell",
     qtyTokens: String(qtySold),
@@ -1263,7 +1268,10 @@ async function sell(
     slippagePct: String(slip),
     feeUsd: String(feeUsd),
     reason, // per-fill truth: WHICH rung/exit produced this fill
-  });
+  }).returning({ id: fills.id });
+  if (sellFill) void journalFill({ fillId: sellFill.id, book: "paper", side: "sell", filledAt: new Date(),
+    positionId: position.id, mint: position.mint, qty: qtySold, priceUsd: exitPrice, feeUsd,
+    entryPriceUsd: n(position.entryPriceUsd), reason });
 
   const newRealized = n(position.realizedPnlUsd) + pnl;
   // Selling AT a price is proof the position reached it — bump the peak so exit
@@ -1726,13 +1734,16 @@ async function recordSuspectHold(
  */
 async function writeOffAtZero(position: Position, reason: string): Promise<void> {
   await audit("paper_writeoff", { positionId: position.id, mint: position.mint, reason });
-  await db.insert(fills).values({
+  const [woFill] = await db.insert(fills).values({
     positionId: position.id,
     side: "sell",
     qtyTokens: position.qtyRemaining,
     priceUsd: "0",
     feeUsd: "0",
-  });
+  }).returning({ id: fills.id });
+  if (woFill) void journalFill({ fillId: woFill.id, book: "paper", side: "sell", filledAt: new Date(),
+    positionId: position.id, mint: position.mint, qty: n(position.qtyRemaining), priceUsd: 0, feeUsd: 0,
+    entryPriceUsd: n(position.entryPriceUsd), reason });
   const loss = -n(position.qtyRemaining) * n(position.entryPriceUsd);
   await db
     .update(positions)

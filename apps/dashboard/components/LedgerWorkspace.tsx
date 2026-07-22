@@ -110,18 +110,18 @@ export function LedgerWorkspace({ view }: { view: LedgerWorkspaceView }) {
     >
       {/* ── per-book statement tiles ── */}
       <div className="mb-3 flex flex-wrap gap-2">
-        <Kpi
+        {paper ? <Kpi
           label="Paper · realized today"
           value={money(paper?.realizedToday ?? 0)}
           tone={(paper?.realizedToday ?? 0) >= 0 ? "var(--status-good)" : "var(--status-critical)"}
-          sub={`all-time ${money(paper?.realizedAll ?? 0)} · fees $${(paper?.feesAll ?? 0).toFixed(0)} (modelled) · SIM`}
-        />
-        <Kpi
+          sub={`all-time ${money(paper?.realizedAll ?? 0)} · fees ${(paper?.feesAll ?? 0).toFixed(0)} (modelled) · SIM`}
+        /> : null}
+        {live ? <Kpi
           label="Live · realized today"
           value={money(live?.realizedToday ?? 0)}
           tone={(live?.realizedToday ?? 0) >= 0 ? "var(--status-good)" : "var(--status-critical)"}
-          sub={`all-time ${money(live?.realizedAll ?? 0)} · fees $${(live?.feesAll ?? 0).toFixed(2)} recorded · ◆ real capital`}
-        />
+          sub={`all-time ${money(live?.realizedAll ?? 0)} · fees ${(live?.feesAll ?? 0).toFixed(2)} recorded · ◆ real capital`}
+        /> : null}
         <Kpi
           label="Chain position"
           value={recon.chainSol != null ? `${recon.chainSol.toFixed(4)} SOL` : "—"}

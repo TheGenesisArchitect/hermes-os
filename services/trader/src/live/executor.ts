@@ -35,7 +35,7 @@ import {
   type HermesConfig,
   type Signature,
 } from "@hermes/core";
-import { auditLog, candidateOutcomes, candidateTicks, db, fills, pnlSnapshots, positionTicks, positions, safetyChecks, tokens } from "@hermes/db";
+import { auditLog, candidateOutcomes, candidateTicks, db, fills, journalFill, pnlSnapshots, positionTicks, positions, safetyChecks, tokens } from "@hermes/db";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { rpcPool } from "./rpc/pool.js";
 import { JupiterHostedProvider, WSOL_MINT } from "./swap/jupiterHosted.js";
@@ -907,8 +907,8 @@ export async function maybeLiveBuy(
         realizedPnlUsd: "0",
       })
       .returning();
-    if (position)
-      await db.insert(fills).values({
+    if (position) {
+      const [lbFill] = await db.insert(fills).values({
         positionId: position.id,
         side: "buy",
         qtyTokens: String(res.outUi),
@@ -916,7 +916,11 @@ export async function maybeLiveBuy(
         feeUsd: String(res.feeSol * sol),
         txSignature: res.signature,
         reason: "live_confirmed",
-      });
+      }).returning({ id: fills.id });
+      if (lbFill) void journalFill({ fillId: lbFill.id, book: "live", side: "buy", filledAt: new Date(),
+        positionId: position.id, mint, qty: res.outUi, priceUsd: entryPrice, feeUsd: res.feeSol * sol,
+        entryPriceUsd: entryPrice, reason: "live_confirmed", txSignature: res.signature });
+    }
     await audit("live_open", { mint, usd, regime, convictionMult, anticipationMult: antiMult, qty: res.outUi, signature: res.signature, feeSol: res.feeSol });
     console.log(`💰 LIVE OPEN ${symbol ?? "?"} ${short(mint)} $${usd.toFixed(2)} (conv ×${convictionMult.toFixed(2)}, anti ×${antiMult.toFixed(2)}, ${res.outUi} tokens, tx ${res.signature.slice(0, 8)}…)`);
   } catch (err) {
@@ -1074,7 +1078,7 @@ async function liveSellPosition(
     const closing = rawSell === raw;
     const remainingUi = Number(raw - rawSell) / 10 ** decimals;
 
-    await db.insert(fills).values({
+    const [lsFill] = await db.insert(fills).values({
       positionId: position.id,
       side: "sell",
       qtyTokens: String(qtyUiSold),
@@ -1082,7 +1086,11 @@ async function liveSellPosition(
       feeUsd: String(feeUsd),
       txSignature: res.signature,
       reason,
-    });
+    }).returning({ id: fills.id });
+    if (lsFill) void journalFill({ fillId: lsFill.id, book: "live", side: "sell", filledAt: new Date(),
+      positionId: position.id, mint: position.mint, qty: qtyUiSold,
+      priceUsd: qtyUiSold > 0 ? proceedsUsd / qtyUiSold : 0, feeUsd,
+      entryPriceUsd: n(position.entryPriceUsd), reason, txSignature: res.signature });
     await db
       .update(positions)
       .set({

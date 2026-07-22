@@ -3841,7 +3841,7 @@ export interface TradePerformanceView {
   };
 }
 
-export async function getTradePerformance(windowHours = 6): Promise<TradePerformanceView> {
+export async function getTradePerformance(windowHours = 6, lane?: "paper" | "live"): Promise<TradePerformanceView> {
   const since = new Date(Date.now() - windowHours * 3_600_000);
   const rows = await db
     .select({
@@ -3864,7 +3864,8 @@ export async function getTradePerformance(windowHours = 6): Promise<TradePerform
     })
     .from(positions)
     .leftJoin(tokens, eq(tokens.mint, positions.mint))
-    .where(and(eq(positions.status, "closed"), gte(positions.closedAt, since)))
+    .where(and(eq(positions.status, "closed"), gte(positions.closedAt, since),
+      lane ? eq(positions.lane, lane) : undefined))
     .orderBy(desc(positions.closedAt))
     .limit(300);
 
