@@ -733,6 +733,26 @@ export async function maybeLiveBuy(
       });
       return;
     }
+    // ── POOL-DEPTH FLOOR ─────────────────────────────────────────────────────
+    // BBC 616f: a $3k dust pool cleared every signal gate mid-rug; live filled
+    // at the collapsed price and the position never had an exit at size. The
+    // freshest tick's liquidity is the exit-side question the signals don't ask.
+    {
+      const [lt] = await db
+        .select({ liq: candidateTicks.liquidityUsd })
+        .from(candidateTicks)
+        .where(eq(candidateTicks.mint, mint))
+        .orderBy(desc(candidateTicks.id))
+        .limit(1);
+      const liqNow = lt?.liq != null ? Number(lt.liq) : null;
+      if (liqNow != null && liqNow < cfg.LIVE_MIN_ENTRY_LIQ_USD) {
+        await audit("live_buy_skipped", {
+          mint,
+          reason: `pool $${Math.round(liqNow)} below the $${cfg.LIVE_MIN_ENTRY_LIQ_USD} depth floor — no exit at size`,
+        });
+        return;
+      }
+    }
     if (!sig) {
       // Unrouted flow ran −$22.95 on live since routing went live. A trade
       // without a genome has no exit profile and no evidence — paper-only.
@@ -1257,6 +1277,99 @@ export async function mirrorLiveSell(cfg: HermesConfig, mint: string, fraction: 
  * force-closed — the live book can trail the brain by one cycle, never drift.
  */
 let sweeping = false;
+/**
+ * WALLET COMMAND QUEUE — operator sends queued by the dashboard, executed here.
+ *
+ * The dashboard validates and writes a `wallet_send_request` row; this loop is
+ * the only thing that moves the money. Two reasons it lives in the trader and
+ * not the dashboard: the trader's rpcPool is the connection that provably works
+ * on this host (fresh Node processes get ECONNRESET from the public RPCs), and
+ * a single money-mover process means every SOL movement — trade or transfer —
+ * goes through one pipeline with one audit trail. The claim is an atomic
+ * UPDATE … WHERE status='pending', so a duplicate daemon can never double-send.
+ */
+export async function processWalletSends(cfg: HermesConfig): Promise<void> {
+  const claimed = (await db.execute(sql`
+    UPDATE config SET value = value || '{"status":"processing"}'::jsonb, updated_at = now()
+    WHERE key = 'wallet_send_request' AND value->>'status' = 'pending'
+    RETURNING value`)) as unknown as {
+    value: { id?: string; to?: string; amountSol?: number; memo?: string };
+  }[];
+  const req = claimed[0]?.value;
+  if (!req) return;
+  const patch = (p: Record<string, unknown>) =>
+    db
+      .execute(sql`UPDATE config SET value = value || ${JSON.stringify(p)}::jsonb, updated_at = now() WHERE key = 'wallet_send_request'`)
+      .catch(() => {});
+  const wallet = liveWallet();
+  const amt = Number(req.amountSol);
+  try {
+    if (!wallet) throw new Error("no wallet key");
+    if (!Number.isFinite(amt) || amt <= 0) throw new Error("invalid amount");
+    const { PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } = await import("@solana/web3.js");
+    const dest = new PublicKey(String(req.to ?? ""));
+    const rpc = rpcPool(cfg);
+    const lamports = await rpc.read((c) => c.getBalance(wallet.publicKey, "confirmed"));
+    const reserve = 0.01;
+    if (amt > lamports / LAMPORTS_PER_SOL - reserve)
+      throw new Error(`amount exceeds sendable balance (${Math.max(0, lamports / LAMPORTS_PER_SOL - reserve).toFixed(6)} SOL after the ${reserve} SOL fee reserve)`);
+    const tx = new Transaction().add(
+      SystemProgram.transfer({ fromPubkey: wallet.publicKey, toPubkey: dest, lamports: Math.round(amt * LAMPORTS_PER_SOL) }),
+    );
+    const { blockhash } = await rpc.read((c) => c.getLatestBlockhash("confirmed"));
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = wallet.publicKey;
+    tx.sign(wallet);
+    const signature = await rpc.send(tx, { skipPreflight: false, maxRetries: 3 });
+    const deadline = Date.now() + 45_000;
+    let landed = false;
+    while (Date.now() < deadline) {
+      const st = (await rpc.read((c) => c.getSignatureStatuses([signature]))).value[0];
+      if (st?.err) throw new Error(`tx failed on-chain: ${JSON.stringify(st.err)} (${signature})`);
+      if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) {
+        landed = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 1_500));
+    }
+    if (!landed) throw new Error(`confirmation timed out (${signature})`);
+    // Book it: cash out, external transfer, network fee. Σ legs = 0; the tx
+    // signature is the idempotency key so a replay can never double-book.
+    const recon = (await db.execute(sql`SELECT value FROM config WHERE key = 'ledger_recon_status'`)) as unknown as {
+      value: { solUsd?: number };
+    }[];
+    const solUsd = recon[0]?.value?.solUsd ?? 0;
+    const feeSol = 0.000005;
+    const key = `tx:${signature}`;
+    const memoText = (req.memo ?? "").trim() || `withdrawal — operator send to ${dest.toBase58().slice(0, 4)}…${dest.toBase58().slice(-4)}`;
+    await db.transaction(async (txdb) => {
+      await txdb.execute(sql`
+        INSERT INTO ledger_events (book, event_type, occurred_at, idempotency_key, tx_signature, memo, evidence)
+        VALUES ('live', 'transfer.out', now(), ${key}, ${signature}, ${memoText},
+                ${JSON.stringify({ to: dest.toBase58(), amountSol: amt, solUsd })}::jsonb)
+        ON CONFLICT (idempotency_key) DO NOTHING`);
+      await txdb.execute(sql`
+        INSERT INTO ledger_legs (event_id, account, amount_usd, amount_native, mint)
+        SELECT e.id, l.acct, l.usd, l.sol, NULL::text FROM ledger_events e,
+        LATERAL (VALUES
+          ('cash:sol', ${String(-(amt + feeSol) * solUsd)}::numeric, ${String(-(amt + feeSol))}::numeric),
+          ('transfer:external', ${String(amt * solUsd)}::numeric, ${String(amt)}::numeric),
+          ('expense:fee:network', ${String(feeSol * solUsd)}::numeric, ${String(feeSol)}::numeric)
+        ) l(acct, usd, sol)
+        WHERE e.idempotency_key = ${key}
+          AND NOT EXISTS (SELECT 1 FROM ledger_legs ll WHERE ll.event_id = e.id)`);
+    });
+    await patch({ status: "sent", signature, usd: solUsd ? amt * solUsd : null, sentAt: new Date().toISOString() });
+    await audit("wallet_send", { to: dest.toBase58(), amountSol: amt, usd: amt * (solUsd || 0), signature });
+    console.log(`💸 WALLET SEND ${amt} SOL → ${dest.toBase58().slice(0, 4)}…${dest.toBase58().slice(-4)} (tx ${signature.slice(0, 8)}…)`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await patch({ status: "failed", error: msg, failedAt: new Date().toISOString() });
+    await audit("wallet_send_failed", { to: req.to, amountSol: amt, error: msg }).catch(() => {});
+    console.error(`💸 WALLET SEND FAILED: ${msg}`);
+  }
+}
+
 export async function sweepLiveBook(cfg: HermesConfig): Promise<void> {
   if (!cfg.LIVE_TRADING_ENABLED || !liveWallet()) return;
   if (sweeping) return; // a chain confirm can outlast a 5s tick — never overlap
@@ -1416,7 +1529,15 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
             // observation" while the token sat at 0.10×. The card must tell
             // that story; only DECISIONS demand a trusted read.
             const feedMark = Number(ct.priceUsd) / entry0;
-            const feedPeak = Math.max(livePeakMark.get(lp.id) ?? 1, feedMark);
+            // PEAK SANITY (BBC 616f, 2026-07-22): a $3k dust pool printed a
+            // phantom 16,913× while the recorder's own tape peaked 2.7× — one
+            // corrupt print then owns the gain-lock floor and explodes the
+            // capture denominator. Telemetry may narrate ANY read, but only a
+            // plausible one — liquid pool, sub-3× single-tick jump — may raise
+            // the peak that decisions and statistics are built on.
+            const prevPeak = livePeakMark.get(lp.id) ?? 1;
+            const plausible = Number(ct.liq ?? 0) >= 1_000 && feedMark <= Math.max(prevPeak, 1) * 3;
+            const feedPeak = plausible ? Math.max(prevPeak, feedMark) : prevPeak;
             livePeakMark.set(lp.id, feedPeak);
             void db
               .insert(positionTicks)

@@ -1122,6 +1122,11 @@ const envSchema = z.object({
   // 2.0x+ went 18-for-18. Live requires the strong band; paper keeps trading
   // every band as the sensor that re-measures this table.
   LIVE_MIN_INFLOW: z.coerce.number().default(1.3),
+  // Pool-depth floor at live entry. BBC 616f (2026-07-22): a $3k dust pool
+  // passed every SIGNAL gate mid-rug — live filled at the collapsed price and
+  // never had a real way back out. Signals grade the trajectory; this grades
+  // the EXIT: a pool must be deep enough to sell the floor position into.
+  LIVE_MIN_ENTRY_LIQ_USD: z.coerce.number().default(8_000),
   // 0★ live setups ran −55.3% on deployed — no evidence edge, full drag.
   // Live requires at least one conviction mark; paper still takes 0★.
   LIVE_MIN_STARS: z.coerce.number().default(1),

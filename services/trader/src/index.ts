@@ -9,7 +9,7 @@ import { config, db } from "@hermes/db";
 import { eq } from "drizzle-orm";
 import { fastFloorSweep, managePositions, openConfirmedPositions, openNewPositions, snapshotEquity } from "./paper.js";
 import { readEffectiveConfig, refreshAdaptivePolicy } from "./adaptive.js";
-import { guardLiveBook, liveLaneStatus, snapshotLiveEquity, sweepLiveBook } from "./live/executor.js";
+import { guardLiveBook, liveLaneStatus, processWalletSends, snapshotLiveEquity, sweepLiveBook } from "./live/executor.js";
 
 async function killSwitchEngaged(): Promise<boolean> {
   const [row] = await db.select().from(config).where(eq(config.key, "kill_switch"));
@@ -139,6 +139,9 @@ while (true) {
     // pool-collapsing / catastrophe-drawdown position independent of the paper
     // twin, before it's swept to zero. Self-throttled to LIVE_GUARD_MS.
     void guardLiveBook(eff);
+    // Operator wallet sends queued by the dashboard — the trader is the single
+    // money-mover, so transfers ride the same RPC pool and audit trail as trades.
+    void processWalletSends(eff);
     if (Date.now() - lastSnapshot >= cfg.PNL_SNAPSHOT_MS) {
       await snapshotEquity(eff);
       void snapshotLiveEquity(eff); // real live wallet value → the investor curve

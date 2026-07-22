@@ -16,6 +16,7 @@ import { PondRadar } from "@/components/PondRadar";
 import { TickerRadar } from "@/components/TickerRadar";
 import { InflowEdge } from "@/components/InflowEdge";
 import { LedgerWorkspace } from "@/components/LedgerWorkspace";
+import { WalletPanel } from "@/components/WalletPanel";
 import { SignalTicker } from "@/components/SignalTicker";
 import { AnticipationForecast } from "@/components/AnticipationForecast";
 import { WinningFormula } from "@/components/WinningFormula";
@@ -398,6 +399,10 @@ export default async function Overview({ searchParams }: { searchParams: Promise
           chain-verification heartbeat, and the full event stream lives in the
           drawer. Legacy tables remain the write path until Phase 4. */}
       <LedgerWorkspace view={ledgerView} />
+
+      {/* WALLET — send / receive / connect for the live wallet. Signing stays
+          server-side; the panel only ever sees the public address. */}
+      <WalletPanel />
     </div>
   );
 }
