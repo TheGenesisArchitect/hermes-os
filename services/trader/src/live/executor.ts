@@ -121,11 +121,15 @@ async function venueForMint(mint: string): Promise<string | null> {
   return t?.dex ? t.dex.toLowerCase() : null;
 }
 
-async function liveKillEngaged(): Promise<boolean> {
+async function liveKillState(): Promise<{ enabled: boolean; clearedAt: Date | null }> {
   const rows = (await db.execute(sql`select value from config where key = 'live_kill'`)) as unknown as {
-    value: { enabled?: boolean };
+    value: { enabled?: boolean; clearedAt?: string };
   }[];
-  return rows[0]?.value?.enabled === true;
+  const v = rows[0]?.value ?? {};
+  return { enabled: v.enabled === true, clearedAt: v.clearedAt ? new Date(v.clearedAt) : null };
+}
+async function liveKillEngaged(): Promise<boolean> {
+  return (await liveKillState()).enabled;
 }
 
 async function engageLiveKill(reason: string, stats: Record<string, unknown>): Promise<void> {
@@ -149,9 +153,15 @@ async function engageLiveKill(reason: string, stats: Record<string, unknown>): P
 async function liveBuyGate(cfg: HermesConfig, mint: string, routed = false): Promise<LiveGate> {
   if (!cfg.LIVE_TRADING_ENABLED) return { ok: false, reason: "disabled" };
   if (!liveWallet()) return { ok: false, reason: "no wallet key" };
-  if (await liveKillEngaged()) return { ok: false, reason: "live_kill engaged" };
+  const killState = await liveKillState();
+  if (killState.enabled) return { ok: false, reason: "live_kill engaged" };
 
-  // Kill criterion (gate doc): cumulative realized ≤ −$KILL → engage permanently.
+  // Kill criterion: cumulative realized ≤ −$KILL → engage permanently.
+  // MEASURED FROM THE MISSION EPOCH (live_kill.clearedAt), not from inception:
+  // an all-time window made every future cap a landmine — re-sizing the kill to
+  // −$25 for the $128 comeback run tripped it INSTANTLY against week-old
+  // history (−$97.62 ≤ −$25) and halted the mission at the gate. "Cleared by
+  // the operator" is the natural zero point for "how much have we lost since."
   // The secondary "≥20 closes with negative cumulative P&L" clause is DISABLED in
   // mirror mode: mirroring a convex book (low hit-rate, huge winners — BRIBE was 1
   // of 47 pumpswap trades) means the first 20 closes are routinely net-negative
@@ -165,7 +175,8 @@ async function liveBuyGate(cfg: HermesConfig, mint: string, routed = false): Pro
       closes: sql<number>`count(*) filter (where ${positions.status} = 'closed')`,
     })
     .from(positions)
-    .where(eq(positions.lane, "live"))) as { pnl: number; closes: number }[];
+    .where(and(eq(positions.lane, "live"),
+      killState.clearedAt ? gte(positions.closedAt, killState.clearedAt) : undefined))) as { pnl: number; closes: number }[];
   const cumPnl = n(cum?.pnl);
   const closes = n(cum?.closes);
   const closeCountKill = !cfg.LIVE_MIRROR_PAPER && closes >= 20 && cumPnl < 0;
