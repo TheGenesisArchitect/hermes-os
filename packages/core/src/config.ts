@@ -1142,7 +1142,15 @@ const envSchema = z.object({
     .string()
     .default("true")
     .transform((v) => v !== "false"),
-  LIVE_GUARD_MS: z.coerce.number().default(15000), // guard cadence (throttle Jupiter probes)
+  // Guard cadence. 15s was calibrated as a Jupiter-probe throttle when live
+  // merely shadowed paper; as an independent lane it is the exit loop, and the
+  // gap is where runners die: AFTER (MOON_FAST) peaked 7.84x live and closed
+  // -$1.88 because the pool collapsed through the trail floor (~5.4x) inside a
+  // single 15s window, while paper's 2s loop banked +$27.93 on the same signal.
+  // 5s triples the quote load on a book of 0-3 positions — trivial — and cuts
+  // the worst-case blind window by two-thirds. True 2s parity would need a
+  // price feed instead of sell-route quotes; this is the cheap 80%.
+  LIVE_GUARD_MS: z.coerce.number().default(5000),
   LIVE_RUG_IMPACT_PCT: z.coerce.number().default(40), // sell price-impact above this = pool collapse → cut
   LIVE_CATASTROPHE_STOP_PCT: z.coerce.number().default(55), // mark down past this = cut (wide, rides whipsaw)
   // LIVE LANE HARD RULE (pre-committed while paper-only, per advisor): an
