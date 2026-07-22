@@ -3624,8 +3624,45 @@ export interface SignatureRow {
   pnlUsd: number;
   avgPeakMult: number;
   openNow: number;
+  // The five-group KPI contract + the class drawer (spec §3).
+  kpi: SignatureKpi;
+  recentTrades: SignatureTradeMini[];
+  recentRefusals: SignatureRefusalMini[];
   /** Candidates routed here in the window, whether or not they were traded. */
   routed: number;
+}
+
+/**
+ * KPI contract per class (GR-HERMES-SIGCON-SPEC-001 §3). Five groups; each cell
+ * answers a decision, not a curiosity. Windows: REGIME/EXECUTION-capture read
+ * the live regime window (8h), SIGNAL/ADMISSION read 24h flow, drag and live
+ * money read 48h so the thin live tape accumulates evidence.
+ */
+export interface SignatureKpi {
+  regime: { status: "ACTIVE" | "BENCHED" | "PRIOR"; retPct: number; n: number; why: string };
+  signal: { confirmsPerDay: number; smSharePct: number; avgInflow: number | null };
+  admission: { confirmed: number; refused: number; topGate: string | null; liveFills: number; refusalPnlUsd: number };
+  execution: { capturePct: number | null; dragPp: number | null; twinN: number; unsellable: number; tpBankedPct: number | null };
+  live: { n: number; pnl: number; ev: number; deployedSharePct: number };
+}
+
+export interface SignatureTradeMini {
+  lane: string;
+  symbol: string | null;
+  pnl: number;
+  size: number;
+  peak: number;
+  exitReason: string | null;
+  at: string;
+}
+export interface SignatureRefusalMini {
+  symbol: string | null;
+  gate: string;
+  peak: number;
+  label: string;
+  wh: number | null;
+  net: number | null;
+  at: string;
 }
 
 export interface SignatureConsoleView {
@@ -3633,6 +3670,9 @@ export interface SignatureConsoleView {
   rows: SignatureRow[];
   promotedAt: string | null;
   totals: { trades: number; winPct: number; pnlUsd: number; routed: number };
+  /** Forecast band position for the desk header (config.smart_money_forecast). */
+  forecast: { day: number; equity: number; p10: number; p50: number; p90: number } | null;
+  regimeWindowH: number;
 }
 
 /**
@@ -3733,6 +3773,201 @@ export async function getSignatureConsole(windowHours = 24): Promise<SignatureCo
   const openBy = new Map(openRows.map((o) => [o.signature ?? "none", o.n]));
   const routedBy = new Map(routedRows.map((r) => [r.signature ?? "none", r.n]));
 
+  // ── KPI CONTRACT (spec §3) — five groups per class. All aggregates fire
+  // concurrently: serialized they cost ~1.1s, batched they cost the slowest.
+  const cfg2 = loadConfig();
+  const regimeH = cfg2.LIVE_REGIME_CLASS_WINDOW_H;
+  const REGIME_CORE = new Set(["RISER", "MOON_FAST", "MOON_STEADY", "MOON_SLOW"]);
+
+  const [
+    regimeRows,
+    signalRows,
+    skipRows,
+    liveFillRows,
+    refusalPnlRows,
+    captureRows,
+    twinRows,
+    liveExecRows,
+    recentTradeRows,
+    recentRefusalRows,
+    fcRows,
+  ] = (await Promise.all([
+    // REGIME — mirror of the trader's classRegimeHealth, same window, same rule.
+    db.execute(sql`
+      SELECT signature, count(*)::int n, coalesce(sum(realized_pnl_usd),0)::float8 pnl, coalesce(sum(size_usd),0)::float8 dep
+      FROM positions WHERE lane='paper' AND status='closed' AND signature IS NOT NULL
+        AND closed_at > now() - make_interval(hours => ${regimeH})
+      GROUP BY 1`),
+    // SIGNAL — 24h confirmed flow with point-in-time wallet reads.
+    db.execute(sql`
+      SELECT signature, count(*)::int confirms,
+        count(*) filter (where wallet_winner_hits >= 2 and wallet_winner_hits - wallet_rug_hits >= 1 and stars >= 1)::int sm,
+        avg(liq_growth::float) inflow
+      FROM candidate_outcomes WHERE confirmed_at > now() - interval '24 hours' AND signature IS NOT NULL
+      GROUP BY 1`),
+    // ADMISSION — skip rows carry the mint; the class comes from the candidate.
+    db.execute(sql`
+      SELECT co.signature, a.details->>'reason' reason, count(*)::int n
+      FROM audit_log a JOIN candidate_outcomes co ON co.mint = a.details->>'mint'
+      WHERE a.action='live_buy_skipped' AND a.created_at > now() - interval '24 hours' AND co.signature IS NOT NULL
+      GROUP BY 1, 2`),
+    db.execute(sql`
+      SELECT signature, count(*)::int n FROM positions
+      WHERE lane='live' AND opened_at > now() - interval '24 hours' AND signature IS NOT NULL GROUP BY 1`),
+    // Refusal book — HYPOTHETICAL by construction: settled candidates we never
+    // traded live, marked at the $4 floor against their final multiple.
+    db.execute(sql`
+      SELECT co.signature, coalesce(sum(4 * (co.final_multiple::float - 1)), 0)::float8 pnl
+      FROM candidate_outcomes co
+      WHERE co.confirmed_at > now() - interval '24 hours' AND co.label IN ('winner','dud','rug') AND co.signature IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM positions p WHERE p.mint = co.mint AND p.lane='live')
+      GROUP BY 1`),
+    // EXECUTION — pooled capture on the regime window; drag from 48h twins.
+    db.execute(sql`
+      SELECT signature,
+        coalesce(sum(realized_pnl_usd) filter (where peak_price_usd::float / nullif(entry_price_usd::float,0) >= 1.2), 0)::float8 kept,
+        coalesce(sum(size_usd * (peak_price_usd::float / nullif(entry_price_usd::float,0) - 1))
+          filter (where peak_price_usd::float / nullif(entry_price_usd::float,0) >= 1.2), 0)::float8 offered
+      FROM positions WHERE lane='paper' AND status='closed' AND signature IS NOT NULL
+        AND closed_at > now() - make_interval(hours => ${regimeH})
+      GROUP BY 1`),
+    db.execute(sql`
+      SELECT lv.signature, count(*)::int n,
+        avg(pp.realized_pnl_usd::float / nullif(pp.size_usd::float,0) - lv.realized_pnl_usd::float / nullif(lv.size_usd::float,0))::float8 gap
+      FROM positions lv JOIN LATERAL (
+        SELECT * FROM positions x WHERE x.lane='paper' AND x.mint=lv.mint AND x.status='closed'
+          AND abs(extract(epoch from (x.opened_at - lv.opened_at))) < 120 ORDER BY x.opened_at LIMIT 1) pp ON true
+      WHERE lv.lane='live' AND lv.status='closed' AND lv.closed_at > now() - interval '48 hours' AND lv.signature IS NOT NULL
+      GROUP BY 1`),
+    db.execute(sql`
+      SELECT p.signature, count(*)::int n,
+        count(*) filter (where p.exit_reason = 'live_unsellable')::int unsellable,
+        count(*) filter (where exists (SELECT 1 FROM fills f WHERE f.position_id=p.id AND f.side='sell' AND f.reason LIKE 'take_profit%'))::int banked,
+        coalesce(sum(p.realized_pnl_usd),0)::float8 pnl, coalesce(sum(p.size_usd),0)::float8 dep
+      FROM positions p WHERE p.lane='live' AND p.status='closed' AND p.closed_at > now() - interval '48 hours' AND p.signature IS NOT NULL
+      GROUP BY 1`),
+    // DRAWERS — last 8 trades (both lanes) and last 8 live refusals per class.
+    db.execute(sql`
+      SELECT * FROM (
+        SELECT p.signature, p.lane, tk.symbol, p.realized_pnl_usd::float pnl, p.size_usd::float size,
+          coalesce(p.peak_price_usd::float / nullif(p.entry_price_usd::float,0), 0) peak,
+          p.exit_reason as "exitReason", to_char(p.closed_at,'MM-DD HH24:MI') at,
+          row_number() over (partition by p.signature order by p.closed_at desc) rn
+        FROM positions p LEFT JOIN tokens tk ON tk.mint = p.mint
+        WHERE p.status='closed' AND p.signature IS NOT NULL AND p.closed_at > now() - interval '48 hours') t
+      WHERE rn <= 8`),
+    db.execute(sql`
+      SELECT * FROM (
+        SELECT co.signature, tk.symbol, a.details->>'reason' reason, co.peak_multiple::float peak, co.label,
+          co.wallet_winner_hits wh, (co.wallet_winner_hits - co.wallet_rug_hits) net,
+          to_char(a.created_at,'MM-DD HH24:MI') at,
+          row_number() over (partition by co.signature order by a.created_at desc) rn
+        FROM audit_log a JOIN candidate_outcomes co ON co.mint = a.details->>'mint'
+        LEFT JOIN tokens tk ON tk.mint = co.mint
+        WHERE a.action='live_buy_skipped' AND a.created_at > now() - interval '24 hours' AND co.signature IS NOT NULL) t
+      WHERE rn <= 8`),
+    db.execute(sql`SELECT value FROM config WHERE key='smart_money_forecast'`),
+  ])) as unknown as [
+    { signature: string; n: number; pnl: number; dep: number }[],
+    { signature: string; confirms: number; sm: number; inflow: number | null }[],
+    { signature: string; reason: string; n: number }[],
+    { signature: string; n: number }[],
+    { signature: string; pnl: number }[],
+    { signature: string; kept: number; offered: number }[],
+    { signature: string; n: number; gap: number }[],
+    { signature: string; n: number; unsellable: number; banked: number; pnl: number; dep: number }[],
+    (SignatureTradeMini & { signature: string; rn: number })[],
+    { signature: string; symbol: string | null; reason: string; peak: number; label: string; wh: number | null; net: number | null; at: string; rn: number }[],
+    { value: { createdAt: string; horizonDays: number; scenarios: { base: { p10: number[]; p50: number[]; p90: number[] } } } }[],
+  ];
+
+  const regimeBy = new Map(regimeRows.map((r) => [r.signature, r]));
+  const signalBy = new Map(signalRows.map((r) => [r.signature, r]));
+  const gateOf = (reason: string): string => {
+    if (/regime/.test(reason)) return "regime";
+    if (/inflow/.test(reason)) return "inflow";
+    if (/depth floor|pool \$/.test(reason)) return "depth";
+    if (/wallet graph/.test(reason)) return "wallet";
+    if (/dead lane/.test(reason)) return "BASE block";
+    if (/★|stars|evidence bar/.test(reason)) return "stars";
+    if (/kill/.test(reason)) return "kill";
+    return "other";
+  };
+  const skipBy = new Map<string, Map<string, number>>();
+  for (const s of skipRows) {
+    const m = skipBy.get(s.signature) ?? new Map<string, number>();
+    const g = gateOf(s.reason);
+    m.set(g, (m.get(g) ?? 0) + s.n);
+    skipBy.set(s.signature, m);
+  }
+  const liveFillBy = new Map(liveFillRows.map((r) => [r.signature, r.n]));
+  const refusalPnlBy = new Map(refusalPnlRows.map((r) => [r.signature, r.pnl]));
+  const captureBy = new Map(captureRows.map((r) => [r.signature, r]));
+  const twinBy = new Map(twinRows.map((r) => [r.signature, r]));
+  const liveExecBy = new Map(liveExecRows.map((r) => [r.signature, r]));
+  const liveDepTotal = liveExecRows.reduce((s, r) => s + r.dep, 0);
+
+  // FORECAST HEADER — band position for the day (config.smart_money_forecast).
+  let forecast: SignatureConsoleView["forecast"] = null;
+  const fc = fcRows[0]?.value;
+  if (fc?.scenarios?.base) {
+    const day = Math.min(fc.horizonDays - 1, Math.max(0, Math.floor((Date.now() - new Date(fc.createdAt).getTime()) / 86_400_000)));
+    const [snap] = (await db.execute(sql`SELECT equity_usd::float e FROM pnl_snapshots WHERE lane='live' ORDER BY id DESC LIMIT 1`)) as unknown as { e: number }[];
+    const b = fc.scenarios.base;
+    const p10 = b.p10[day], p50 = b.p50[day], p90 = b.p90[day];
+    if (snap && p10 != null && p50 != null && p90 != null) forecast = { day: day + 1, equity: snap.e, p10, p50, p90 };
+  }
+
+  const kpiFor = (sig: string): SignatureKpi => {
+    const rg = regimeBy.get(sig);
+    const ret = rg && rg.dep > 0 ? (100 * rg.pnl) / rg.dep : 0;
+    const n = rg?.n ?? 0;
+    let status: SignatureKpi["regime"]["status"];
+    let why: string;
+    if (n >= cfg2.LIVE_REGIME_CLASS_MIN_N) {
+      status = ret > 0 ? "ACTIVE" : "BENCHED";
+      why = ret > 0 ? `${regimeH}h +${ret.toFixed(1)}% on ${n}` : `${regimeH}h ${ret.toFixed(1)}% on ${n} — not paying`;
+    } else {
+      status = REGIME_CORE.has(sig) ? "PRIOR" : "BENCHED";
+      why = REGIME_CORE.has(sig) ? `thin (${n}) — core priors` : `thin (${n}) — unproven`;
+    }
+    const sg = signalBy.get(sig);
+    const skips = skipBy.get(sig);
+    const refused = skips ? [...skips.values()].reduce((a, b) => a + b, 0) : 0;
+    const topGate = skips ? ([...skips.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null) : null;
+    const cap = captureBy.get(sig);
+    const tw = twinBy.get(sig);
+    const le = liveExecBy.get(sig);
+    return {
+      regime: { status, retPct: ret, n, why },
+      signal: {
+        confirmsPerDay: sg?.confirms ?? 0,
+        smSharePct: sg && sg.confirms > 0 ? (100 * sg.sm) / sg.confirms : 0,
+        avgInflow: sg?.inflow ?? null,
+      },
+      admission: {
+        confirmed: sg?.confirms ?? 0,
+        refused,
+        topGate,
+        liveFills: liveFillBy.get(sig) ?? 0,
+        refusalPnlUsd: refusalPnlBy.get(sig) ?? 0,
+      },
+      execution: {
+        capturePct: cap && cap.offered > 0 ? Math.max(-100, Math.min(100, (100 * cap.kept) / cap.offered)) : null,
+        dragPp: tw ? 100 * tw.gap : null,
+        twinN: tw?.n ?? 0,
+        unsellable: le?.unsellable ?? 0,
+        tpBankedPct: le && le.n > 0 ? (100 * le.banked) / le.n : null,
+      },
+      live: {
+        n: le?.n ?? 0,
+        pnl: le?.pnl ?? 0,
+        ev: le && le.dep > 0 ? 1 + le.pnl / le.dep : 0,
+        deployedSharePct: le && liveDepTotal > 0 ? (100 * le.dep) / liveDepTotal : 0,
+      },
+    };
+  };
+
   const rows: SignatureRow[] = (Object.keys(SIGNATURE_PROFILES) as Signature[]).map((sig) => {
     const learned = learnedMap[sig] ?? null;
     const p = withLearned(sig, learned);
@@ -3762,6 +3997,13 @@ export async function getSignatureConsole(windowHours = 24): Promise<SignatureCo
       avgPeakMult: m?.avgPeak ?? 0,
       openNow: openBy.get(sig) ?? 0,
       routed: routedBy.get(sig) ?? 0,
+      kpi: kpiFor(sig),
+      recentTrades: recentTradeRows
+        .filter((t) => t.signature === sig)
+        .map(({ lane, symbol, pnl, size, peak, exitReason, at }) => ({ lane, symbol, pnl, size, peak, exitReason, at })),
+      recentRefusals: recentRefusalRows
+        .filter((t) => t.signature === sig)
+        .map((t) => ({ symbol: t.symbol, gate: gateOf(t.reason), peak: t.peak, label: t.label, wh: t.wh, net: t.net, at: t.at })),
     };
   });
 
@@ -3777,6 +4019,8 @@ export async function getSignatureConsole(windowHours = 24): Promise<SignatureCo
       pnlUsd: rows.reduce((s, r) => s + r.pnlUsd, 0),
       routed: rows.reduce((s, r) => s + r.routed, 0),
     },
+    forecast,
+    regimeWindowH: regimeH,
   };
 }
 
