@@ -169,7 +169,11 @@ async function checkMoonshots(s: SentinelState): Promise<void> {
     .innerJoin(tokens, eq(tokens.mint, candidateOutcomes.mint))
     .where(
       and(
-        eq(candidateOutcomes.armed, true),
+        // NOT gated on armed=true: entering CONSUMES the armed flag within
+        // seconds, so every moonshot that actually fills would vanish between
+        // 30s polls (AFTER: armed 2★, entered, armed=false by the next poll —
+        // alert never fired). The qualification is stars+signature; the
+        // 5-minute window plus the seen-set dedupe keeps it one ping per mint.
         eq(candidateOutcomes.stars, 2),
         sql`${candidateOutcomes.signature} like 'MOON%'`,
         sql`${candidateOutcomes.updatedAt} > now() - interval '5 minutes'`,
