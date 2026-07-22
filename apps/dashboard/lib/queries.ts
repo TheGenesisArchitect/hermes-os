@@ -1408,20 +1408,31 @@ export interface EdgeSeparation {
 }
 
 export async function getEdgeSeparation(): Promise<EdgeSeparation> {
-  const early = sql<number>`(select max(${candidateTicks.continuationScore})::float from ${candidateTicks} where ${candidateTicks.mint} = ${candidateOutcomes.mint} and ${candidateTicks.watchMinutes} <= ${EARLY_MIN})`;
-  const [w] = await db
-    .select({ mean: sql<number | null>`avg(${early})`, n: sql<number>`count(${early})::int` })
-    .from(candidateOutcomes)
-    .where(eq(candidateOutcomes.label, "winner"));
-  const [d] = await db
-    .select({ mean: sql<number | null>`avg(${early})`, n: sql<number>`count(${early})::int` })
-    .from(candidateOutcomes)
-    .where(sql`${candidateOutcomes.label} in ('dud','rug')`);
+  // One grouped pass instead of a correlated max() per candidate row: the old
+  // shape ran thousands of index dives into a 1.1M-row candidate_ticks table
+  // TWICE per page render and grew with the tape until the dashboard crawled
+  // (5–12s per instance measured in pg_stat_activity, 2026-07-22).
+  const rows = (await db.execute(sql`
+    WITH early AS (
+      SELECT mint, max(continuation_score)::float s
+      FROM candidate_ticks WHERE watch_minutes <= ${EARLY_MIN} AND continuation_score IS NOT NULL
+      GROUP BY mint
+    )
+    SELECT
+      avg(e.s) FILTER (WHERE co.label = 'winner') AS winners_mean,
+      count(e.s) FILTER (WHERE co.label = 'winner')::int AS winners_n,
+      avg(e.s) FILTER (WHERE co.label IN ('dud','rug')) AS duds_mean,
+      count(e.s) FILTER (WHERE co.label IN ('dud','rug'))::int AS duds_n
+    FROM candidate_outcomes co JOIN early e ON e.mint = co.mint
+    WHERE co.label IN ('winner','dud','rug')`)) as unknown as {
+    winners_mean: number | null; winners_n: number; duds_mean: number | null; duds_n: number;
+  }[];
+  const r = rows[0];
   return {
-    winnersMean: w?.mean == null ? null : Number(w.mean),
-    dudsMean: d?.mean == null ? null : Number(d.mean),
-    winnersN: w?.n ?? 0,
-    dudsN: d?.n ?? 0,
+    winnersMean: r?.winners_mean == null ? null : Number(r.winners_mean),
+    dudsMean: r?.duds_mean == null ? null : Number(r.duds_mean),
+    winnersN: r?.winners_n ?? 0,
+    dudsN: r?.duds_n ?? 0,
   };
 }
 
