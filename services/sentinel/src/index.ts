@@ -22,6 +22,10 @@
 import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
 loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
+// ONE SENTINEL ONLY — four zombie instances ran for hours on stale code
+// (2026-07-22) because taskkill missed the tree; the lock makes that loud.
+import { acquireSingletonLock } from "@hermes/core";
+acquireSingletonLock(resolve(import.meta.dirname, "../../../.hermes-sentinel.pid"), "sentinel");
 import { loadConfig, resilientFetch } from "@hermes/core";
 import { auditLog, candidateOutcomes, config, db, fills, positions, tokens } from "@hermes/db";
 import { runLedgerSync, runReconciler } from "./ledger2.js";

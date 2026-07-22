@@ -1,12 +1,10 @@
 import { loadConfig, harvestClock, type TradeDna } from "@hermes/core";
-import { AccountingLedger } from "@/components/AccountingLedger";
 import { HarvestClock } from "@/components/HarvestClock";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { ControlTerminal } from "@/components/ControlTerminal";
 import { SignatureConsole } from "@/components/SignatureConsole";
 import { TradePerformance } from "@/components/TradePerformance";
 import { EquityChart } from "@/components/EquityChart";
-import { FillsTable } from "@/components/FillsTable";
 import { HarvestButton } from "@/components/HarvestButton";
 import { IntelReport } from "@/components/IntelReport";
 import { IntelTerminal } from "@/components/IntelTerminal";
@@ -16,7 +14,7 @@ import { RecorderBoard } from "@/components/RecorderBoard";
 import { PondRadar } from "@/components/PondRadar";
 import { TickerRadar } from "@/components/TickerRadar";
 import { InflowEdge } from "@/components/InflowEdge";
-import { TradeLedger } from "@/components/TradeLedger";
+import { LedgerWorkspace } from "@/components/LedgerWorkspace";
 import { SignalTicker } from "@/components/SignalTicker";
 import { AnticipationForecast } from "@/components/AnticipationForecast";
 import { WinningFormula } from "@/components/WinningFormula";
@@ -25,7 +23,6 @@ import { LaneComparison } from "@/components/LaneComparison";
 import { TimingGrid } from "@/components/TimingGrid";
 import { MintLink, ScoreBadge, StatTile, fmtTs, fmtTsFull, timeAgo, usd } from "@/components/ui";
 import {
-  getAccountingLedger,
   getEdgeSeparation,
   getFillsSummary,
   getEdgeSeries,
@@ -43,7 +40,7 @@ import {
   getManagedPositions,
   getPondRadar,
   getTickerRadar,
-  getTradeLedger,
+  getLedgerWorkspace,
   getLaneBalances,
   getInflowEdge,
   getAnticipation,
@@ -70,7 +67,7 @@ export default async function Overview() {
     stats,
     recentSignals,
     managed,
-    ledger,
+    ledgerWorkspace,
     trades,
     fillsSummary,
     killSwitch,
@@ -97,7 +94,6 @@ export default async function Overview() {
     anticipation,
     winningFormula,
     tickerRadar,
-    tradeLedger,
     laneBalances,
     inflowEdge,
   ] = await Promise.all([
@@ -105,7 +101,7 @@ export default async function Overview() {
     getStats(),
     getRecentSignals(),
     getManagedPositions(),
-    getAccountingLedger(),
+    getLedgerWorkspace(),
     getRecentTrades(),
     getFillsSummary(),
     getKillSwitch(),
@@ -132,7 +128,6 @@ export default async function Overview() {
     getAnticipation(),
     getWinningFormula(),
     getTickerRadar(),
-    getTradeLedger(),
     getLaneBalances(),
     getInflowEdge(),
   ]);
@@ -367,21 +362,12 @@ export default async function Overview() {
       <TickerRadar radar={tickerRadar} />
       <PondRadar ponds={ponds} hours={hourWindows} walletIntel={walletIntel} />
 
-      {/* Accounting ledger — reconciled closed-trade truth + forecaster + portfolio */}
-      <AccountingLedger
-        ledger={ledger}
-        bankroll={cfg.PAPER_BANKROLL_USD}
-        floatNetUsd={liveRead.floatNetUsd}
-        session={{ prime: cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours()), mult: cfg.OFF_HOURS_SIZE_MULT }}
-      />
-
-      {/* Evidence & Value — one row per closed round trip: capital deployed,
-          shares, entry/exit/peak, P&L, hold, and the on-chain tx hashes. Full
-          width now that the signal feed lives in the header ticker. */}
-      <TradeLedger trades={tradeLedger} balances={laneBalances} />
-
-      {/* Raw fill stream — the per-fill audit trail behind the ledger above. */}
-      <FillsTable trades={trades} summaryAll={fillsSummary} />
+      {/* THE LEDGER (spec §5, Phase 3) — the one clean P&L workspace. Replaces
+          the Accounting Ledger, Trade Ledger, and Fills panels: every number
+          derives from the append-only journal, the header carries the
+          chain-verification heartbeat, and the full event stream lives in the
+          drawer. Legacy tables remain the write path until Phase 4. */}
+      <LedgerWorkspace view={ledgerWorkspace} />
     </div>
   );
 }

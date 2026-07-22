@@ -3974,3 +3974,112 @@ export async function getTradePerformance(windowHours = 6): Promise<TradePerform
     },
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEDGER WORKSPACE (spec §5, Phase 3) — every number below derives from the
+// journal (ledger_events + ledger_legs) and nothing else. The three legacy
+// panels (Accounting Ledger, Trade Ledger, Fills) collapse into this one
+// surface; their tables remain the trader's write path until Phase 4.
+// ═══════════════════════════════════════════════════════════════════════════
+export interface LedgerBookSummary {
+  book: string;
+  realizedAll: number;
+  realizedToday: number;
+  feesAll: number;
+  adjustmentsAll: number;
+  events: number;
+}
+export interface LedgerDailyRow { day: string; book: string; gross: number; fees: number; net: number }
+export interface LedgerSigRow { book: string; signature: string; trips: number; net: number }
+export interface LedgerJournalRow {
+  id: number; book: string; eventType: string; at: Date; memo: string;
+  amountUsd: number; account: string; symbol: string | null; tx: string | null;
+}
+export interface LedgerChainRecon {
+  at: string | null; driftUsd: number | null; chainSol: number | null; solUsd: number | null;
+  green: boolean; anchorAt: string | null; adjustments: { at: Date; memo: string; driftUsd: number }[];
+}
+export interface LedgerWorkspaceView {
+  books: LedgerBookSummary[];
+  daily: LedgerDailyRow[];
+  bySignature: LedgerSigRow[];
+  journal: LedgerJournalRow[];
+  recon: LedgerChainRecon;
+}
+
+export async function getLedgerWorkspace(): Promise<LedgerWorkspaceView> {
+  const books = (await db.execute(sql`
+    SELECT e.book,
+      round(-coalesce(sum(l.amount_usd) FILTER (WHERE l.account='pnl:realized'),0),2)::float8 AS realized_all,
+      round(-coalesce(sum(l.amount_usd) FILTER (WHERE l.account='pnl:realized'
+            AND e.occurred_at >= date_trunc('day', now())),0),2)::float8 AS realized_today,
+      round(coalesce(sum(l.amount_usd) FILTER (WHERE l.account LIKE 'expense:fee:%'),0),2)::float8 AS fees_all,
+      round(coalesce(sum(l.amount_usd) FILTER (WHERE l.account='equity:adjustment'),0),2)::float8 AS adjustments_all,
+      count(DISTINCT e.id)::int AS events
+    FROM ledger_events e JOIN ledger_legs l ON l.event_id=e.id
+    GROUP BY e.book ORDER BY e.book`)) as unknown as Record<string, unknown>[];
+
+  const daily = (await db.execute(sql`
+    SELECT to_char(date_trunc('day', e.occurred_at), 'MM-DD') AS day, e.book,
+      round(-coalesce(sum(l.amount_usd) FILTER (WHERE l.account='pnl:realized'),0),2)::float8 AS gross,
+      round(coalesce(sum(l.amount_usd) FILTER (WHERE l.account LIKE 'expense:fee:%'),0),2)::float8 AS fees
+    FROM ledger_events e JOIN ledger_legs l ON l.event_id=e.id
+    WHERE e.occurred_at > now() - interval '7 days'
+    GROUP BY 1, 2 ORDER BY 1, 2`)) as unknown as Record<string, unknown>[];
+
+  const bySig = (await db.execute(sql`
+    SELECT e.book, coalesce(p.signature,'(unrouted)') AS signature,
+      count(DISTINCT e.position_ref)::int AS trips,
+      round(-coalesce(sum(l.amount_usd) FILTER (WHERE l.account='pnl:realized'),0),2)::float8 AS net
+    FROM ledger_events e
+    JOIN ledger_legs l ON l.event_id=e.id
+    LEFT JOIN positions p ON p.id = e.position_ref
+    WHERE e.occurred_at >= date_trunc('day', now()) AND e.position_ref IS NOT NULL
+    GROUP BY 1, 2 HAVING abs(coalesce(sum(l.amount_usd) FILTER (WHERE l.account='pnl:realized'),0)) > 0.001
+    ORDER BY net DESC`)) as unknown as Record<string, unknown>[];
+
+  const journalRows = (await db.execute(sql`
+    SELECT e.id, e.book, e.event_type, e.occurred_at, e.memo, e.tx_signature, t.symbol,
+      l.account, l.amount_usd
+    FROM ledger_events e
+    JOIN LATERAL (
+      SELECT account, amount_usd FROM ledger_legs
+      WHERE event_id = e.id ORDER BY abs(amount_usd) DESC LIMIT 1
+    ) l ON true
+    LEFT JOIN positions p ON p.id = e.position_ref
+    LEFT JOIN tokens t ON t.mint = p.mint
+    ORDER BY e.occurred_at DESC LIMIT 80`)) as unknown as Record<string, unknown>[];
+
+  const [statusRow] = await db.select().from(config).where(eq(config.key, "ledger_recon_status"));
+  const [anchorRow] = await db.select().from(config).where(eq(config.key, "ledger_anchor_live"));
+  const st = (statusRow?.value ?? {}) as { at?: string; driftUsd?: number; chainSol?: number; solUsd?: number; green?: boolean };
+  const adjustments = (await db.execute(sql`
+    SELECT occurred_at, memo, coalesce((evidence->>'driftUsd')::float8, 0) AS drift
+    FROM ledger_events WHERE event_type='recon.adjust' ORDER BY occurred_at DESC LIMIT 20`)) as unknown as Record<string, unknown>[];
+
+  return {
+    books: books.map((b) => ({
+      book: String(b.book), realizedAll: Number(b.realized_all), realizedToday: Number(b.realized_today),
+      feesAll: Number(b.fees_all), adjustmentsAll: Number(b.adjustments_all), events: Number(b.events),
+    })),
+    daily: daily.map((d) => ({
+      day: String(d.day), book: String(d.book), gross: Number(d.gross), fees: Number(d.fees),
+      net: Number(d.gross) - Number(d.fees),
+    })),
+    bySignature: bySig.map((s) => ({
+      book: String(s.book), signature: String(s.signature), trips: Number(s.trips), net: Number(s.net),
+    })),
+    journal: journalRows.map((j) => ({
+      id: Number(j.id), book: String(j.book), eventType: String(j.event_type),
+      at: new Date(String(j.occurred_at)), memo: String(j.memo),
+      amountUsd: Number(j.amount_usd), account: String(j.account),
+      symbol: j.symbol == null ? null : String(j.symbol), tx: j.tx_signature == null ? null : String(j.tx_signature),
+    })),
+    recon: {
+      at: st.at ?? null, driftUsd: st.driftUsd ?? null, chainSol: st.chainSol ?? null,
+      solUsd: st.solUsd ?? null, green: st.green === true,
+      anchorAt: ((anchorRow?.value ?? {}) as { at?: string }).at ?? null,
+      adjustments: adjustments.map((a) => ({ at: new Date(String(a.occurred_at)), memo: String(a.memo), driftUsd: Number(a.drift) })),
+    },
+  };
+}

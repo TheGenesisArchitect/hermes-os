@@ -152,6 +152,14 @@ export async function runReconciler(
   const journalMoveUsd = cashNow - anchor.journalCashUsd;
   const drift = chainMoveUsd - journalMoveUsd;
 
+  // Heartbeat row for the dashboard — the Ledger workspace renders this as the
+  // "proven against the chain N min ago" tick. Written every cycle, green or not.
+  const status = { at: new Date().toISOString(), driftUsd: drift, chainSol: sol, solUsd: price, green: Math.abs(drift) <= DRIFT_TOLERANCE_USD };
+  await db
+    .insert(config)
+    .values({ key: "ledger_recon_status", value: status })
+    .onConflictDoUpdate({ target: config.key, set: { value: status, updatedAt: new Date() } });
+
   if (Math.abs(drift) <= DRIFT_TOLERANCE_USD) {
     return `recon: ✅ green — drift $${drift.toFixed(3)} (chain ${sol.toFixed(6)} SOL ≈ $${(sol * price).toFixed(2)})`;
   }
