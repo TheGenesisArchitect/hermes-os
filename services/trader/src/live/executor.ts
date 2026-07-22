@@ -609,7 +609,15 @@ export function livePositionUsd(
   // evidence) size UP — paper's fraction × LIVE_STAR2_BOOST, still capped by
   // LIVE_MAX_POSITION_FRAC below. A deliberate, documented departure from
   // strict 1:1: at small balances only concentration clears the fee drag.
-  const starBoost = (sig?.stars ?? 0) >= 2 ? cfg.LIVE_STAR2_BOOST : 1;
+  // SMART-MONEY BOOST (7d wallet-graph study, 2026-07-22): ≥2 winner-rep
+  // holders + positive net rep + ≥1★ ran 79.2% win / 4.2% rug / 58.3% moon-3×
+  // (n=24) against a 16.3%-win base. That cohort earns the same sizing as a 2★
+  // conviction call. Small n — the boost reuses the proven 2★ multiplier
+  // rather than inventing a larger one; the study re-runs as the sample grows.
+  const wh = sig?.walletWinnerHits ?? 0;
+  const netRep = wh - (sig?.walletRugHits ?? 0);
+  const smartMoney = wh >= 2 && netRep >= 1 && (sig?.stars ?? 0) >= 1;
+  const starBoost = (sig?.stars ?? 0) >= 2 || smartMoney ? cfg.LIVE_STAR2_BOOST : 1;
   const routedFrac = Math.max(
     cfg.LIVE_MIN_POSITION_FRAC,
     (paperFrac != null && paperFrac > 0
@@ -657,6 +665,11 @@ export async function maybeLiveBuy(
     snapRate?: number | null;
     /** Pool inflow multiple at the trigger tick — the probability-band gate. */
     liqGrowth?: number | null;
+    /** Point-in-time wallet-graph reputation of the holder set (7d study
+     * 2026-07-22, n=9,771 armed+labeled): winner-rep holders lift everything
+     * monotonically, negative net rep is a rug tell. */
+    walletWinnerHits?: number | null;
+    walletRugHits?: number | null;
   } | null = null,
   /**
    * The fraction of ITS capital paper just committed to this same signal. Live
@@ -752,6 +765,18 @@ export async function maybeLiveBuy(
         });
         return;
       }
+    }
+    // ── WALLET-GRAPH ANTI-GATE ───────────────────────────────────────────────
+    // 7d study (n=9,771 armed+labeled): holder sets whose known wallets net out
+    // NEGATIVE (more rug history than winner history) ran 9.6% win / 49.3% rug /
+    // 4.1% moon-3× — the worst measured cohort, half the tape. A MEASURED bad
+    // crowd is exactly what real capital refuses; an unknown crowd passes.
+    if (sig && sig.walletWinnerHits != null && sig.walletRugHits != null && sig.walletWinnerHits - sig.walletRugHits <= -1) {
+      await audit("live_buy_skipped", {
+        mint,
+        reason: `wallet graph: net rep ${sig.walletWinnerHits - sig.walletRugHits} — rug-history crowd (49% rug vs 10% win cohort)`,
+      });
+      return;
     }
     if (!sig) {
       // Unrouted flow ran −$22.95 on live since routing went live. A trade

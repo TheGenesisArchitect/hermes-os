@@ -155,6 +155,8 @@ async function openFromSignal(
     holders?: number | null;
     top10Pct?: number | null;
     largestHolderPct?: number | null;
+    walletWinnerHits?: number | null;
+    walletRugHits?: number | null;
   } | null = null,
 ): Promise<boolean> {
   const market = await fetchTokenMarket(signal.mint).catch(() => null);
@@ -853,6 +855,10 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
           // Pool inflow at the trigger tick — live's probability-band gate
           // reads it (1.30×+ wins 71.2% vs 44.8% below; 2×+ ran 18-for-18).
           liqGrowth: liqGrowth === null ? null : Number(liqGrowth),
+          // Point-in-time wallet-graph reputation of the holder set — live's
+          // smart-money gate and boost read these (7d study 2026-07-22).
+          walletWinnerHits: walletWinnerHits ?? null,
+          walletRugHits: walletRugHits ?? null,
         }
       : null;
     // LIVE FIRES ON THE SAME SIGNAL, INDEPENDENTLY — not as a shadow of paper.
