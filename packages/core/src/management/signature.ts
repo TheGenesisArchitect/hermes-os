@@ -135,6 +135,16 @@ const CLIMBER_GROWTH = 1.5; // +50% pool by the tick: 0.8% rug vs a 20% baseline
 // entering is the only defence.
 const CHURN_LO = 0.5;
 const CHURN_HI = 0.6;
+
+// WEAK-CONFIRM CELL (2026-07-22 overnight replay, 48h / 179 RISERs): entries
+// with snap < 42% AND rate ≤ 0.30×/min held 12 of 22 RISER deaths at −$0.31 EV
+// (n=62, net −$19); the complement ran +$137 at 75% win. A barely-over-threshold
+// snap that took minutes to build is indistinguishable from a rug's exit pump.
+// Routing the cell to RUG_RISK is a deferral, not a refusal: rate and snap are
+// re-graded every tick, so a token that keeps building clears the bar and
+// enters late rather than never.
+const RISER_WEAK_SNAP = 0.42;
+const RISER_WEAK_RATE = 0.3;
 const DISPERSED_LARGEST_PCT = 12; // ≤ this = crowd-held (moon/riser territory)
 const DISPERSED_TOP10_PCT = 35; // MOON 16.9 / RISER 14.8 vs DUD 81.1 / CLIMBER 81.0
 const CONCENTRATED_LARGEST_PCT = 30; // ≥ this = whale-held (climber/dud/rug)
@@ -300,17 +310,21 @@ export function routeSignature(i: SignatureInputs): Signature {
     (i.top10Pct == null || i.top10Pct <= DISPERSED_TOP10_PCT);
   const concentrated = i.largestHolderPct != null && i.largestHolderPct >= CONCENTRATED_LARGEST_PCT;
 
+  const weakConfirm =
+    i.snapPct != null && i.snapPct < RISER_WEAK_SNAP && i.snapRate <= RISER_WEAK_RATE;
+
   if (dispersed) {
     // A dispersed book that also shows the moon microstructure is the strongest
     // combination in the data; otherwise it is the reliable microwin class.
     if (i.liq0 < THIN_POOL || i.buyShare < 0.5 || i.dipDepth >= 0.25) return moonGrade(i.snapRate, i.dipDepth);
+    if (weakConfirm) return "RUG_RISK";
     return "RISER";
   }
   if (concentrated && growth >= CLIMBER_GROWTH) return "CLIMBER";
 
   if (growth >= CLIMBER_GROWTH && i.liq0 >= THIN_POOL) return "CLIMBER";
   if (i.liq0 < THIN_POOL || i.buyShare < 0.5 || i.dipDepth >= 0.25) return moonGrade(i.snapRate, i.dipDepth);
-  if (i.buyShare >= 0.8) return "RISER";
+  if (i.buyShare >= 0.8) return weakConfirm ? "RUG_RISK" : "RISER";
   return "BASE";
 }
 

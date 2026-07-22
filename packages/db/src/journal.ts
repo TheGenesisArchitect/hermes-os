@@ -38,7 +38,7 @@ export async function journalFill(a: JournalFillArgs): Promise<void> {
     await db.transaction(async (tx) => {
       await tx.execute(sql`
         INSERT INTO ledger_events (book, event_type, occurred_at, idempotency_key, position_ref, tx_signature, memo, evidence)
-        VALUES (${a.book}, ${"fill." + a.side}, ${a.filledAt}, ${key}, ${a.positionId}, ${a.txSignature ?? null},
+        VALUES (${a.book}, ${"fill." + a.side}, ${a.filledAt.toISOString()}::timestamptz, ${key}, ${a.positionId}, ${a.txSignature ?? null},
                 ${a.reason ?? a.side + " fill"},
                 ${JSON.stringify({ hotPath: true, fillId: a.fillId, qty: a.qty, priceUsd: a.priceUsd, feeUsd: fee })}::jsonb)
         ON CONFLICT (idempotency_key) DO NOTHING`);
@@ -47,9 +47,9 @@ export async function journalFill(a: JournalFillArgs): Promise<void> {
           INSERT INTO ledger_legs (event_id, account, amount_usd, amount_native, mint)
           SELECT e.id, l.acct, l.amt, l.native, l.m FROM ledger_events e,
           LATERAL (VALUES
-            ('cash:sol', ${-(gross + fee)}::numeric, NULL::numeric, NULL::text),
-            (${"inventory:" + a.mint}, ${gross}::numeric, ${a.qty}::numeric, ${a.mint}),
-            ('expense:fee:network', ${fee}::numeric, NULL, NULL)
+            ('cash:sol', ${String(-(gross + fee))}::numeric, NULL::numeric, NULL::text),
+            (${"inventory:" + a.mint}, ${String(gross)}::numeric, ${String(a.qty)}::numeric, ${a.mint}),
+            ('expense:fee:network', ${String(fee)}::numeric, NULL::numeric, NULL::text)
           ) l(acct, amt, native, m)
           WHERE e.idempotency_key = ${key}
             AND NOT EXISTS (SELECT 1 FROM ledger_legs ll WHERE ll.event_id = e.id)`);
@@ -59,10 +59,10 @@ export async function journalFill(a: JournalFillArgs): Promise<void> {
           INSERT INTO ledger_legs (event_id, account, amount_usd, amount_native, mint)
           SELECT e.id, l.acct, l.amt, l.native, l.m FROM ledger_events e,
           LATERAL (VALUES
-            ('cash:sol', ${gross - fee}::numeric, NULL::numeric, NULL::text),
-            (${"inventory:" + a.mint}, ${-cost}::numeric, ${-a.qty}::numeric, ${a.mint}),
-            ('expense:fee:network', ${fee}::numeric, NULL, NULL),
-            ('pnl:realized', ${cost - gross}::numeric, NULL, NULL)
+            ('cash:sol', ${String(gross - fee)}::numeric, NULL::numeric, NULL::text),
+            (${"inventory:" + a.mint}, ${String(-cost)}::numeric, ${String(-a.qty)}::numeric, ${a.mint}),
+            ('expense:fee:network', ${String(fee)}::numeric, NULL::numeric, NULL::text),
+            ('pnl:realized', ${String(cost - gross)}::numeric, NULL::numeric, NULL::text)
           ) l(acct, amt, native, m)
           WHERE e.idempotency_key = ${key}
             AND NOT EXISTS (SELECT 1 FROM ledger_legs ll WHERE ll.event_id = e.id)`);
@@ -70,6 +70,6 @@ export async function journalFill(a: JournalFillArgs): Promise<void> {
     });
   } catch (err) {
     // The sweep heals within one cycle — log loudly, never fail the trade.
-    console.warn(`journal emit failed (sweep will heal): ${err instanceof Error ? err.message : err}`);
+    console.warn(`journal emit failed (sweep will heal): ${err instanceof Error ? err.message + " " + (err as { cause?: unknown }).cause : err}`);
   }
 }
