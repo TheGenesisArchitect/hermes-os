@@ -89,21 +89,29 @@ async function saveState(s: SentinelState): Promise<void> {
  */
 type Category = "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP" | "PULSE" | "SUMMARY" | "MOONSHOT";
 
+const CATEGORY_EMOJI: Record<Category, string> = {
+  KILL: "⛔", LIVE: "🔴", RUNNER: "🏃", ARM: "🎯", HEALTH: "🩺", OPS: "🔧",
+  TREND: "📈", RECAP: "🧾", PULSE: "❤️", SUMMARY: "📊", MOONSHOT: "🌙",
+};
+
 async function notify(
   category: Category,
   subject: string,
   lines: string[],
   priority = 3,
   tags: string[] = [],
+  click?: string,
 ): Promise<void> {
   if (!cfg.SENTINEL_NTFY_TOPIC) return;
-  const title = `${category} · ${subject}`;
+  // CARD SYSTEM (2026-07-23): the title IS the verdict — emoji + one number,
+  // readable on a lock screen; bodies are <=4 fixed-grammar lines.
+  const title = `${CATEGORY_EMOJI[category] ?? ""} ${subject}`.trim();
   const message = lines.join("\n");
   try {
     const res = await resilientFetch("https://ntfy.sh", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic: cfg.SENTINEL_NTFY_TOPIC, title, message, priority, tags }),
+      body: JSON.stringify({ topic: cfg.SENTINEL_NTFY_TOPIC, title, message, priority, tags, ...(click ? { click } : {}) }),
       timeoutMs: 10_000,
     });
     if (!res.ok) console.warn(`sentinel push HTTP ${res.status}: ${title}`);
@@ -192,17 +200,17 @@ async function checkMoonshots(s: SentinelState): Promise<void> {
     const dipPct = r.dip == null ? null : Number(r.dip) * 100;
     const snapPct = r.snap == null ? null : Number(r.snap) * 100;
     const rate = r.rate == null ? null : Number(r.rate);
-    const grade = (r.sig ?? "MOON").replace("MOON_", "").toLowerCase();
+    const grade = (r.sig ?? "MOON").replace("MOON_", "");
+    const SHAPE: Record<string, string> = { VIOLENT: "whipsaw", FAST: "ignition", STEADY: "staircase", SLOW: "grinder" };
+    const shape = SHAPE[grade] ?? "moon";
     await notify(
       "MOONSHOT",
-      `${r.symbol ?? short(r.mint)} ★★ armed`,
+      `MOONSHOT · ${r.symbol ?? short(r.mint)} — ${grade} 2★`,
       [
-        `🌙 the ${grade} moon signature, at FULL conviction`,
-        dipPct != null && snapPct != null
-          ? `the tell: dipped ${dipPct.toFixed(0)}%, snapped +${snapPct.toFixed(0)}%${rate != null ? ` at ${rate.toFixed(1)}×/min` : ""}`
-          : `confirmed off the trough${r.trigMult != null ? ` at ${Number(r.trigMult).toFixed(2)}×` : ""}`,
-        `evidence: 2★${num(r.wWin) > 0 ? ` · ${num(r.wWin)} winner-rep wallet${num(r.wWin) > 1 ? "s" : ""} aboard` : " · retrace + holders confirm"}`,
-        `venue ${r.dex ?? "?"} · both lanes firing · 🚀 shooting for the moon`,
+        `shape    ${shape}${dipPct != null && dipPct > 5 ? ` · wick −${dipPct.toFixed(0)}%` : ""}${snapPct != null ? ` · snap +${snapPct.toFixed(0)}%` : ""}${rate != null ? ` @ ${rate.toFixed(1)}×/min` : ""}`,
+        `crowd    ${num(r.wWin) > 0 ? `${num(r.wWin)} winner-rep wallet${num(r.wWin) > 1 ? "s" : ""} aboard` : "retrace + holders confirm"}`,
+        `machine  both lanes firing · boost ×1.5 · rung arms 1.2×`,
+        `tap to watch the flight ↗`,
       ],
       4,
       ["new_moon", "rocket"],
@@ -335,17 +343,17 @@ async function sendTrend(s: SentinelState): Promise<void> {
   `)) as unknown as { p: number; l: number }[];
   const refused = mix.find((m) => m.sig === "RUG_RISK")?.n ?? 0;
   const found = mix.filter((m) => m.sig !== "RUG_RISK");
+  void dir; void found; void refused;
+  const [day] = (await db.execute(sql`
+    select round(coalesce(sum(realized_pnl_usd),0)::numeric,2)::float as pnl,
+      count(*) filter (where realized_pnl_usd > 0)::int as g, count(*)::int as n
+    from positions where lane='live' and status='closed' and closed_at > date_trunc('day', now())
+  `)) as unknown as { pnl: number; g: number; n: number }[];
+  const title = `${live.balance.toFixed(2)} · day ${num(day?.pnl) >= 0 ? "+" : "−"}${Math.abs(num(day?.pnl)).toFixed(2)} · ${num(open?.p) + num(open?.l)} open`;
   const lines = [
-    laneLine("paper", paper) + ` ${dir(paper.pnl, s.prevTrendPaper)}`,
-    killed ? "live: standing down (kill engaged)" : laneLine("live", live) + ` ${dir(live.pnl, s.prevTrendLive)}`,
-    (paper.best && paper.best.pnl > 0 ? `best ${paper.best.sym} ${money(paper.best.pnl)}` : "no standout"),
-    `capture 2h (target 40%): paper ${capLine("paper")} · live ${capLine("live")}`,
-    found.length
-      ? `finding: ${found.slice(0, 3).map((m) => `${m.sig.replace("MOON_", "m·").toLowerCase()} ${m.n}`).join(" · ")}${refused ? ` · refused ${refused}` : ""}`
-      : `quiet tape${refused ? ` · refused ${refused}` : ""}`,
-    `open now: ${num(open?.p)} paper · ${num(open?.l)} live`,
+    `live ${num(day?.g)}/${num(day?.n)} green${killed ? " · KILL ENGAGED" : ""} · capture live ${capLine("live")} · paper ${capLine("paper")}`,
   ];
-  await notify("PULSE", "20 min", lines, 2, ["chart_with_upwards_trend"]);
+  await notify("PULSE", title, lines, 2, ["chart_with_upwards_trend"]);
   s.prevTrendPaper = paper.pnl;
   s.prevTrendLive = live.pnl;
 }
@@ -441,7 +449,31 @@ async function sendRecap(s: SentinelState): Promise<void> {
       );
     }
   }
-  await notify("SUMMARY", "hour + forecast", lines, 3, ["bar_chart"]);
+  // Four fixed lines: money · machine · forecast · watch. The old dense lines
+  // (bleed mix, hour history, mirror/inflow edges) belong to the Console now.
+  const regimeRows = (await db.execute(sql`
+    select signature, count(*)::int n,
+      case when coalesce(sum(size_usd),0) > 0 then 100*sum(realized_pnl_usd)/sum(size_usd) else 0 end as ret
+    from positions where lane='paper' and status='closed' and signature in ('RISER','MOON_FAST','MOON_STEADY')
+      and closed_at > now() - make_interval(hours => ${cfg.LIVE_REGIME_CLASS_WINDOW_H})
+    group by 1`)) as unknown as { signature: string; n: number; ret: number }[];
+  const stateIcon = (sig: string, core: boolean) => {
+    const r = regimeRows.find((x) => x.signature === sig);
+    if (!r || r.n < cfg.LIVE_REGIME_CLASS_MIN_N) return core ? "🟡" : "⛔";
+    return Number(r.ret) > 0 ? "✅" : "⛔";
+  };
+  const [refusedHr] = (await db.execute(sql`
+    select count(*)::int as n from audit_log where action='live_buy_skipped' and created_at > now() - interval '60 minutes'
+  `)) as unknown as { n: number }[];
+  const fcLine = lines.find((l) => l.startsWith("📐")) ?? "📐 forecast: warming up";
+  const hotLine = hotRows.length ? `hot: ${hotRows.slice(0, 3).map((h) => h.fam).join(", ")}` : "quiet families";
+  const card = [
+    `money    live ${money(live.pnl)} (${live.closes} closed) · paper ${money(paper.pnl)} SIM`,
+    `machine  RISER${stateIcon("RISER", true)} FAST${stateIcon("MOON_FAST", true)} STEADY${stateIcon("MOON_STEADY", true)} · ${num(refusedHr?.n)} refused/h`,
+    fcLine,
+    `watch    ${hotLine}`,
+  ];
+  await notify("SUMMARY", `Hour: live ${money(live.pnl)} · ${live.balance.toFixed(2)}`, card, 3, ["bar_chart"]);
 }
 
 async function checkDigests(s: SentinelState): Promise<void> {
