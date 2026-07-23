@@ -467,8 +467,18 @@ async function sendRecap(s: SentinelState): Promise<void> {
     const p50 = b.p50[day], p10 = b.p10[day], p90 = b.p90[day];
     if (snap && p50 != null && p10 != null && p90 != null) {
       const vsP50 = snap.e - p50;
+      // TRADING-ONLY line (operator, 2026-07-23): the wallet holds SOL, so a
+      // SOL rally can carry equity above band while the ENGINE runs at its
+      // edge. Baseline + cumulative realized live P&L since the forecast's
+      // birth = the alpha path the model actually predicts; beta never gets
+      // to flatter the engine on its own scoreboard.
+      const [tp] = (await db.execute(sql`select coalesce(sum(realized_pnl_usd),0)::float8 s from positions
+        where lane='live' and status='closed' and closed_at >= ${new Date(fc.createdAt)}`)) as unknown as { s: number }[];
+      const tradingEq = Number(fc.baselineUsd) + num(tp?.s);
+      const tMark = tradingEq < p10 ? " ⚠" : tradingEq > p90 ? " 🚀" : "";
       lines.push(
-        `📐 forecast d${day + 1}: $${snap.e.toFixed(0)} vs base p50 $${p50.toFixed(0)} (${vsP50 >= 0 ? "+" : ""}$${vsP50.toFixed(0)}) · band $${p10.toFixed(0)}–$${p90.toFixed(0)}${snap.e < p10 ? " ⚠ BELOW BAND" : snap.e > p90 ? " 🚀 ABOVE BAND" : ""}`,
+        `📐 forecast d${day + 1}: ${snap.e.toFixed(0)} vs base p50 ${p50.toFixed(0)} (${vsP50 >= 0 ? "+" : ""}${vsP50.toFixed(0)}) · band ${p10.toFixed(0)}–${p90.toFixed(0)}${snap.e < p10 ? " ⚠ BELOW BAND" : snap.e > p90 ? " 🚀 ABOVE BAND" : ""}`,
+        `   trading-only ${tradingEq.toFixed(0)}${tMark} (alpha path, SOL beta stripped)`,
       );
     }
   }
