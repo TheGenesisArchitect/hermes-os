@@ -69,6 +69,15 @@ export async function refreshAdaptivePolicy(cfg: HermesConfig, windowMin = 60): 
         )})`
       : sql`false`;
     // postgres-js: db.execute returns the row array directly (not { rows }).
+    //
+    // CLOSE-COUNT WINDOW (operator, 2026-07-23): a fixed 60m window starved the
+    // sensor when gate-tightening cut flow ~10× — n=10 closes tripped the
+    // thin-data guard and FLOORED hostility at 0.6 against a 90%-win tape,
+    // halving every size the policy owns. The regime is now read from the last
+    // 30 closes (2× ADAPTIVE_MIN_N) looking back up to 6 hours: at golden-week
+    // flow that is the same ~45–60m of tape as before; at starved flow the
+    // window stretches instead of the guard firing on clean data. windowMin
+    // remains the freshness FLOOR — we never read less than the last hour.
     const result = (await db.execute(sql`
       with recent as (
         select
@@ -81,7 +90,13 @@ export async function refreshAdaptivePolicy(cfg: HermesConfig, windowMin = 60): 
         from positions p
         join tokens t on t.mint = p.mint
         where p.status = 'closed'
-          and p.closed_at >= now() - make_interval(mins => ${windowMin})
+          and p.closed_at >= now() - interval '6 hours'
+        order by p.closed_at desc
+        limit greatest(30, (
+          select count(*) from positions p2
+          where p2.status = 'closed'
+            and p2.closed_at >= now() - make_interval(mins => ${windowMin})
+        ))
       )
       select
         count(*)::int as n,

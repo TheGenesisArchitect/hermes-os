@@ -61,6 +61,28 @@ function short(mint: string): string {
   return `${mint.slice(0, 4)}…${mint.slice(-4)}`;
 }
 
+// ── COMPOUNDING BANKROLL (operator, 2026-07-23: "let the model compound") ────
+// Sizing used the static PAPER_BANKROLL_USD constant while realized P&L grew
+// past it — at $2,687 equity the sizer still saw $1,000, so 63% of the bankroll
+// was invisible and every position was ~2.7× too small. Sizing capital is now
+// base + REALIZED paper P&L (marks don't compound — only banked money does),
+// floored at $100 so a drawdown shrinks the book instead of killing the engine.
+// 30s cache: one cheap query per entry wave, not per candidate.
+let bankrollCache = { v: 0, at: 0 };
+async function paperBankrollNow(cfg: HermesConfig): Promise<number> {
+  if (Date.now() - bankrollCache.at < 30_000 && bankrollCache.v > 0) return bankrollCache.v;
+  try {
+    const rows = (await db.execute(
+      sql`select coalesce(sum(realized_pnl_usd),0)::float s from positions where lane='paper' and status='closed'`,
+    )) as unknown as { s: number }[];
+    bankrollCache = { v: Math.max(100, cfg.PAPER_BANKROLL_USD + Number(rows[0]?.s ?? 0)), at: Date.now() };
+  } catch {
+    // DB hiccup → last known value, or the static base on a cold start
+    if (bankrollCache.v <= 0) bankrollCache = { v: cfg.PAPER_BANKROLL_USD, at: Date.now() };
+  }
+  return bankrollCache.v;
+}
+
 type SignalRow = typeof signals.$inferSelect;
 type TokenRow = typeof tokens.$inferSelect;
 
@@ -363,9 +385,12 @@ async function openFromSignal(
   // runs the identical formula against the wallet balance, so the two lanes stay
   // on one risk model instead of drifting as the account moves.
   const frac = conv ? sizeFraction(conv.stars, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) : 0;
+  // Capital = base + realized (the compounding bankroll), so the same frac that
+  // sized a $1,000 day-one book scales with every banked dollar since.
+  const bankrollNow = await paperBankrollNow(cfg);
   const sizeUsd = Number(
     (conv
-      ? cfg.PAPER_BANKROLL_USD * frac * sizeMult * sessionMult * sigMult
+      ? bankrollNow * frac * sizeMult * sessionMult * sigMult
       : cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult * sigMult
     ).toFixed(2),
   );
@@ -396,7 +421,9 @@ async function openFromSignal(
   // makes drift impossible by construction: whatever share of capital paper
   // commits, live commits the same share of its own.
   if (sig) {
-    void maybeLiveBuy(cfg, signal.mint, token.symbol, sig, finalSizeUsd / Math.max(cfg.PAPER_BANKROLL_USD, 1));
+    // Mirror fraction against the SAME compounding bankroll the size came from —
+  // a static denominator here would overstate paper's conviction as it grows.
+  void maybeLiveBuy(cfg, signal.mint, token.symbol, sig, finalSizeUsd / Math.max(bankrollNow, 1));
   }
   const slip = slippagePct(finalSizeUsd, market.liquidityUsd);
   // Never buy a corpse: a slip past the cap means the pool has drained since the
