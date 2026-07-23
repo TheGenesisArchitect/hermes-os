@@ -715,8 +715,29 @@ export async function maybeLiveBuy(
     // evidence. Paper keeps trading everything as the zero-cost sensor.
     const blocked = new Set(cfg.LIVE_CLASS_BLOCKLIST.split(",").map((s) => s.trim()).filter(Boolean));
     if (sig && blocked.has(sig.signature)) {
-      await audit("live_buy_skipped", { mint, reason: `${sig.signature} — dead lane, live-blocked by operator order` });
-      return;
+      // FUNNEL OVERRIDES THE BLANKET (operator, 2026-07-23: "we should only
+      // ever take the trades that now qualify"). The class ban predates the
+      // scrubbed pipeline; Barney (BASE, strong inflow 1.36×, in-sweetspot
+      // 1.82× trigger) rode 6.61× for +$31.22 on paper while the ban ate the
+      // live seat — and today's ADMISSIBLE BASE cohort ran 12-for-12 +$43.33.
+      // A blocklisted class now passes when the candidate qualifies on the
+      // funnel's own terms (strong inflow OR winner-rep crowd); every waiver
+      // is audited so the blanket-vs-funnel question stays measurable.
+      const admissible =
+        (sig.walletWinnerHits != null && sig.walletRugHits != null && sig.walletWinnerHits - sig.walletRugHits >= 1) ||
+        (sig.liqGrowth != null && sig.liqGrowth >= cfg.LIQ_INFLOW_STRONG);
+      if (!admissible) {
+        await audit("live_buy_skipped", { mint, reason: `${sig.signature} — dead lane, live-blocked by operator order (not funnel-admissible)` });
+        return;
+      }
+      await audit("live_class_block_waived", {
+        mint,
+        signature: sig.signature,
+        inflow: sig.liqGrowth ?? null,
+        walletWinnerHits: sig.walletWinnerHits ?? null,
+        walletRugHits: sig.walletRugHits ?? null,
+        reason: "funnel-admissible (strong inflow or winner-rep) — class blanket waived per operator principle",
+      });
     }
     // ── THE WINNER-REP RECEIVER (operator, 2026-07-23: "open the live
     // receiver") ─────────────────────────────────────────────────────────────
