@@ -130,8 +130,46 @@ export function SweetspotRadar({ view }: { view: SweetspotRadarView }) {
             {view.refreshedAgoMin != null ? ` · re-measured ${Math.round(view.refreshedAgoMin)}m ago` : ""}
           </div>
         ) : null}
+        {/* LEGEND — every mark on the scope, named */}
+        <div
+          className="col-span-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md border p-2 text-[10px]"
+          style={{ borderColor: "var(--gridline)", color: "var(--text-secondary)" }}
+        >
+          <LegendDot color="var(--status-good)" filled label="banked green" />
+          <LegendDot color="var(--status-critical)" filled label="paid the tab" />
+          <LegendDot color="var(--text-muted)" filled={false} label="still riding" />
+          <LegendDot color="var(--status-warning)" filled big label="moon (peak ≥3×)" />
+          <span className="inline-flex items-center gap-1.5">
+            <svg width={14} height={14}>
+              <circle cx={7} cy={7} r={3} fill="var(--status-good)" />
+              <circle cx={7} cy={7} r={6} fill="none" stroke="var(--status-serious)" strokeWidth={1.2} />
+            </svg>
+            LIVE trade (real capital)
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <svg width={14} height={14}>
+              <circle cx={7} cy={7} r={5.5} fill="none" stroke="var(--status-good)" strokeOpacity={0.2} strokeWidth={4} />
+            </svg>
+            locked sweetspot band
+          </span>
+          <span style={{ color: "var(--text-muted)" }}>
+            rings = trigger multiple (1× center → 2.4× rim) · bearing = age (12 o&apos;clock = now, one turn = 60m) ·
+            sweep = live scan
+          </span>
+        </div>
       </div>
     </div>
+  );
+}
+
+function LegendDot({ color, filled, big, label }: { color: string; filled: boolean; big?: boolean; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <svg width={14} height={14}>
+        <circle cx={7} cy={7} r={big ? 5 : 3.5} fill={filled ? color : "transparent"} stroke={color} strokeWidth={1.2} />
+      </svg>
+      {label}
+    </span>
   );
 }
 
