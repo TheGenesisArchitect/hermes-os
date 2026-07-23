@@ -100,7 +100,12 @@ export function CaptureScatter({ points }: { points: CapturePoint[] }) {
             border: "1px solid var(--border)",
             borderRadius: 8,
             fontSize: 11,
+            // recharts defaults tooltip text to near-black; on the dark surface
+            // that reads as blank. Theme both levels explicitly.
+            color: "var(--text-primary)",
           }}
+          itemStyle={{ color: "var(--text-primary)" }}
+          labelStyle={{ color: "var(--text-secondary)" }}
           formatter={(_v, _n, item: { payload?: CapturePoint }) => {
             const p = item?.payload;
             if (!p) return null;
