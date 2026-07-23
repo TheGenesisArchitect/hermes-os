@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ScoreBadge, timeAgo, usd } from "@/components/ui";
 import { getTokenDetail } from "@/lib/queries";
+import { db } from "@hermes/db";
+import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +18,18 @@ export default async function TokenPage({ params }: { params: Promise<{ mint: st
   const { mint } = await params;
   const detail = await getTokenDetail(mint);
   if (!detail) notFound();
+  // CLONE TWINS (bitcat, 2026-07-23): two mints wore one ticker; the operator
+  // pulled the untraded twin's page and read it as our trade. Same-symbol
+  // siblings from the last 24h are surfaced up top so a symbol collision can
+  // never masquerade as the position again.
+  const siblings = detail.token?.symbol
+    ? ((await db.execute(sql`
+        SELECT tk.mint, to_char(tk.first_seen_at,'HH24:MI') seen,
+          EXISTS (SELECT 1 FROM positions p WHERE p.mint = tk.mint) traded
+        FROM tokens tk WHERE tk.symbol = ${detail.token.symbol} AND tk.mint <> ${mint}
+          AND tk.first_seen_at > now() - interval '24 hours'
+        ORDER BY tk.first_seen_at DESC LIMIT 6`)) as unknown as { mint: string; seen: string; traded: boolean }[])
+    : [];
   const { token, checks, signals, positions, recorderOutcome, recorderTrajectory, fills, mgmtTrajectory } = detail;
   const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
@@ -37,6 +51,24 @@ export default async function TokenPage({ params }: { params: Promise<{ mint: st
             {token.name}
           </span>
         </h1>
+        {siblings.length > 0 && (
+          <div
+            className="mt-2 rounded-md px-3 py-2 text-xs"
+            style={{ border: "1px solid var(--status-warning)", color: "var(--status-warning)" }}
+          >
+            ⚠ {siblings.length} other mint{siblings.length > 1 ? "s" : ""} wore the ticker “{token.symbol}” in the last
+            24h — verify you are reading the right one:{" "}
+            {siblings.map((s, i) => (
+              <span key={s.mint}>
+                {i > 0 ? " · " : ""}
+                <Link href={`/token/${s.mint}`} className="underline">
+                  {s.mint.slice(0, 4)}…{s.mint.slice(-4)}
+                </Link>{" "}
+                ({s.seen}Z{s.traded ? ", TRADED" : ", never traded"})
+              </span>
+            ))}
+          </div>
+        )}
         <div className="mt-1 flex flex-wrap gap-4 text-xs" style={{ color: "var(--text-muted)" }}>
           <span className="tabular">{token.mint}</span>
           <span>dex: {token.dex ?? "?"}</span>
