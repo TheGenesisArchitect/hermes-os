@@ -747,6 +747,10 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     // this crowd since yesterday; paper now stops paying its tuition too.
     if (walletWinnerHits != null && walletRugHits != null && walletWinnerHits - walletRugHits <= -1) {
       await audit("entry_wallet_antigate", { mint, net: walletWinnerHits - walletRugHits });
+      // Label the refusal so the boards show WHY this candidate ages out as a
+      // disarm instead of a trade — 36 of these in the first 3h read as an
+      // "unusual amount of disarms" until the reason was visible.
+      await db.update(signals).set({ status: "crowd_refused" }).where(eq(signals.id, signal.id)).catch(() => {});
       continue;
     }
 
