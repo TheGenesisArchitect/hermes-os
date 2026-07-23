@@ -25,39 +25,58 @@ const rOf = (mult: number): number => {
 };
 
 export function SweetspotRadar({ view }: { view: SweetspotRadarView }) {
-  const cx = 130;
-  const cy = 130;
+  const cx = 145;
+  const cy = 145;
   const bandInner = rOf(view.lo);
   const bandOuter = rOf(view.hi);
   return (
     <div className="flex flex-wrap items-start gap-5">
       <div className="relative shrink-0">
-        <svg width={260} height={260} role="img" aria-label={`Sweetspot radar — band ${view.lo}–${view.hi}×`}>
-          {/* the locked band — a glowing annulus */}
-          <circle
-            cx={cx}
-            cy={cy}
-            r={(bandInner + bandOuter) / 2}
-            fill="none"
-            stroke="var(--status-good)"
-            strokeOpacity={0.16}
-            strokeWidth={Math.max(4, bandOuter - bandInner)}
-          />
-          {/* rings at bucket edges */}
-          {RINGS.map((m) => (
-            <g key={m}>
-              <circle cx={cx} cy={cy} r={rOf(m)} fill="none" stroke="var(--gridline)" strokeDasharray="2 4" />
-              <text x={cx + 4} y={cy - rOf(m) - 2} fontSize={8} fill="var(--text-muted)">
-                {m}×
-              </text>
-            </g>
-          ))}
-          {/* band edge rings, solid */}
-          <circle cx={cx} cy={cy} r={bandInner} fill="none" stroke="var(--status-good)" strokeOpacity={0.55} />
-          <circle cx={cx} cy={cy} r={bandOuter} fill="none" stroke="var(--status-good)" strokeOpacity={0.55} />
-          {/* cross hairs */}
-          <line x1={cx} y1={cy - R_MAX} x2={cx} y2={cy + R_MAX} stroke="var(--gridline)" strokeOpacity={0.5} />
-          <line x1={cx - R_MAX} y1={cy} x2={cx + R_MAX} y2={cy} stroke="var(--gridline)" strokeOpacity={0.5} />
+        <svg width={290} height={290} role="img" aria-label={`Sweetspot radar — band ${view.lo}–${view.hi}×`}>
+          <defs>
+            {/* phosphor scope face — near-black with a faint green breath at center */}
+            <radialGradient id="scopeFace" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#0a1410" />
+              <stop offset="70%" stopColor="#060a08" />
+              <stop offset="100%" stopColor="#04070a" />
+            </radialGradient>
+            {/* sweep wedge fades behind the hand */}
+            <linearGradient id="sweepFade" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#35d07f" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#35d07f" stopOpacity="0" />
+            </linearGradient>
+            <filter id="blipGlow" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="1.6" result="b" />
+              <feMerge>
+                <feMergeNode in="b" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          {/* scope face + rim */}
+          <circle cx={cx} cy={cy} r={R_MAX + 8} fill="url(#scopeFace)" stroke="#1d2b24" strokeWidth={1.5} />
+          {/* the locked band — quiet tinted annulus, crisp edges (fat stroke washed the scope out) */}
+          <circle cx={cx} cy={cy} r={bandOuter} fill="#35d07f" fillOpacity={0.055} />
+          <circle cx={cx} cy={cy} r={bandInner} fill="#060a08" fillOpacity={0.9} />
+          <circle cx={cx} cy={cy} r={bandInner} fill="none" stroke="#35d07f" strokeOpacity={0.5} strokeDasharray="1 3" />
+          <circle cx={cx} cy={cy} r={bandOuter} fill="none" stroke="#35d07f" strokeOpacity={0.5} strokeDasharray="1 3" />
+          {/* rings + labels down the 45° axis so they never collide */}
+          {RINGS.map((m) => {
+            const r = rOf(m);
+            const lx = cx + r * Math.SQRT1_2;
+            const ly = cy - r * Math.SQRT1_2;
+            return (
+              <g key={m}>
+                <circle cx={cx} cy={cy} r={r} fill="none" stroke="#274236" strokeOpacity={0.8} strokeWidth={0.75} />
+                <text x={lx + 3} y={ly - 3} fontSize={8.5} fill="#5f8371" style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {m}×
+                </text>
+              </g>
+            );
+          })}
+          {/* crosshair, whisper-quiet */}
+          <line x1={cx} y1={cy - R_MAX} x2={cx} y2={cy + R_MAX} stroke="#1d2b24" strokeWidth={0.75} />
+          <line x1={cx - R_MAX} y1={cy} x2={cx + R_MAX} y2={cy} stroke="#1d2b24" strokeWidth={0.75} />
           {/* blips — bearing by recency (clockwise into the past), ring by trigger multiple */}
           {view.blips.map((b, i) => {
             const theta = ((b.minutesAgo % 60) / 60) * 2 * Math.PI - Math.PI / 2; // 12 o'clock = now, clockwise back
@@ -65,18 +84,17 @@ export function SweetspotRadar({ view }: { view: SweetspotRadarView }) {
             const x = cx + r * Math.cos(theta);
             const y = cy + r * Math.sin(theta);
             const moon = b.peakX >= 3;
-            const color =
-              b.pnl == null ? "var(--text-muted)" : b.pnl >= 0 ? "var(--status-good)" : "var(--status-critical)";
+            const color = b.pnl == null ? "#7d8f86" : b.pnl >= 0 ? "#3ee68c" : "#ff5d5d";
             return (
-              <g key={i}>
+              <g key={i} filter="url(#blipGlow)">
                 <circle
                   cx={x}
                   cy={y}
-                  r={moon ? 5 : 3}
-                  fill={b.pnl == null ? "transparent" : moon ? "var(--status-warning)" : color}
-                  stroke={moon ? "var(--status-warning)" : color}
-                  strokeWidth={1.2}
-                  opacity={Math.max(0.35, 1 - b.minutesAgo / 75)}
+                  r={moon ? 5.5 : 4}
+                  fill={b.pnl == null ? "transparent" : moon ? "#ffc44d" : color}
+                  stroke={moon ? "#ffc44d" : color}
+                  strokeWidth={1.4}
+                  opacity={Math.max(0.55, 1 - b.minutesAgo / 90)}
                 >
                   <title>
                     {`${b.symbol ?? "?"} · ${b.trig.toFixed(2)}× trigger · ${Math.round(b.minutesAgo)}m ago · ${
@@ -85,21 +103,21 @@ export function SweetspotRadar({ view }: { view: SweetspotRadarView }) {
                   </title>
                 </circle>
                 {b.lane === "live" ? (
-                  <circle cx={x} cy={y} r={moon ? 8 : 6} fill="none" stroke="var(--status-serious)" strokeWidth={1} />
+                  <circle cx={x} cy={y} r={moon ? 8.5 : 7} fill="none" stroke="#ff8c42" strokeWidth={1.4} />
                 ) : null}
               </g>
             );
           })}
-          {/* the sweep — clockwise, one turn per 8s; paused under reduced motion */}
+          {/* the sweep — phosphor hand with a fading wedge; paused under reduced motion */}
           <g className="radar-sweep" style={{ transformOrigin: `${cx}px ${cy}px` }}>
-            <line x1={cx} y1={cy} x2={cx} y2={cy - R_MAX} stroke="var(--series-1)" strokeWidth={1.5} strokeOpacity={0.9} />
             <path
-              d={`M ${cx} ${cy} L ${cx} ${cy - R_MAX} A ${R_MAX} ${R_MAX} 0 0 1 ${cx + R_MAX * Math.sin(0.6)} ${cy - R_MAX * Math.cos(0.6)} Z`}
-              fill="var(--series-1)"
-              opacity={0.08}
+              d={`M ${cx} ${cy} L ${cx} ${cy - R_MAX} A ${R_MAX} ${R_MAX} 0 0 1 ${cx + R_MAX * Math.sin(0.7)} ${cy - R_MAX * Math.cos(0.7)} Z`}
+              fill="url(#sweepFade)"
+              transform={`rotate(${(0.7 * 180) / Math.PI * -1} ${cx} ${cy})`}
             />
+            <line x1={cx} y1={cy} x2={cx} y2={cy - R_MAX} stroke="#3ee68c" strokeWidth={1.6} strokeOpacity={0.95} />
           </g>
-          <circle cx={cx} cy={cy} r={2.5} fill="var(--series-1)" />
+          <circle cx={cx} cy={cy} r={2.5} fill="#3ee68c" />
           <style>{`
             .radar-sweep { animation: sweetspot-sweep 8s linear infinite; }
             @keyframes sweetspot-sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
