@@ -24,6 +24,10 @@ export interface QuoteOpts {
   // The guard calls quote() only to VALUE a position, never to execute — a
   // build-only provider must NOT build a tx in this case (wasteful + pointless).
   quoteOnly?: boolean;
+  /** Providers to skip — entry failover re-quotes around a venue that just
+   * rejected the build (58 of 81 buy failures in 48h were one venue's 400s
+   * on migrated tokens, 69% of which went on to win). */
+  exclude?: string[];
 }
 
 export interface SwapProvider {

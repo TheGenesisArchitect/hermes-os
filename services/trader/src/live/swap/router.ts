@@ -97,6 +97,7 @@ export class SwapRouter {
   ): Promise<SwapQuote> {
     let lastErr: unknown;
     for (const p of this.providers) {
+      if (opts?.exclude?.includes(p.name)) continue; // entry failover: venue just rejected the build
       if (!this.available(p, cfg) || !this.healthy(p.name)) continue;
       try {
         const q = await p.quote(cfg, inputMint, outputMint, amountRaw, slippageBps, opts);

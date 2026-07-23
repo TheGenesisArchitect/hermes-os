@@ -937,7 +937,15 @@ export async function maybeLiveBuy(
 
     const wallet = liveWallet();
     if (!wallet) return;
-    const quote = await swapRouter.quote(cfg, WSOL_MINT, mint, lamports, cfg.LIVE_SLIPPAGE_BPS);
+    // ── ENTRY FRICTION LOOP (2026-07-23): 81 buy failures/48h, 69% of those
+    // mints won. Two failure classes, two answers: a venue BUILD REJECT (400 /
+    // no pool / migrated) fails over to the next provider's quote; a SLIPPAGE
+    // fail retries once with a bumped-but-capped tolerance and a hard chase
+    // guard — a fresh quote offering >10% fewer tokens means the move ran, and
+    // we refuse to chase the top. Max three attempts, every retry audited.
+    const excludedProviders: string[] = [];
+    let firstOut: number | null = null;
+    let quote = await swapRouter.quote(cfg, WSOL_MINT, mint, lamports, cfg.LIVE_SLIPPAGE_BPS);
     const impact = Math.abs(Number(quote.priceImpactPct ?? 0)) * 100;
     if (impact > cfg.ENTRY_MAX_SLIPPAGE_PCT) {
       await audit("live_buy_skipped", { mint, reason: `price impact ${impact.toFixed(1)}%` });
@@ -962,9 +970,35 @@ export async function maybeLiveBuy(
         return;
       }
     }
-    const b64 = await swapRouter.buildSwapTx(cfg, quote, wallet.publicKey.toBase58());
-    const res = await executeSwap(cfg, b64, mint);
-    if (res.outUi <= 0) throw new Error("fill parse: zero output");
+    let res!: Awaited<ReturnType<typeof executeSwap>>;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const b64 = await swapRouter.buildSwapTx(cfg, quote, wallet.publicKey.toBase58());
+        res = await executeSwap(cfg, b64, mint);
+        if (res.outUi <= 0) throw new Error("fill parse: zero output");
+        break;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const venueReject = /build 400|no .*pool|Virtual pool|not tradable|NO_ROUTES/i.test(msg);
+        const slipFail = /6001|ExceededSlippage|simulation failed/i.test(msg);
+        if (attempt >= 3 || (!venueReject && !slipFail)) throw err;
+        if (venueReject) excludedProviders.push(quote.provider);
+        const out0 = Number(quote.outAmount);
+        if (firstOut == null && out0 > 0) firstOut = out0;
+        await audit("live_buy_retry", {
+          mint, attempt,
+          reason: venueReject ? `venue reject (${quote.provider}) — failing over` : "slippage — bumped tolerance",
+          error: msg.slice(0, 120),
+        });
+        const slip = venueReject ? cfg.LIVE_SLIPPAGE_BPS : Math.min(cfg.LIVE_SLIPPAGE_BPS + 1_500, 4_000);
+        quote = await swapRouter.quote(cfg, WSOL_MINT, mint, lamports, slip, { exclude: excludedProviders });
+        const freshOut = Number(quote.outAmount);
+        if (firstOut != null && freshOut > 0 && freshOut < firstOut * 0.9) {
+          await audit("live_buy_skipped", { mint, reason: "entry retry refused — price ran >10% since first quote (chase guard)" });
+          return;
+        }
+      }
+    }
 
     const entryPrice = usd / res.outUi;
     const [position] = await db
