@@ -1296,6 +1296,14 @@ async function liveSellPosition(
         from fills where position_id = ${position.id}`)) as unknown as
         { pnl: number; sells: number; last_reason: string | null }[];
       const hasFills = fp != null && (fp.sells > 0 || fp.pnl !== 0);
+      // Stamp the exit price too — the Analyzer scores exitX from it, and a
+      // null here used to render green desync closes at the scatter floor.
+      const [lastSell] = fp && fp.sells > 0
+        ? ((await db.execute(sql`
+            select price_usd::float px from fills
+            where position_id = ${position.id} and side = 'sell'
+            order by id desc limit 1`)) as unknown as { px: number }[])
+        : [];
       const closed = await db
         .update(positions)
         .set({
@@ -1304,6 +1312,7 @@ async function liveSellPosition(
           exitReason: fp && fp.sells > 0 && fp.last_reason ? fp.last_reason : "live_desync_empty",
           qtyRemaining: "0",
           ...(hasFills ? { realizedPnlUsd: fp.pnl.toFixed(6) } : {}),
+          ...(lastSell?.px ? { exitPriceUsd: String(lastSell.px) } : {}),
         })
         .where(and(eq(positions.id, position.id), eq(positions.status, "open")))
         .returning({ id: positions.id });

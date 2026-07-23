@@ -4154,8 +4154,14 @@ export async function getTradePerformance(windowHours = 6, lane?: "paper" | "liv
     const pnl = num(r.pnl);
     const closedAtMs = r.closedAt ? new Date(r.closedAt).getTime() : 0;
     const peakX = entry > 0 ? num(r.peak) / entry : 1;
-    const exitX = entry > 0 && r.exit != null ? num(r.exit) / entry : 0;
     const realised = size > 0 ? 1 + pnl / size : 1;
+    // exit_price_usd is stamped by paper's close path but not by every LIVE
+    // close path (desync heal, unsellable write-off) — a null there used to
+    // score exitX 0 and pin GREEN live trades to the scatter floor (operator:
+    // "all of the live trades are hitting the floor", 2026-07-23). The honest
+    // fallback is the realized multiple: money in vs money out. A true rug
+    // still floors (realised 0); a +$0.10 desync close renders at 1.02×.
+    const exitX = entry > 0 && r.exit != null ? num(r.exit) / entry : Math.max(0, realised);
     const prof = r.signature ? SIGNATURE_PROFILES[r.signature as Signature] : null;
     const rungLevels = prof ? [prof.tp0[0], prof.tp1[0], prof.tp2[0]] : [];
     const rungsReachable = rungLevels.filter((lv) => peakX >= lv).length;
