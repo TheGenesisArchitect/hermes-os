@@ -93,6 +93,45 @@ export async function runLedgerSync(): Promise<void> {
       WHERE e.event_type = 'trip.close'
         AND abs(r.resid) > 0.000001
         AND NOT EXISTS (SELECT 1 FROM ledger_legs ll2 WHERE ll2.event_id = e.id)`);
+    // ── CLOSE CORRECTIONS (panel audit, 2026-07-23) ─────────────────────────
+    // The trip.close residual is keyed by position id ONLY, so a row healed
+    // AFTER its close event exists (finn, COW — the late-fill race) could
+    // never re-reconcile: DO NOTHING kept the stale journal and the Ledger
+    // panel drifted from the book (paper −$29.27, live −$4.51 at audit time).
+    // Corrections are keyed by id + the row's CURRENT value, so each new
+    // healed value posts exactly one balancing event and the journal follows
+    // the book wherever the audited heals take it. Append-only, Σ=0 legs.
+    await tx.execute(sql`
+      INSERT INTO ledger_events (book, event_type, occurred_at, idempotency_key, position_ref, memo, evidence)
+      SELECT p.lane, 'trip.correction', now(),
+             'close-correction:' || p.id || ':' || round(coalesce(p.realized_pnl_usd, 0)::numeric, 4)::text,
+             p.id, 'row-vs-journal residual (post-heal re-reconcile)',
+             jsonb_build_object('rowPnl', p.realized_pnl_usd, 'exitReason', p.exit_reason)
+      FROM positions p
+      WHERE p.status = 'closed'
+        AND abs(coalesce(p.realized_pnl_usd, 0)
+                - coalesce((SELECT -sum(ll.amount_usd)
+                            FROM ledger_legs ll JOIN ledger_events ev ON ev.id = ll.event_id
+                            WHERE ev.position_ref = p.id AND ll.account = 'pnl:realized'), 0)) > 0.01
+      ON CONFLICT (idempotency_key) DO NOTHING`);
+    await tx.execute(sql`
+      INSERT INTO ledger_legs (event_id, account, amount_usd)
+      SELECT e.id, leg.account, leg.amount
+      FROM ledger_events e
+      JOIN positions p ON p.id = e.position_ref::int AND e.event_type = 'trip.correction',
+      LATERAL (
+        SELECT coalesce(p.realized_pnl_usd, 0)
+               - coalesce((SELECT -sum(ll.amount_usd)
+                           FROM ledger_legs ll
+                           JOIN ledger_events ev ON ev.id = ll.event_id
+                           WHERE ev.position_ref = p.id AND ll.account = 'pnl:realized'), 0) AS resid
+      ) r,
+      LATERAL (VALUES
+        ('pnl:realized',      -r.resid),
+        ('equity:adjustment',  r.resid)
+      ) AS leg(account, amount)
+      WHERE abs(r.resid) > 0.000001
+        AND NOT EXISTS (SELECT 1 FROM ledger_legs ll2 WHERE ll2.event_id = e.id)`);
   });
 }
 

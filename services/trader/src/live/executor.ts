@@ -1050,6 +1050,23 @@ export async function maybeLiveBuy(
     if (dbcTicket) usd = Math.min(cfg.LIVE_DBC_TICKET_USD, (dbcPoolLiq ?? cfg.LIVE_DBC_TICKET_MIN_LIQ_USD) * cfg.LIVE_DBC_TICKET_POOL_FRAC);
     const lamports = BigInt(Math.floor((usd / sol) * 1e9));
 
+    // ── MIRROR-FRESHNESS GATE (DRILLCAT, 2026-07-23) ─────────────────────────
+    // 11 seconds of mirror latency on a 12-second spike: paper opened, banked
+    // TP0 and trailed out while live's buy was still in flight — live bought
+    // the exact top paper was selling into (−$4 vs paper's +$4.77). If the
+    // paper twin has already STARTED EXITING, the move this entry mirrors is
+    // over; there is no trade left to copy. Refuse, don't chase.
+    {
+      const [twinExiting] = (await db.execute(sql`
+        SELECT 1 FROM positions p JOIN fills f ON f.position_id = p.id AND f.side = 'sell'
+        WHERE p.mint = ${mint} AND p.lane = 'paper' AND p.opened_at > now() - interval '30 minutes'
+        LIMIT 1`)) as unknown as unknown[];
+      if (twinExiting) {
+        await audit("live_buy_skipped", { mint, reason: "mirror stale — paper twin already exiting; the move is over, not chasing" });
+        return;
+      }
+    }
+
     const wallet = liveWallet();
     if (!wallet) return;
     // ── ENTRY FRICTION LOOP (2026-07-23): 81 buy failures/48h, 69% of those
