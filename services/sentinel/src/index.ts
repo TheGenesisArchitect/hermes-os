@@ -49,6 +49,8 @@ interface SentinelState {
   prevTrendLive: number;
   /** mints already announced as 🌙 moonshots — never ping the same one twice */
   moonshotSeen: string[];
+  /** last LIVE position id announced as a 🧬 OPEN card */
+  lastOpenPosId: number;
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -65,7 +67,54 @@ async function loadState(): Promise<SentinelState> {
     prevTrendPaper: v.prevTrendPaper ?? 0,
     prevTrendLive: v.prevTrendLive ?? 0,
     moonshotSeen: v.moonshotSeen ?? [],
+    lastOpenPosId: v.lastOpenPosId ?? -1,
   };
+}
+
+// ── LIVE OPEN CARDS — the board and the phone reflect the Trading DNA matrix
+// the moment real capital boards (operator, 2026-07-23: "when trades are opened
+// the Cards should also reflect as well"). LIVE lane only: live opens are rare,
+// real-capital events; paper opens stay in the 20-min PULSE so the phone
+// doesn't drown (the 2026-07-21 per-fill-ping lesson).
+async function checkLiveOpens(s: SentinelState): Promise<void> {
+  const rows = (await db.execute(sql`
+    SELECT p.id, p.mint, p.signature, p.size_usd::float AS size, t.symbol, t.dex,
+      co.stars, co.liq_growth::float AS inflow,
+      co.wallet_winner_hits AS wh, co.wallet_rug_hits AS rh,
+      (SELECT ct.liquidity_usd::float FROM candidate_ticks ct
+        WHERE ct.mint = p.mint ORDER BY ct.id DESC LIMIT 1) AS liq
+    FROM positions p
+    JOIN tokens t ON t.mint = p.mint
+    LEFT JOIN candidate_outcomes co ON co.mint = p.mint
+    WHERE p.lane = 'live' AND p.id > ${s.lastOpenPosId}
+    ORDER BY p.id
+    LIMIT 10`)) as unknown as {
+    id: number; mint: string; signature: string | null; size: number;
+    symbol: string | null; dex: string | null; stars: number | null;
+    inflow: number | null; wh: number | null; rh: number | null; liq: number | null;
+  }[];
+  for (const r of rows) {
+    s.lastOpenPosId = Number(r.id);
+    const genome = (r.signature ?? "UNROUTED").replace("MOON_", "M·");
+    const inflow = r.inflow != null ? Number(r.inflow) : null;
+    const band = inflow == null ? "unmeasured" : inflow >= 1.3 ? "strong" : inflow >= 1.2 ? "good" : "mild";
+    const crowd =
+      r.wh == null && r.rh == null
+        ? "no crowd read"
+        : `${num(r.wh)}W/${num(r.rh)}R${num(r.wh) - num(r.rh) >= 1 ? " winner-rep" : ""}`;
+    await notify(
+      "OPEN",
+      `OPEN · ${r.symbol ?? short(r.mint)} — ${genome} $${Number(r.size).toFixed(2)}`,
+      [
+        `genome   ${genome}${r.stars != null ? ` · ${num(r.stars)}★` : ""} · ${r.dex ?? "?"}`,
+        `band     inflow ${inflow != null ? `${inflow.toFixed(2)}×` : "—"} (${band}) · crowd ${crowd}`,
+        `entry    $${Number(r.size).toFixed(2)} @ pool ${r.liq != null ? `$${(Number(r.liq) / 1000).toFixed(1)}k` : "—"}`,
+      ],
+      3,
+      ["dna"],
+      `https://dexscreener.com/solana/${r.mint}`,
+    );
+  }
 }
 
 async function saveState(s: SentinelState): Promise<void> {
@@ -87,11 +136,11 @@ async function saveState(s: SentinelState): Promise<void> {
  * body) — emoji in an HTTP header is not a ByteString and silently killed every
  * push in v1; JSON bodies are UTF-8 and immune.
  */
-type Category = "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP" | "PULSE" | "SUMMARY" | "MOONSHOT";
+type Category = "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP" | "PULSE" | "SUMMARY" | "MOONSHOT" | "OPEN";
 
 const CATEGORY_EMOJI: Record<Category, string> = {
   KILL: "⛔", LIVE: "🔴", RUNNER: "🏃", ARM: "🎯", HEALTH: "🩺", OPS: "🔧",
-  TREND: "📈", RECAP: "🧾", PULSE: "❤️", SUMMARY: "📊", MOONSHOT: "🌙",
+  TREND: "📈", RECAP: "🧾", PULSE: "❤️", SUMMARY: "📊", MOONSHOT: "🌙", OPEN: "🧬",
 };
 
 async function notify(
@@ -472,8 +521,10 @@ async function sendRecap(s: SentinelState): Promise<void> {
       // edge. Baseline + cumulative realized live P&L since the forecast's
       // birth = the alpha path the model actually predicts; beta never gets
       // to flatter the engine on its own scoreboard.
+      // ISO-string bind — a raw Date param dies in postgres-js argv binding
+      // (the journalFill lesson); strings + explicit cast always land.
       const [tp] = (await db.execute(sql`select coalesce(sum(realized_pnl_usd),0)::float8 s from positions
-        where lane='live' and status='closed' and closed_at >= ${new Date(fc.createdAt)}`)) as unknown as { s: number }[];
+        where lane='live' and status='closed' and closed_at >= ${new Date(fc.createdAt).toISOString()}::timestamptz`)) as unknown as { s: number }[];
       const tradingEq = Number(fc.baselineUsd) + num(tp?.s);
       const tMark = tradingEq < p10 ? " ⚠" : tradingEq > p90 ? " 🚀" : "";
       lines.push(
@@ -561,6 +612,12 @@ if (state.lastTriggerAuditId < 0) {
   )) as unknown as { m: number }[];
   state.lastTriggerAuditId = num(a?.m);
 }
+if (state.lastOpenPosId < 0) {
+  const [p] = (await db.execute(
+    sql`select coalesce(max(id),0) as m from positions where lane='live'`,
+  )) as unknown as { m: number }[];
+  state.lastOpenPosId = num(p?.m);
+}
 
 // LEDGER PHASE 2 — journal sync + chain reconciler, every ~5 minutes (10 ticks
 // at the 30s poll). Sync first so the reconciler always judges a fresh journal.
@@ -572,6 +629,7 @@ while (true) {
     await checkKillSwitches(state);
     await checkPipelineStaleness();
     await checkMoonshots(state);
+    await checkLiveOpens(state);
     await checkFills(state);
     await checkHeartbeat(state);
     await checkDigests(state);

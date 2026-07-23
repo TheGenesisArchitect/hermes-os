@@ -432,6 +432,10 @@ export interface ManagedPosition {
   peakMultiple: number;
   drawdownFromPeakPct: number;
   openedAt: Date;
+  /** Routed genome from the Trading DNA matrix — present from tick ZERO, unlike
+   * the health chip which needs trajectory. The board must match the matrix the
+   * moment a trade opens, not minutes later. */
+  signature: string | null;
   call: ManagementCall | null; // live classifier verdict, recomputed for full factors
   dna: TradeDna | null; // fused health state + moonshot clock (docs/trade-dna-health.md)
   spark: { i: number; mm: number }[]; // markMultiple trajectory
@@ -475,6 +479,7 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
       qtyRemaining: positions.qtyRemaining,
       realizedPnlUsd: positions.realizedPnlUsd,
       openedAt: positions.openedAt,
+      signature: positions.signature,
     })
     .from(positions)
     .innerJoin(tokens, eq(tokens.mint, positions.mint))
@@ -548,6 +553,7 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
       peakMultiple,
       drawdownFromPeakPct: last ? num(last.drawdownFromPeakPct) : 0,
       openedAt: p.openedAt,
+      signature: p.signature,
       call,
       dna,
       spark: series.map((t, i) => ({ i, mm: t.markMultiple })),

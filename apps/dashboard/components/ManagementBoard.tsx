@@ -217,6 +217,18 @@ function Card({ p }: { p: ManagedPositionView }) {
             <Link href={`/token/${p.mint}`} className="font-semibold hover:underline" style={{ color: "var(--text-primary)" }}>
               {p.symbol ?? "?"}
             </Link>
+            {p.signature ? (
+              // The routed genome from the Trading DNA matrix — shown from tick
+              // zero so the board matches the matrix at open, before the health
+              // chip has enough trajectory to classify.
+              <span
+                title="routed genome — the Trading DNA class that owns this trade's exits"
+                className="rounded px-1.5 py-px text-[10px] font-bold tracking-wide"
+                style={{ color: "var(--series-1)", border: "1px solid var(--series-1)" }}
+              >
+                🧬 {p.signature.replace("MOON_", "M·")}
+              </span>
+            ) : null}
             <span
               className="text-xs"
               style={{ color: "var(--text-muted)" }}
