@@ -4,7 +4,7 @@ import { SystemHealth } from "@/components/SystemHealth";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Hermes OS",
+  title: "Genesis Capital Engine OS",
   description: "Financial copilot, DeFi dashboard, and agentic quant harness",
 };
 
@@ -15,7 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="border-b px-6 py-3" style={{ borderColor: "var(--border)" }}>
           <div className="mx-auto flex max-w-6xl items-center gap-3">
             <Link href="/" className="text-lg font-semibold tracking-tight">
-              Hermes<span style={{ color: "var(--series-1)" }}> OS</span>
+              Genesis<span style={{ color: "var(--series-1)" }}> Capital Engine</span>
             </Link>
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
               scanner · paper scalper · signal intelligence

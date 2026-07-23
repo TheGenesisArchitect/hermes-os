@@ -1,4 +1,6 @@
-# Hermes OS
+# Genesis Capital Engine OS
+
+> formerly Hermes OS — renamed 2026-07-23 ("time to Level Up")
 
 Open-source financial copilot, DeFi dashboard, and agentic quant harness. Hermes watches new on-chain token launches, runs every candidate through a hard safety pipeline, scores survivors, and (eventually) trades them — paper by default, live only behind explicit hard-capped gates.
 
