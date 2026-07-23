@@ -1147,6 +1147,10 @@ async function liveSellPosition(
   if (!wallet) return false;
   const bo = sellBackoff.get(position.id);
   if (bo && Date.now() < bo.nextAttemptMs) return false; // cooling off — don't burn RPC
+  // The provider THIS attempt actually quoted through — the failover exclusion
+  // must name it exactly; router.lastRoute() is global state that the guard's
+  // valuation quotes overwrite between a failure and its exclusion.
+  let usedProvider: string | null = null;
   // Classify the exit's URGENCY up front — the catch needs it too, to tell a
   // take-profit that refused a bad price from a position that genuinely can't sell.
   // Protective exits (stop / catastrophe / rug / sweep / mirror-cut) DUMP at the wide
@@ -1221,6 +1225,7 @@ async function liveSellPosition(
     const quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip, {
       exclude: sellExclude.get(position.id),
     });
+    usedProvider = quote.provider;
     const b64 = await swapRouter.buildSwapTx(cfg, quote, wallet.publicKey.toBase58());
     const res = await executeSwap(cfg, b64, WSOL_MINT);
     const sol = (await solPriceUsd(cfg)) ?? 0;
@@ -1279,9 +1284,9 @@ async function liveSellPosition(
     // so the NEXT retry quotes elsewhere instead of dying on the same 400.
     if (/build 400|no .*pool|Virtual pool|not tradable|NO_ROUTES/i.test(msg)) {
       const ex = sellExclude.get(position.id) ?? [];
-      const lastProv = (err as { provider?: string }).provider;
-      // The router tags quotes, not errors — exclude the router's last route.
-      const prov = lastProv ?? swapRouter.lastRoute();
+      // Exclude the provider this attempt actually used; fall back to the
+      // router's last route only if the failure predated the quote.
+      const prov = usedProvider ?? swapRouter.lastRoute();
       if (prov && !ex.includes(prov)) {
         ex.push(prov);
         sellExclude.set(position.id, ex);
