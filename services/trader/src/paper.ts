@@ -322,8 +322,18 @@ async function openFromSignal(
   }
 
   // Risk-tier sizing — a soft safety flag shrinks the bet, it doesn't veto it.
-  const risk = (signal.reasons as { risk?: { sizeMultiplier?: number; tier?: string } } | null)?.risk;
+  const risk = (signal.reasons as { risk?: { sizeMultiplier?: number; tier?: string; flags?: string[] } } | null)?.risk;
   const sizeMult = typeof risk?.sizeMultiplier === "number" ? risk.sizeMultiplier : 1;
+  // TIER MULTIPLIER RETIRED FOR ROUTED ENTRIES (operator, 2026-07-23): the
+  // soft-flag tiers predate the signature pipeline, and on the scrubbed 48h
+  // tape they no longer discriminate — speculative won 72% vs clean's 73% —
+  // yet cut every fresh launch to ×0.35 (soft flags are endemic at birth:
+  // unlocked LP, concentration, low holders). The funnel now prices quality
+  // (confirm bar, inflow bands, crowd gates, conviction stars); double-pricing
+  // it was the penny-trade engine. ONE exception survives, because it is about
+  // SELLABILITY not quality: an unverified honeypot probe keeps a 0.5 shrink.
+  // Unrouted legacy entries keep the full tier system; hard traps still block.
+  const routedRiskMult = risk?.flags?.includes("honeypot_unverified") ? 0.5 : 1;
   // Session sizing — survive the dead zone, grow in the moonshot window.
   const sessionMult = await hourSessionMult(cfg);
   // SIGNATURE SIZING — each genome carries its own conviction. RISER and BASE
@@ -390,7 +400,7 @@ async function openFromSignal(
   const bankrollNow = await paperBankrollNow(cfg);
   const sizeUsd = Number(
     (conv
-      ? bankrollNow * frac * sizeMult * sessionMult * sigMult
+      ? bankrollNow * frac * routedRiskMult * sessionMult * sigMult
       : cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult * sigMult
     ).toFixed(2),
   );
