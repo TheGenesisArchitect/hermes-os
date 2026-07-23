@@ -1229,12 +1229,41 @@ async function liveSellPosition(
       // OVER the true exit reason. P&L was right, the label wrong, and the
       // Trade Performance Analyzer scores by label. The status='open' clause
       // makes the race a no-op for the loser.
+      // MONEY-HONEST CLOSE (finn, 2026-07-23): the sweep can also win a 2-second
+      // race against the mirror sell's own bookkeeping — finn's sell FILLED
+      // on-chain at +12.9% but the row closed pnl $0.00 with the fill already
+      // journaled. The journal is authoritative: recompute realized from fills
+      // at close time (sells − buys − fees; with zero sells that is honestly
+      // −cost), and let a recorded sell name the exit instead of the desync label.
+      const [fp] = (await db.execute(sql`
+        select
+          coalesce(sum(case when side = 'sell' then qty_tokens::float * price_usd::float
+                            else -(qty_tokens::float * price_usd::float) end)
+                   - sum(coalesce(fee_usd::float, 0)), 0)::float as pnl,
+          count(*) filter (where side = 'sell')::int as sells,
+          (select f2.reason from fills f2 where f2.position_id = ${position.id} and f2.side = 'sell'
+           order by f2.id desc limit 1) as last_reason
+        from fills where position_id = ${position.id}`)) as unknown as
+        { pnl: number; sells: number; last_reason: string | null }[];
+      const hasFills = fp != null && (fp.sells > 0 || fp.pnl !== 0);
       const closed = await db
         .update(positions)
-        .set({ status: "closed", closedAt: new Date(), exitReason: "live_desync_empty", qtyRemaining: "0" })
+        .set({
+          status: "closed",
+          closedAt: new Date(),
+          exitReason: fp && fp.sells > 0 && fp.last_reason ? fp.last_reason : "live_desync_empty",
+          qtyRemaining: "0",
+          ...(hasFills ? { realizedPnlUsd: fp.pnl.toFixed(6) } : {}),
+        })
         .where(and(eq(positions.id, position.id), eq(positions.status, "open")))
         .returning({ id: positions.id });
-      if (closed.length > 0) await audit("live_desync_empty", { positionId: position.id, mint: position.mint });
+      if (closed.length > 0)
+        await audit("live_desync_empty", {
+          positionId: position.id,
+          mint: position.mint,
+          realizedFromFills: hasFills ? fp.pnl : null,
+          sells: fp?.sells ?? 0,
+        });
       return true;
     }
     const f = Math.min(1, Math.max(0, fraction));
