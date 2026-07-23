@@ -3193,6 +3193,91 @@ export async function getTradeLedger(limit = 200): Promise<TradeRow[]> {
 // ── INFLOW EDGE MONITOR — is the edge still real? ────────────────────────────
 // Pool growth at arm is the system's core edge (a wash-traded fake cannot add
 // liquidity). This panel re-measures it continuously from realized outcomes so
+// ── SWEETSPOT RADAR — the boarding band as a live instrument ────────────────
+// The recorder's sweetspot finder re-fits [lo, hi] from trailing expectancy
+// every refresh; this view feeds the radar: the locked band, the last hour of
+// takeoffs (blips placed by recency, colored by outcome), and the fill stats.
+export interface RadarBlip {
+  symbol: string | null;
+  trig: number; // trigger multiple — the blip's ring
+  minutesAgo: number; // the blip's bearing (clock sweep)
+  pnl: number | null; // null = still open
+  peakX: number; // ≥3 renders as a moon blip
+  lane: string;
+}
+export interface SweetspotRadarView {
+  lo: number;
+  hi: number;
+  measured: boolean;
+  refreshedAgoMin: number | null;
+  buckets: string | null;
+  blips: RadarBlip[];
+  inBandPct1h: number | null; // fills inside the band, trailing hour
+  bandPerTrade24h: number | null; // realized $/trade inside the band, 24h
+  chasesRefused2h: number; // past-band refusals — the tab we did not pay
+}
+
+export async function getSweetspotRadar(): Promise<SweetspotRadarView> {
+  try {
+    const [row] = (await db.execute(sql`select value, updated_at from config where key = 'sweetspot_band'`)) as unknown as {
+      value: { lo?: number; hi?: number; measured?: boolean; buckets?: string } | null;
+      updated_at: Date | null;
+    }[];
+    const lo = Number(row?.value?.lo ?? 1.35);
+    const hi = Number(row?.value?.hi ?? 1.65);
+    const blips = (await db.execute(sql`
+      select tk.symbol, co.trigger_multiple::float trig, p.lane,
+        extract(epoch from (now() - p.opened_at))/60 as mins,
+        case when p.status = 'closed' then p.realized_pnl_usd::float end as pnl,
+        case when p.entry_price_usd::float > 0 then p.peak_price_usd::float / p.entry_price_usd::float else 1 end as peakx
+      from positions p
+      join candidate_outcomes co on co.mint = p.mint
+      left join tokens tk on tk.mint = p.mint
+      where p.opened_at > now() - interval '60 minutes' and co.trigger_multiple is not null
+      order by p.opened_at desc limit 48`)) as unknown as {
+      symbol: string | null; trig: number; lane: string; mins: number; pnl: number | null; peakx: number;
+    }[];
+    const [fill] = (await db.execute(sql`
+      select
+        (100.0 * count(*) filter (where co.trigger_multiple::float between ${lo} and ${hi}) / nullif(count(*), 0))::float as inband,
+        count(*)::int n
+      from positions p join candidate_outcomes co on co.mint = p.mint
+      where p.opened_at > now() - interval '60 minutes' and co.trigger_multiple is not null`)) as unknown as {
+      inband: number | null; n: number;
+    }[];
+    const [band24] = (await db.execute(sql`
+      select (sum(p.realized_pnl_usd) / nullif(count(*), 0))::float as per
+      from positions p join candidate_outcomes co on co.mint = p.mint
+      where p.lane = 'paper' and p.status = 'closed' and p.closed_at > now() - interval '24 hours'
+        and co.trigger_multiple::float between ${lo} and ${hi}`)) as unknown as { per: number | null }[];
+    const [ref] = (await db.execute(sql`
+      select count(*)::int n from signals
+      where created_at > now() - interval '2 hours' and reasons::text like '%past the boarding band%'`)) as unknown as {
+      n: number;
+    }[];
+    return {
+      lo,
+      hi,
+      measured: Boolean(row?.value?.measured),
+      refreshedAgoMin: row?.updated_at ? (Date.now() - new Date(row.updated_at).getTime()) / 60_000 : null,
+      buckets: row?.value?.buckets ?? null,
+      blips: blips.map((b) => ({
+        symbol: b.symbol,
+        trig: Number(b.trig),
+        minutesAgo: Number(b.mins),
+        pnl: b.pnl == null ? null : Number(b.pnl),
+        peakX: Number(b.peakx),
+        lane: b.lane,
+      })),
+      inBandPct1h: fill?.n ? Number(fill.inband) : null,
+      bandPerTrade24h: band24?.per == null ? null : Number(band24.per),
+      chasesRefused2h: Number(ref?.n ?? 0),
+    };
+  } catch {
+    return { lo: 1.35, hi: 1.65, measured: false, refreshedAgoMin: null, buckets: null, blips: [], inBandPct1h: null, bandPerTrade24h: null, chasesRefused2h: 0 };
+  }
+}
+
 // decay is visible immediately rather than assumed away.
 export interface InflowBand {
   band: string;

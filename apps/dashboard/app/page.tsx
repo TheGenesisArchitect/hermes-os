@@ -15,6 +15,7 @@ import { RecorderBoard } from "@/components/RecorderBoard";
 import { PondRadar } from "@/components/PondRadar";
 import { TickerRadar } from "@/components/TickerRadar";
 import { InflowEdge } from "@/components/InflowEdge";
+import { SweetspotRadar } from "@/components/SweetspotRadar";
 import { LedgerWorkspace } from "@/components/LedgerWorkspace";
 import { WalletPanel } from "@/components/WalletPanel";
 import { SignalTicker } from "@/components/SignalTicker";
@@ -45,6 +46,7 @@ import {
   getLedgerWorkspace,
   getLaneBalances,
   getInflowEdge,
+  getSweetspotRadar,
   getAnticipation,
   getWinningFormula,
   getHourlyWindows,
@@ -103,6 +105,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     tickerRadar,
     laneBalances,
     inflowEdge,
+    sweetspotRadar,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -137,6 +140,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     getTickerRadar(),
     getLaneBalances(),
     getInflowEdge(),
+    getSweetspotRadar(),
   ]);
 
   const gridView = laneFilter
@@ -388,6 +392,14 @@ export default async function Overview({ searchParams }: { searchParams: Promise
       <AnticipationForecast view={anticipation} />
 
       {/* Pond Radar — venue R&D lifecycle: discovery → watchlist → promotion */}
+      {/* SWEETSPOT RADAR — the boarding band as a live spinning instrument */}
+      <section>
+        <h2 className="mb-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+          Sweetspot Radar · where the takeoffs are landing
+        </h2>
+        <SweetspotRadar view={sweetspotRadar} />
+      </section>
+
       {/* THE EDGE — pool inflow, re-measured from realized outcomes every refresh. */}
       <InflowEdge bands={inflowEdge} />
       <TickerRadar radar={tickerRadar} />

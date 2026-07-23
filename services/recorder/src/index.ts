@@ -32,6 +32,7 @@ import {
 } from "@hermes/db";
 import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { scanPonds } from "./pondScanner.js";
+import { refreshSweetspot } from "./sweetspot.js";
 import { refreshWalletReputation, scoreCandidateWalletEdge } from "./walletReputation.js";
 
 const cfg = loadConfig();
@@ -637,9 +638,25 @@ async function writeRecorderHealth(watching: number): Promise<void> {
 
 // resilient loop — one failed tick never kills the daemon
 // eslint-disable-next-line no-constant-condition
+let lastSweetspot = 0;
 while (true) {
   let watching = 0;
   try {
+    // SWEETSPOT FINDER — re-measure the boarding band from trailing realized
+    // expectancy; mutates triggerCfg in place so every evaluate sees the
+    // current regime's seat. Static CONFIRM_MIN/MAX_MULT is the fallback.
+    if (cfg.SWEETSPOT_ENABLED && Date.now() - lastSweetspot >= cfg.SWEETSPOT_REFRESH_MS) {
+      lastSweetspot = Date.now();
+      await refreshSweetspot(
+        {
+          minN: cfg.SWEETSPOT_MIN_N,
+          windowHours: cfg.SWEETSPOT_WINDOW_H,
+          staticLo: cfg.CONFIRM_MIN_MULT,
+          staticHi: cfg.CONFIRM_MAX_MULT,
+        },
+        triggerCfg,
+      ).catch((err) => console.error(`sweetspot refresh failed: ${err instanceof Error ? err.message : err}`));
+    }
     await tick();
     const [c] = await db
       .select({ n: sql<number>`count(*)::int` })

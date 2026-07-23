@@ -581,6 +581,15 @@ const envSchema = z.object({
   // that gap past the band are released to the re-confirm retrace path, not
   // chased. 0 disables the ceiling.
   CONFIRM_MAX_MULT: z.coerce.number().default(1.65),
+  // SWEETSPOT FINDER — the boarding band as a rolling measurement, not a
+  // constant (operator: "sweetspot finder at any moment in the day"). Every
+  // refresh the recorder re-fits [minMult, maxMult] from trailing realized
+  // expectancy per trigger-multiple bucket; static CONFIRM_MIN/MAX_MULT is the
+  // thin-sample fallback and the hard rails are 1.30–2.20.
+  SWEETSPOT_ENABLED: z.coerce.boolean().default(true),
+  SWEETSPOT_REFRESH_MS: z.coerce.number().default(600_000), // re-measure every 10 min
+  SWEETSPOT_MIN_N: z.coerce.number().default(8), // per-bucket sample floor
+  SWEETSPOT_WINDOW_H: z.coerce.number().default(24), // trailing tape it learns from
   // 10 → 40 (2026-07-20). A 10% ceiling could only admit a winner at its highs,
   // because winners DIP: measured pre-peak drawdown is 22.3% median for climbers
   // and 35.2% for moons, versus 0.9% for rugs — dipping is the winner signature,
