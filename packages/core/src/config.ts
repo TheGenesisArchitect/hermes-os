@@ -574,6 +574,13 @@ const envSchema = z.object({
   // rather than another filter. Tokens clearing 1.35× have shown real follow-through,
   // and the cost-recoup floor banks the basis on the ones that stall.
   CONFIRM_MIN_MULT: z.coerce.number().default(1.35), // green and established vs ref
+  // THE BOARDING BAND (operator, 2026-07-23): entry seat is 1.30–1.65×. The
+  // floor-only bar drifted with the hot market — in-band fills 93% (07-16,
+  // median 1.29×) → 27% (07-23, median 1.77×) — while the ≤1.65 band earned
+  // $870 of the week's $1,013 at 3× the per-trade rate of >2× entries. Movers
+  // that gap past the band are released to the re-confirm retrace path, not
+  // chased. 0 disables the ceiling.
+  CONFIRM_MAX_MULT: z.coerce.number().default(1.65),
   // 10 → 40 (2026-07-20). A 10% ceiling could only admit a winner at its highs,
   // because winners DIP: measured pre-peak drawdown is 22.3% median for climbers
   // and 35.2% for moons, versus 0.9% for rugs — dipping is the winner signature,

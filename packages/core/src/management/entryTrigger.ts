@@ -35,6 +35,9 @@ export interface EntryTriggerConfig {
   maxWatchMin: number;
   minTicks: number;
   minMult: number;
+  /** Boarding-band CEILING on the qualifying multiple (0 disables). The floor
+   * alone let entries drift 1.29×→1.77× median as the market sped up. */
+  maxMult: number;
   maxDrawdownPct: number;
   minBuyShare: number;
   minVolAccel: number;
@@ -211,6 +214,18 @@ export function evaluateEntryTrigger(
   if (ctx.observationCount < cfg.minTicks) return no(`insufficient trajectory (${ctx.observationCount} < ${cfg.minTicks} ticks)`);
   if (ctx.action === "CUT") return no("classifier says CUT — do not enter");
   if (last.markMultiple < cfg.minMult) return no(`not green enough (${last.markMultiple.toFixed(2)}x < ${cfg.minMult}x)`);
+  // THE BOARDING BAND CEILING (operator, 2026-07-23: "we are reading a signal
+  // that triggers trades at 3.00 instead of the 1.30–1.65 area"). The floor
+  // alone let the qualifying tick drift up as the market sped up: 93% of
+  // entries filled ≤1.65× in the golden days (median 1.29×) vs 27% today
+  // (median 1.77×) — and the ≤1.65 band earned $870 of the week's $1,013 at
+  // 3× the per-trade rate of >2× entries. A mover that gapped past the band
+  // is NOT chased: the re-confirm path re-opens the door on its retrace, and
+  // a confirmed retrace is the moon tell anyway (+30.6% band).
+  if (cfg.maxMult > 0 && last.markMultiple > cfg.maxMult)
+    return no(
+      `past the boarding band (${last.markMultiple.toFixed(2)}x > ${cfg.maxMult}x — seat is 1.30–1.65; the retrace re-opens the door)`,
+    );
   // SNAP — the confirmation leg. A candidate that fell and is limping back is the
   // single largest avoidable loss pool in the tape (break-then-limp: n=433, EV
   // 0.865); the same fall followed by a real snap is positive-EV in every band.
@@ -297,6 +312,7 @@ export function entryTriggerConfigFrom(cfg: {
   CONFIRM_MAX_WATCH_MIN: number;
   CONFIRM_MIN_TICKS: number;
   CONFIRM_MIN_MULT: number;
+  CONFIRM_MAX_MULT: number;
   CONFIRM_MAX_DD_PCT: number;
   CONFIRM_MIN_BUYSHARE: number;
   CONFIRM_MIN_VOLACCEL: number;
@@ -313,6 +329,7 @@ export function entryTriggerConfigFrom(cfg: {
     maxWatchMin: cfg.CONFIRM_MAX_WATCH_MIN,
     minTicks: cfg.CONFIRM_MIN_TICKS,
     minMult: cfg.CONFIRM_MIN_MULT,
+    maxMult: cfg.CONFIRM_MAX_MULT,
     maxDrawdownPct: cfg.CONFIRM_MAX_DD_PCT,
     minBuyShare: cfg.CONFIRM_MIN_BUYSHARE,
     minVolAccel: cfg.CONFIRM_MIN_VOLACCEL,
