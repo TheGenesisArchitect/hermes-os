@@ -1124,6 +1124,11 @@ async function classRegimeHealth(cfg: HermesConfig, signature: string): Promise<
  * instead of the whole lane. Any success clears the counter immediately.
  */
 const sellBackoff = new Map<number, { fails: number; holdouts?: number; nextAttemptMs: number }>();
+// SELL-SIDE VENUE FAILOVER (CCM −$4, 2026-07-23): a build 400 on the sell path
+// used to bind the position to the rejecting venue until write-off. Providers
+// that reject a position's sell build are excluded on subsequent attempts, so
+// the retry machinery reaches the venues that CAN exit it. Cleared on success.
+const sellExclude = new Map<number, string[]>();
 const SELL_BACKOFF_BASE_MS = 5_000;
 const SELL_BACKOFF_MAX_MS = 300_000;
 // A take-profit that reverts on tight tolerance retries on a FLAT short fuse, not
@@ -1213,7 +1218,9 @@ async function liveSellPosition(
       : isTakeProfit
         ? Math.min(cfg.LIVE_STOP_SLIPPAGE_BPS, base * (1 + escHold))
         : Math.min(cfg.LIVE_STOP_SLIPPAGE_BPS, base * 2 ** escFails);
-    const quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip);
+    const quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip, {
+      exclude: sellExclude.get(position.id),
+    });
     const b64 = await swapRouter.buildSwapTx(cfg, quote, wallet.publicKey.toBase58());
     const res = await executeSwap(cfg, b64, WSOL_MINT);
     const sol = (await solPriceUsd(cfg)) ?? 0;
@@ -1264,9 +1271,22 @@ async function liveSellPosition(
       `💸 LIVE SELL ${short(position.mint)} ${(f * 100).toFixed(0)}% → $${proceedsUsd.toFixed(2)} (pnl ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}, ${reason})`,
     );
     sellBackoff.delete(position.id); // it sold — clear any accumulated penalty
+    sellExclude.delete(position.id);
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // Venue build-rejects poison this position's route — exclude the provider
+    // so the NEXT retry quotes elsewhere instead of dying on the same 400.
+    if (/build 400|no .*pool|Virtual pool|not tradable|NO_ROUTES/i.test(msg)) {
+      const ex = sellExclude.get(position.id) ?? [];
+      const lastProv = (err as { provider?: string }).provider;
+      // The router tags quotes, not errors — exclude the router's last route.
+      const prov = lastProv ?? swapRouter.lastRoute();
+      if (prov && !ex.includes(prov)) {
+        ex.push(prov);
+        sellExclude.set(position.id, ex);
+      }
+    }
     // A take-profit that reverts on tolerance is the tolerance DOING ITS JOB — the
     // rung refused a bad price on a position that is winning. It must never feed
     // the strand-writeoff counter: LIVE_SELL_MAX_FAILS would otherwise book a live

@@ -116,6 +116,12 @@ export class SwapRouter {
     throw new Error(`all swap providers down: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
   }
 
+  /** The provider that served the most recent quote — sell-side failover
+   * excludes it after a build reject. */
+  lastRoute(): string | null {
+    return this.lastProvider ?? null;
+  }
+
   /** Build via the SAME provider that produced the quote. */
   async buildSwapTx(cfg: HermesConfig, quote: SwapQuote, userPublicKey: string): Promise<string> {
     const p = this.providers.find((x) => x.name === quote.provider);
