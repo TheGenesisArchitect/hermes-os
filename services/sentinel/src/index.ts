@@ -51,6 +51,8 @@ interface SentinelState {
   moonshotSeen: string[];
   /** last LIVE position id announced as a 🧬 OPEN card */
   lastOpenPosId: number;
+  /** announced moonshots awaiting their outcome debrief (🌕/🌗/🌑) */
+  moonshotPending: { mint: string; at: number }[];
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -68,7 +70,98 @@ async function loadState(): Promise<SentinelState> {
     prevTrendLive: v.prevTrendLive ?? 0,
     moonshotSeen: v.moonshotSeen ?? [],
     lastOpenPosId: v.lastOpenPosId ?? -1,
+    moonshotPending: v.moonshotPending ?? [],
   };
+}
+
+// ── MOONSHOT OUTCOME DEBRIEF — closing the loop the 🌙 call opens (operator,
+// 2026-07-23: "we never find out whether we caught it, how much of it, if we
+// missed why"). Every announced moonshot resolves to exactly one verdict card:
+//   🌕 CAUGHT — live rode it: flight size, exit multiple, capture %, per lane
+//   🌗 HALF   — SIM rode it but live refused: the refusal reason, named
+//   🌑 MISSED — nobody boarded: what it did + which gate/timing kept us out
+// Each verdict names the master-equation term it scores: P(board) for misses,
+// P(ride)+capture for catches. Resolves once positions settle (≥30m after the
+// call) or at the 120m hard cap if something is still riding.
+async function checkMoonshotOutcomes(s: SentinelState): Promise<void> {
+  if (!s.moonshotPending.length) return;
+  const now = Date.now();
+  const keep: { mint: string; at: number }[] = [];
+  for (const pend of s.moonshotPending) {
+    const ageMin = (now - pend.at) / 60_000;
+    if (ageMin < 30) { keep.push(pend); continue; }
+    const atIso = new Date(pend.at).toISOString();
+    const trades = (await db.execute(sql`
+      SELECT p.lane, p.status, p.size_usd::float AS size, p.realized_pnl_usd::float AS pnl,
+        p.entry_price_usd::float AS entry, p.peak_price_usd::float AS peak
+      FROM positions p
+      WHERE p.mint = ${pend.mint} AND p.opened_at > ${atIso}::timestamptz - interval '20 minutes'`)) as unknown as
+      { lane: string; status: string; size: number; pnl: number | null; entry: number; peak: number | null }[];
+    const stillOpen = trades.some((t) => t.status === "open");
+    if (stillOpen && ageMin < 120) { keep.push(pend); continue; }
+    const [flight] = (await db.execute(sql`
+      SELECT t.symbol, co.peak_multiple::float AS peakx, co.minutes_to_peak::float AS ttp, co.label,
+        co.ref_price_usd::float AS refp
+      FROM candidate_outcomes co LEFT JOIN tokens t ON t.mint = co.mint
+      WHERE co.mint = ${pend.mint}`)) as unknown as
+      { symbol: string | null; peakx: number | null; ttp: number | null; label: string | null; refp: number | null }[];
+    const sym = flight?.symbol ?? short(pend.mint);
+    const peakX = flight?.peakx != null ? Number(flight.peakx) : null;
+    const ttp = flight?.ttp != null ? Number(flight.ttp) : null;
+    // the moon's peak PRICE — the top of the flight, independent of our entries
+    const moonPeakPrice = peakX != null && flight?.refp != null ? peakX * Number(flight.refp) : null;
+    const flightLine = `flight   ${peakX != null ? `peak ${peakX.toFixed(1)}×` : "peak unknown"}${ttp != null ? ` @ ${Math.round(ttp)}m` : ""}${flight?.label ? ` · settled ${flight.label}` : ""}`;
+    // THE BUSINESS STAT (operator, 2026-07-23): the moon's total OFFERING at our
+    // traded size — what a perfect rider would have banked on the capital we
+    // actually deployed, riding entry → flight peak — and how much we captured.
+    const laneStat = (lane: string) => {
+      const rows = trades.filter((t) => t.lane === lane && t.status === "closed");
+      if (!rows.length) return null;
+      const captured = rows.reduce((a, t) => a + num(t.pnl), 0);
+      const offered = rows.reduce((a, t) => {
+        if (!(t.entry > 0)) return a;
+        // offer per position = traded size × (best reachable peak / entry − 1);
+        // best reachable = the flight peak, or the position's own peak if we
+        // entered after the top (the moon offered us less, not zero)
+        const bestPeak = Math.max(moonPeakPrice ?? 0, num(t.peak));
+        return a + (bestPeak / t.entry > 1 ? t.size * (bestPeak / t.entry - 1) : 0);
+      }, 0);
+      return { captured, offered, capture: offered > 0 ? Math.max(0, captured / offered) : null };
+    };
+    const live = laneStat("live");
+    const paper = laneStat("paper");
+    const offerBits = (tag: string, x: ReturnType<typeof laneStat>) =>
+      x ? `${tag} ${money(x.captured)} of $${x.offered.toFixed(2)} offered${x.capture != null ? ` (${(x.capture * 100).toFixed(0)}%)` : ""}` : null;
+    if (live) {
+      const pct = live.capture != null ? `${(live.capture * 100).toFixed(0)}% of the moon` : money(live.captured);
+      await notify("MOONWIN", `CAUGHT · ${sym} — ${pct}`,
+        [flightLine, `capture  ${[offerBits("live", live), offerBits("SIM", paper)].filter(Boolean).join(" · ")}`, `scores   capture — the stat the business rides on`],
+        4, ["full_moon"], `https://dexscreener.com/solana/${pend.mint}`);
+    } else {
+      // why didn't live board? the latest refusal audit is the named reason
+      const [ref] = (await db.execute(sql`
+        SELECT action, details->>'reason' AS reason, created_at
+        FROM audit_log
+        WHERE details->>'mint' = ${pend.mint}
+          AND action IN ('live_buy_skipped','entry_crowd_unknown_refused','entry_wallet_antigate','live_buy_failed')
+          AND created_at > ${atIso}::timestamptz - interval '20 minutes'
+        ORDER BY created_at DESC LIMIT 1`)) as unknown as { action: string; reason: string | null; created_at: Date }[];
+      const why = ref
+        ? `refused  ${(ref.reason ?? ref.action).slice(0, 90)}`
+        : `no entry — trigger/confirm never fired for live (aperture or arrival timing)`;
+      if (paper) {
+        const pct = paper.capture != null ? `${(paper.capture * 100).toFixed(0)}%` : money(paper.captured);
+        await notify("MOONHALF", `HALF · ${sym} — SIM took ${pct}, live took 0%`,
+          [flightLine, `capture  ${offerBits("SIM", paper)} · live $0.00 (never boarded)`, why, `scores   P(board|live) — the receiver gap`],
+          4, ["last_quarter_moon"], `https://dexscreener.com/solana/${pend.mint}`);
+      } else {
+        await notify("MOONMISS", `MISSED · ${sym}${peakX != null ? ` — 0% of a ${peakX.toFixed(1)}× flight` : " — 0% captured"}`,
+          [flightLine, `capture  $0.00 — no size aboard, the offering flew unpriced`, why, `scores   P(board) — every miss is boarding tuition`],
+          4, ["new_moon"], `https://dexscreener.com/solana/${pend.mint}`);
+      }
+    }
+  }
+  s.moonshotPending = keep;
 }
 
 // ── LIVE OPEN CARDS — the board and the phone reflect the Trading DNA matrix
@@ -136,11 +229,14 @@ async function saveState(s: SentinelState): Promise<void> {
  * body) — emoji in an HTTP header is not a ByteString and silently killed every
  * push in v1; JSON bodies are UTF-8 and immune.
  */
-type Category = "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP" | "PULSE" | "SUMMARY" | "MOONSHOT" | "OPEN";
+type Category =
+  | "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP"
+  | "PULSE" | "SUMMARY" | "MOONSHOT" | "OPEN" | "MOONWIN" | "MOONHALF" | "MOONMISS";
 
 const CATEGORY_EMOJI: Record<Category, string> = {
   KILL: "⛔", LIVE: "🔴", RUNNER: "🏃", ARM: "🎯", HEALTH: "🩺", OPS: "🔧",
   TREND: "📈", RECAP: "🧾", PULSE: "❤️", SUMMARY: "📊", MOONSHOT: "🌙", OPEN: "🧬",
+  MOONWIN: "🌕", MOONHALF: "🌗", MOONMISS: "🌑",
 };
 
 async function notify(
@@ -268,6 +364,8 @@ async function checkMoonshots(s: SentinelState): Promise<void> {
   for (const r of rows) {
     if (s.moonshotSeen.includes(r.mint)) continue;
     s.moonshotSeen.push(r.mint);
+    // every 🌙 call owes the operator a verdict — queue the outcome debrief
+    s.moonshotPending.push({ mint: r.mint, at: Date.now() });
     if (s.moonshotSeen.length > 60) s.moonshotSeen = s.moonshotSeen.slice(-40);
     const dipPct = r.dip == null ? null : Number(r.dip) * 100;
     const snapPct = r.snap == null ? null : Number(r.snap) * 100;
@@ -630,6 +728,7 @@ while (true) {
     await checkPipelineStaleness();
     await checkMoonshots(state);
     await checkLiveOpens(state);
+    await checkMoonshotOutcomes(state);
     await checkFills(state);
     await checkHeartbeat(state);
     await checkDigests(state);
