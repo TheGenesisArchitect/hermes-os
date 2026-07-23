@@ -718,6 +718,17 @@ export async function maybeLiveBuy(
       await audit("live_buy_skipped", { mint, reason: `${sig.signature} — dead lane, live-blocked by operator order` });
       return;
     }
+    // ── THE WINNER-REP RECEIVER (operator, 2026-07-23: "open the live
+    // receiver") ─────────────────────────────────────────────────────────────
+    // A winner-rep crowd (net rep ≥ +1) IS the evidence the other gates exist
+    // to approximate: 48h paper 82–89% win / 47% capture, and the wallet graph
+    // out-discriminates stars, class regime, and the inflow floor on this
+    // cohort. So winner-rep clears at the same bar paper does — it bypasses
+    // the regime bench, the inflow floor, and the stars bar below. Every hard
+    // safety rail still applies: kill switches, exposure caps, depth floor,
+    // clone-wave, anti-gate, crowd gate, honeypot.
+    const winnerRepCrowd =
+      sig?.walletWinnerHits != null && sig?.walletRugHits != null && sig.walletWinnerHits - sig.walletRugHits >= 1;
     // ── REGIME CLASS GATE ────────────────────────────────────────────────────
     // The market is regime-centric (operator, 2026-07-22): CLIMBER went green
     // in the very window after the static audit blocked it. So live capital
@@ -725,8 +736,9 @@ export async function maybeLiveBuy(
     // paper tape (the free 24/7 sensor) is profitable at real sample size, and
     // benched when it is not. Below min sample, the audit's proven core
     // (RISER / MOON_FAST / MOON_STEADY / MOON_SLOW) trades on its priors and
-    // everything else waits for paper to prove the turn.
-    if (sig && cfg.LIVE_REGIME_CLASS_GATE) {
+    // everything else waits for paper to prove the turn. A benched class was
+    // mostly the unknown-crowd rugs now refused upstream — winner-rep rides.
+    if (sig && cfg.LIVE_REGIME_CLASS_GATE && !winnerRepCrowd) {
       const health = await classRegimeHealth(cfg, sig.signature);
       if (!health.allowed) {
         await audit("live_buy_skipped", { mint, reason: `${sig.signature} — regime gate: ${health.why}` });
@@ -739,7 +751,9 @@ export async function maybeLiveBuy(
     // and the 2×+ surge band ran 18-for-18 this week. A missing reading does
     // not veto — absence of measurement is not evidence of weakness — but a
     // MEASURED weak inflow is exactly the coin-flip cohort live cannot afford.
-    if (sig && sig.liqGrowth != null && sig.liqGrowth < cfg.LIVE_MIN_INFLOW) {
+    // (Winner-rep crowds exempt: inside 1.05–1.30 they ran 70%/12% vs the
+    // band's 29%/58% fakes — the crowd is the finer instrument.)
+    if (sig && !winnerRepCrowd && sig.liqGrowth != null && sig.liqGrowth < cfg.LIVE_MIN_INFLOW) {
       await audit("live_buy_skipped", {
         mint,
         reason: `inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.LIVE_MIN_INFLOW}× band (71% vs 45% win)`,
@@ -839,7 +853,8 @@ export async function maybeLiveBuy(
       await audit("live_buy_skipped", { mint, reason: "unrouted — live takes signature-routed trades only" });
       return;
     }
-    if ((sig.stars ?? 0) < cfg.LIVE_MIN_STARS) {
+    if ((sig.stars ?? 0) < cfg.LIVE_MIN_STARS && !winnerRepCrowd) {
+      // winner-rep exempt: the crowd's track record IS the evidence bar
       await audit("live_buy_skipped", { mint, reason: `${sig.stars ?? 0}★ — below live evidence bar (0★ ran −55.3% on deployed)` });
       return;
     }
@@ -910,7 +925,11 @@ export async function maybeLiveBuy(
       const tm = lgRow?.tm == null ? null : Number(lgRow.tm);
       if (lg !== null && Number.isFinite(lg)) {
         if (lg >= cfg.LIQ_INFLOW_STRONG) inflowMult = cfg.LIQ_INFLOW_SIZE_BOOST;
-        else if (lg <= cfg.LIQ_FLAT_MAX && tm !== null && tm >= 1.2) inflowMult = cfg.LIQ_FLAT_SIZE_MULT;
+        // UN-PROBED (operator, 2026-07-23): below strong, only winner-rep
+        // crowds are admitted now — 82–89% win / 47% capture earns full size,
+        // not the 0.3× probe built for the pre-gate coin-flip cohort.
+        else if (!winnerRepCrowd && lg <= cfg.LIQ_FLAT_MAX && tm !== null && tm >= 1.2)
+          inflowMult = cfg.LIQ_FLAT_SIZE_MULT;
       }
       // Late-entry (buying-the-top) shrink — mirror paper's allocation.
       if (tm !== null && Number.isFinite(tm) && tm >= cfg.LATE_ENTRY_LO && tm < cfg.LATE_ENTRY_HI)
