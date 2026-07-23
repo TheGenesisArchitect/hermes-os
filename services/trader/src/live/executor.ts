@@ -679,6 +679,12 @@ export async function maybeLiveBuy(
    */
   paperFrac: number | null = null,
 ): Promise<void> {
+  // STAGE CLOCK (operator, 2026-07-23: "the fastest horse — timing is
+  // everything"). Every live open records where its milliseconds went, so
+  // entry-latency optimization targets the measured slice, not a guess.
+  const t0 = Date.now();
+  let tGates = 0;
+  let tQuote = 0;
   // IN-FLIGHT CLAIM, taken before ANY async work. The gate's "already held"
   // check is read-then-write: two concurrent calls for the same signal both
   // pass it before either has inserted a row, and unlike paper the DB cannot
@@ -1077,7 +1083,9 @@ export async function maybeLiveBuy(
     // we refuse to chase the top. Max three attempts, every retry audited.
     const excludedProviders: string[] = [];
     let firstOut: number | null = null;
+    tGates = Date.now(); // every admission gate cleared — swap pipeline starts here
     let quote = await swapRouter.quote(cfg, WSOL_MINT, mint, lamports, cfg.LIVE_SLIPPAGE_BPS);
+    tQuote = Date.now();
     const impact = Math.abs(Number(quote.priceImpactPct ?? 0)) * 100;
     if (impact > cfg.ENTRY_MAX_SLIPPAGE_PCT) {
       await audit("live_buy_skipped", { mint, reason: `price impact ${impact.toFixed(1)}%` });
@@ -1173,7 +1181,11 @@ export async function maybeLiveBuy(
         positionId: position.id, mint, qty: res.outUi, priceUsd: entryPrice, feeUsd: res.feeSol * sol,
         entryPriceUsd: entryPrice, reason: "live_confirmed", txSignature: res.signature });
     }
-    await audit("live_open", { mint, usd, regime, convictionMult, anticipationMult: antiMult, qty: res.outUi, signature: res.signature, feeSol: res.feeSol });
+    await audit("live_open", {
+      mint, usd, regime, convictionMult, anticipationMult: antiMult, qty: res.outUi, signature: res.signature, feeSol: res.feeSol,
+      // the stage clock — where this entry's milliseconds went
+      latencyMs: { gates: tGates - t0, quote: tQuote - tGates, swapAndConfirm: Date.now() - tQuote, total: Date.now() - t0 },
+    });
     console.log(`💰 LIVE OPEN ${symbol ?? "?"} ${short(mint)} $${usd.toFixed(2)} (conv ×${convictionMult.toFixed(2)}, anti ×${antiMult.toFixed(2)}, ${res.outUi} tokens, tx ${res.signature.slice(0, 8)}…)`);
   } catch (err) {
     await audit("live_buy_failed", { mint, error: err instanceof Error ? err.message : String(err) }).catch(() => {});

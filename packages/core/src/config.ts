@@ -138,7 +138,11 @@ const envSchema = z.object({
   // armed at 22:20:00, disarmed ~20s later, peaked 3.49× and was never traded.
   // The entry scan is three local Postgres queries — no external API — so 12/min
   // instead of 3/min is free. Matches the manage cadence.
-  TRADER_POLL_MS: z.coerce.number().default(5_000), // cadence for SCANNING/opening new entries
+  // 5s → 2s (operator, 2026-07-23: "the fastest horse out of the stable —
+  // timing is everything"). The scan poll was the single largest controllable
+  // slice of live's entry latency: up to 5s of a 12-second spike spent waiting
+  // to even look. DRILLCAT's 11s lag = scan wait + serial gates + swap+confirm.
+  TRADER_POLL_MS: z.coerce.number().default(2_000), // cadence for SCANNING/opening new entries
   // Cadence for MANAGING open positions — the exit is where gains are kept or
   // lost, so it runs far tighter than the scan loop. Soly gave back 68% of its
   // move because 20s between looks let it roll 1.78x→1.25x unseen; the deaths
