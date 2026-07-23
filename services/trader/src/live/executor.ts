@@ -764,6 +764,8 @@ export async function maybeLiveBuy(
     // BBC 616f: a $3k dust pool cleared every signal gate mid-rug; live filled
     // at the collapsed price and the position never had an exit at size. The
     // freshest tick's liquidity is the exit-side question the signals don't ask.
+    let dbcTicket = false;
+    let dbcPoolLiq: number | null = null;
     {
       const [lt] = await db
         .select({ liq: candidateTicks.liquidityUsd })
@@ -779,11 +781,55 @@ export async function maybeLiveBuy(
         sig?.walletWinnerHits != null && sig.walletWinnerHits >= 2 && sig.walletWinnerHits - (sig.walletRugHits ?? 0) >= 1;
       const depthFloor = smWarm ? cfg.LIVE_MIN_ENTRY_LIQ_SM_USD : cfg.LIVE_MIN_ENTRY_LIQ_USD;
       if (liqNow != null && liqNow < depthFloor) {
-        await audit("live_buy_skipped", {
-          mint,
-          reason: `pool ${Math.round(liqNow)} below the ${depthFloor} depth floor${smWarm ? " (smart-money floor)" : ""} — no exit at size`,
-        });
-        return;
+        // ── DBC MOON TICKET — the bounded door into the moon factory ─────────
+        // 79% of witnessed 10x+ moons launch on meteora-dbc with pools the
+        // depth floor refuses. An ADMISSIBLE dbc candidate (strong inflow or
+        // winner-rep, MOON/RISER routed) boards at micro-ticket size instead
+        // of being turned away; everything else still hits the floor.
+        const admissible =
+          winnerRepCrowd || (sig?.liqGrowth != null && sig.liqGrowth >= cfg.LIQ_INFLOW_STRONG);
+        const classOk = sig != null && (sig.signature === "RISER" || sig.signature.startsWith("MOON"));
+        if (
+          cfg.LIVE_DBC_TICKET_ENABLED &&
+          admissible &&
+          classOk &&
+          liqNow >= cfg.LIVE_DBC_TICKET_MIN_LIQ_USD
+        ) {
+          const [t] = (await db.execute(sql`
+            SELECT tk.dex,
+              (SELECT count(*)::int FROM positions p JOIN tokens t2 ON t2.mint = p.mint
+                WHERE p.lane = 'live' AND p.status = 'open' AND t2.dex = 'meteora-dbc') AS opencnt,
+              (SELECT coalesce(sum(p.size_usd::float), 0) FROM positions p JOIN tokens t2 ON t2.mint = p.mint
+                WHERE p.lane = 'live' AND t2.dex = 'meteora-dbc'
+                  AND p.opened_at >= date_trunc('day', now())) AS spenttoday
+            FROM tokens tk WHERE tk.mint = ${mint}`)) as unknown as
+            { dex: string | null; opencnt: number; spenttoday: number }[];
+          if (t?.dex === "meteora-dbc") {
+            if (Number(t.opencnt) >= cfg.LIVE_DBC_TICKET_MAX_CONCURRENT) {
+              await audit("live_buy_skipped", { mint, reason: `dbc ticket: ${t.opencnt} already riding (cap ${cfg.LIVE_DBC_TICKET_MAX_CONCURRENT})` });
+              return;
+            }
+            if (Number(t.spenttoday) + cfg.LIVE_DBC_TICKET_USD > cfg.LIVE_DBC_TICKET_DAILY_BUDGET_USD) {
+              await audit("live_buy_skipped", { mint, reason: `dbc ticket: daily budget spent ($${Number(t.spenttoday).toFixed(2)}/$${cfg.LIVE_DBC_TICKET_DAILY_BUDGET_USD})` });
+              return;
+            }
+            dbcTicket = true;
+            dbcPoolLiq = liqNow;
+            await audit("live_dbc_ticket", {
+              mint,
+              pool: Math.round(liqNow),
+              via: winnerRepCrowd ? "winner-rep" : "strong-inflow",
+              signature: sig?.signature ?? null,
+            });
+          }
+        }
+        if (!dbcTicket) {
+          await audit("live_buy_skipped", {
+            mint,
+            reason: `pool ${Math.round(liqNow)} below the ${depthFloor} depth floor${smWarm ? " (smart-money floor)" : ""} — no exit at size`,
+          });
+          return;
+        }
       }
     }
     // ── CLONE-WAVE GATE (live only) ──────────────────────────────────────────
@@ -976,7 +1022,11 @@ export async function maybeLiveBuy(
     // paper is winning on. So a routed position is floored to a fee-viable size
     // and TAKEN, never skipped.
     const sized = Math.min(livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult, sig, paperFrac) * dailyThrottle, affordable);
-    const usd = Math.max(cfg.LIVE_MIN_POSITION_USD, sized);
+    let usd = Math.max(cfg.LIVE_MIN_POSITION_USD, sized);
+    // A DBC moon ticket overrides ALL sizing including the fee floor: ≤$2.50
+    // and ≤0.1% of the pool, so the exit-at-size question the depth floor asks
+    // stays honestly answered at ticket scale. The 10x tail is the payer.
+    if (dbcTicket) usd = Math.min(cfg.LIVE_DBC_TICKET_USD, (dbcPoolLiq ?? cfg.LIVE_DBC_TICKET_MIN_LIQ_USD) * cfg.LIVE_DBC_TICKET_POOL_FRAC);
     const lamports = BigInt(Math.floor((usd / sol) * 1e9));
 
     const wallet = liveWallet();

@@ -1139,6 +1139,21 @@ const envSchema = z.object({
   // better than depth does. Chillmothy (2★, w3/r0, 2.47× at 86% capture)
   // was refused at $1,972 by the flat floor while paper banked +$37.97.
   LIVE_MIN_ENTRY_LIQ_SM_USD: z.coerce.number().default(2_500),
+  // ── DBC MOON TICKETS (operator, 2026-07-23: "open the moon factory") ──────
+  // Blindspot audit: meteora-dbc birthed 114/145 witnessed 10x+ moons (79%),
+  // 7-minute flights, pools $2.5–8k at trigger — 76/77 UNDER the $8k depth
+  // floor, so live was locked out of the moon factory while paper realized
+  // +$331 on 47 boarded dbc moons. Tickets are the bounded exception: dbc +
+  // admissible signal (strong inflow OR winner-rep) + MOON/RISER class boards
+  // at micro size (≤$2.50, ≤0.1% of pool → exit-at-size stays honest), max 3
+  // concurrent, ≤$10/day. Worst case is four bad tickets, not a bleed; the
+  // 10x tail is the payer. All kill switches ride on top.
+  LIVE_DBC_TICKET_ENABLED: z.coerce.boolean().default(true),
+  LIVE_DBC_TICKET_USD: z.coerce.number().default(2.5),
+  LIVE_DBC_TICKET_MIN_LIQ_USD: z.coerce.number().default(2_500),
+  LIVE_DBC_TICKET_POOL_FRAC: z.coerce.number().default(0.001),
+  LIVE_DBC_TICKET_MAX_CONCURRENT: z.coerce.number().default(3),
+  LIVE_DBC_TICKET_DAILY_BUDGET_USD: z.coerce.number().default(10),
   // 0★ live setups ran −55.3% on deployed — no evidence edge, full drag.
   // Live requires at least one conviction mark; paper still takes 0★.
   LIVE_MIN_STARS: z.coerce.number().default(1),
