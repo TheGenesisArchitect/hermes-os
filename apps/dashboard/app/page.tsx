@@ -125,7 +125,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     getControlTerminal(),
     getSignatureConsole(),
     getLaneScorecard(),
-    getTradePerformance(6, laneFilter),
+    getTradePerformance(24, laneFilter),
     getLaneEquitySeries(),
     getPondRadar(),
     getHourlyWindows(),

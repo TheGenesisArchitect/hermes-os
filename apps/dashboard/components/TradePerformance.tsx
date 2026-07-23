@@ -265,6 +265,7 @@ export function TradePerformance({ view, liveEnabled }: { view: TradePerformance
               exitX: t.exitX,
               pnl: t.pnl,
               sizeUsd: t.sizeUsd,
+              closedAtMs: t.closedAtMs,
             }))}
           />
           <div className="mt-1 flex flex-wrap gap-3 text-[10px]" style={{ color: "var(--text-muted)" }}>

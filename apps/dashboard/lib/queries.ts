@@ -4144,6 +4144,7 @@ export async function getTradePerformance(windowHours = 6, lane?: "paper" | "liv
     const entry = num(r.entry);
     const size = num(r.sizeUsd);
     const pnl = num(r.pnl);
+    const closedAtMs = r.closedAt ? new Date(r.closedAt).getTime() : 0;
     const peakX = entry > 0 ? num(r.peak) / entry : 1;
     const exitX = entry > 0 && r.exit != null ? num(r.exit) / entry : 0;
     const realised = size > 0 ? 1 + pnl / size : 1;
@@ -4186,7 +4187,7 @@ export async function getTradePerformance(windowHours = 6, lane?: "paper" | "liv
     return {
       id: r.id, lane: r.lane, symbol: r.symbol, signature: r.signature, stars: r.stars,
       sizeUsd: size, pnl, peakX, exitX, captureP, gainAvailUsd, rungsHit, rungsReachable, bankedFrac,
-      exitReason: reason, heldMin, snapPct: r.snapPct == null ? null : num(r.snapPct), flags, grade,
+      exitReason: reason, heldMin, closedAtMs, snapPct: r.snapPct == null ? null : num(r.snapPct), flags, grade,
     };
   });
 
