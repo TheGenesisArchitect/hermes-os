@@ -1,4 +1,8 @@
 import "dotenv/config";
+import { resolve } from "node:path";
+// ONE NEWSDESK ONLY — it ran lock-less and sat dead 87.8h unnoticed (2026-07-23).
+import { acquireSingletonLock } from "@hermes/core";
+acquireSingletonLock(resolve(import.meta.dirname, "../../../.hermes-newsdesk.pid"), "newsdesk");
 import { generate } from "./generate.js";
 import { generateSignals } from "./signals.js";
 

@@ -274,6 +274,64 @@ export default async function TokenPage({ params }: { params: Promise<{ mint: st
         </section>
       </div>
 
+      {/* TRADE LIFECYCLE (2026-07-23, operator-requested): the most recent
+          position's whole story on one strip — entry ⚡, TP rung fills, the
+          gain-lock floor, and the exit — drawn over the management ticks.
+          Bo (5xyjse…) is the reference specimen: entry 1.87×, peak 2.18×,
+          LP yanked minute 2.8, dust-rug write-off. */}
+      {mgmtTrajectory.length >= 3 && positions.length > 0 ? (() => {
+        const pos = positions[0]!;
+        const entryP = Number(pos.entryPriceUsd) || 0;
+        const marks = mgmtTrajectory.map((t) => t.markMultiple);
+        const maxM = Math.max(1.05, ...marks);
+        const minM = Math.min(0.95, ...marks);
+        const W = 680, H = 180, PL = 40, PB = 18, PT = 10, PR = 8;
+        const X = (i: number) => PL + ((W - PL - PR) * i) / Math.max(1, marks.length - 1);
+        const Y = (m: number) => PT + (H - PT - PB) * (1 - (m - minM) / Math.max(0.001, maxM - minM));
+        const path = marks.map((m, i) => (i ? "L" : "M") + X(i).toFixed(1) + "," + Y(m).toFixed(1)).join("");
+        const peak = Math.max(...marks);
+        const floor = Math.max(1.02, 1 + (peak - 1) * 0.65);
+        const sells = entryP > 0 ? fills.filter((f) => f.side === "sell").map((f) => ({
+          mult: Number(f.priceUsd) / entryP,
+          tp: /take_profit/.test(f.reason ?? ""),
+        })) : [];
+        const nearestIdx = (m: number) => { let bi = 0, bd = Infinity; marks.forEach((v, i) => { const d = Math.abs(v - m); if (d < bd) { bd = d; bi = i; } }); return bi; };
+        return (
+          <section className="card p-4">
+            <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+              Trade lifecycle — {pos.lane === "live" ? "◆ live" : "SIM"} · entry ⚡ / rungs / gain-lock floor / exit
+            </h2>
+            <div style={{ overflowX: "auto" }}>
+              <svg viewBox={"0 0 " + W + " " + H} width="100%">
+                {[1, floor, peak].map((lv, i) => (
+                  <g key={i}>
+                    <line x1={PL} y1={Y(lv)} x2={W - PR} y2={Y(lv)}
+                      style={{ stroke: i === 1 ? "var(--status-warning)" : "var(--gridline)", strokeWidth: 1, strokeDasharray: i === 1 ? "4 3" : "2 4" }} />
+                    <text x={PL - 4} y={Y(lv) + 3} textAnchor="end" style={{ fill: "var(--text-muted)", fontSize: 9 }}>{lv.toFixed(2)}×</text>
+                  </g>
+                ))}
+                <path d={path} style={{ stroke: "var(--series-1)", strokeWidth: 2, fill: "none" }} />
+                <circle cx={X(0)} cy={Y(marks[0] ?? 1)} r={4} style={{ fill: "var(--series-1)" }} />
+                <text x={X(0) + 6} y={Y(marks[0] ?? 1) - 6} style={{ fill: "var(--text-secondary)", fontSize: 9 }}>⚡ entry</text>
+                {sells.map((sl, i) => (
+                  <g key={i}>
+                    <circle cx={X(nearestIdx(sl.mult))} cy={Y(sl.mult)} r={4}
+                      style={{ fill: sl.tp ? "var(--status-good)" : "var(--status-serious)" }} />
+                    <text x={X(nearestIdx(sl.mult)) + 5} y={Y(sl.mult) - 5} style={{ fill: "var(--text-muted)", fontSize: 8.5 }}>
+                      {sl.tp ? "TP " : "exit "}{sl.mult.toFixed(2)}×
+                    </text>
+                  </g>
+                ))}
+                <text x={W - PR} y={Y(floor) - 4} textAnchor="end" style={{ fill: "var(--status-warning)", fontSize: 9 }}>gain-lock floor {floor.toFixed(2)}×</text>
+              </svg>
+            </div>
+            <p className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+              {String(pos.exitReason ?? "open")} · peak {peak.toFixed(2)}× · green dots are banked rungs; the dashed line is the floor the trail defends from the peak.
+            </p>
+          </section>
+        );
+      })() : null}
+
       {/* Trade drill-down — fills + the classifier's tick-by-tick management calls
           on our most recent position in this token */}
       {(fills.length > 0 || mgmtTrajectory.length > 0) ? (

@@ -121,6 +121,29 @@ async function notify(
   }
 }
 
+// ── PIPELINE STALENESS — services that die silently must page (87.8h newsdesk
+// outage, 2026-07-23). Transition-only: one alert on stale, one on recovery.
+const staleFlags = new Map<string, boolean>();
+async function checkPipelineStaleness(): Promise<void> {
+  const checks: [string, string, number][] = [
+    ["news desk", "select extract(epoch from (now() - max(created_at)))/3600 as h from market_news", 3],
+    ["discovery (scout)", "select extract(epoch from (now() - max(first_seen_at)))/3600 as h from tokens", 0.33],
+  ];
+  for (const [name, query, maxH] of checks) {
+    try {
+      const rows = (await db.execute(sql.raw(query))) as unknown as { h: number | null }[];
+      const age = rows[0]?.h == null ? null : Number(rows[0].h);
+      const stale = age != null && age > maxH;
+      const was = staleFlags.get(name) ?? false;
+      if (stale && !was)
+        await notify("HEALTH", `${name} STALE — ${age!.toFixed(1)}h since last output`, [`threshold ${maxH}h · investigate the daemon/roster`], 4, ["warning"]);
+      if (!stale && was)
+        await notify("HEALTH", `${name} recovered`, [`fresh output within ${maxH}h`], 3, ["white_check_mark"]);
+      staleFlags.set(name, stale);
+    } catch { /* a staleness probe must never crash the sentinel */ }
+  }
+}
+
 async function checkKillSwitches(s: SentinelState): Promise<void> {
   const rows = await db.select().from(config).where(sql`${config.key} in ('kill_switch','live_kill')`);
   for (const r of rows) {
@@ -537,6 +560,7 @@ let ledgerTick = 0;
 while (true) {
   try {
     await checkKillSwitches(state);
+    await checkPipelineStaleness();
     await checkMoonshots(state);
     await checkFills(state);
     await checkHeartbeat(state);

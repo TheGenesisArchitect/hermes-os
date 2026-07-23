@@ -2,6 +2,10 @@ import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
 // repo-root .env — services run with cwd at their own package dir
 loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
+// ONE SCOUT ONLY — discovery starving silently is the worst failure mode
+// (roster audit 2026-07-23: scout was the last lock-less trading-path service).
+import { acquireSingletonLock } from "@hermes/core";
+acquireSingletonLock(resolve(import.meta.dirname, "../../../.hermes-scout.pid"), "scout");
 import {
   computeScore,
   fetchTokenMarket,
