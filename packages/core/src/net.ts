@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /**
  * fetch() that survives this host's upstream SNI-DPI filter.
@@ -71,11 +74,22 @@ function curlFetch(
     const args = ["-s", "--max-time", String(Math.max(1, Math.ceil(timeoutMs / 1000))), "-w", "\n%{http_code}"];
     for (const [k, v] of Object.entries(headers ?? {})) args.push("-H", `${k}: ${v}`);
     if (method && method.toUpperCase() !== "GET") args.push("-X", method.toUpperCase());
-    // spawn passes args verbatim (no shell), so a JSON body needs no escaping;
-    // --data-binary preserves it exactly rather than stripping newlines like -d.
-    if (body != null) args.push("--data-binary", body);
+    // Body goes through a TEMP FILE, never argv: Windows argv encoding mangles
+    // multibyte characters (emoji arrived as "??" on the operator's phone,
+    // 2026-07-23), and @file --data-binary delivers exact UTF-8 bytes.
+    let bodyFile: string | null = null;
+    if (body != null) {
+      bodyFile = join(tmpdir(), `hermes-curl-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}.json`);
+      writeFileSync(bodyFile, body, "utf8");
+      args.push("--data-binary", `@${bodyFile}`);
+    }
     args.push(url);
     const child = spawn("curl", args, { windowsHide: true });
+    const cleanup = () => {
+      if (bodyFile) try { unlinkSync(bodyFile); } catch { /* best effort */ }
+    };
+    child.on("close", cleanup);
+    child.on("error", cleanup);
     let out = "";
     let errText = "";
     child.stdout.on("data", (d) => (out += d));
