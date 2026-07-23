@@ -717,6 +717,49 @@ if (state.lastOpenPosId < 0) {
   state.lastOpenPosId = num(p?.m);
 }
 
+// ROW-HEAL SWEEP (finn + COW, 2026-07-23): a mirror sell can land AFTER the
+// desync heal closes the row — the close honestly reads the fills it can see,
+// then the late fill journals and the row under-records (finn: a filled +12.9%
+// sell clipped to $0; COW: −$4.00 recorded on a sell that recovered $2.29).
+// The journal is authoritative, so every ledger cycle recomputes realized for
+// recent closed LIVE rows whose money disagrees with their fills (>1¢) —
+// idempotent, unlock-audited, transition-only logging.
+async function healLiveRowsFromFills(): Promise<void> {
+  const rows = (await db.execute(sql`
+    SELECT p.id, p.realized_pnl_usd::float rowpnl, fp.pnl AS fillpnl, fp.last_reason
+    FROM positions p
+    JOIN (
+      SELECT f.position_id,
+        (sum(CASE WHEN f.side = 'sell' THEN f.qty_tokens::float * f.price_usd::float
+                  ELSE -(f.qty_tokens::float * f.price_usd::float) END)
+         - sum(coalesce(f.fee_usd::float, 0)))::float AS pnl,
+        (SELECT f2.reason FROM fills f2 WHERE f2.position_id = f.position_id AND f2.side = 'sell'
+         ORDER BY f2.id DESC LIMIT 1) AS last_reason
+      FROM fills f GROUP BY f.position_id
+    ) fp ON fp.position_id = p.id
+    WHERE p.lane = 'live' AND p.status = 'closed' AND p.closed_at > now() - interval '48 hours'
+      AND abs(p.realized_pnl_usd::float - fp.pnl) > 0.01`)) as unknown as
+    { id: number; rowpnl: number; fillpnl: number; last_reason: string | null }[];
+  for (const r of rows) {
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL hermes.unlock = 'on'`);
+      await tx.execute(sql`
+        UPDATE positions SET realized_pnl_usd = ${Number(r.fillpnl).toFixed(6)}
+          ${r.last_reason ? sql`, exit_reason = ${r.last_reason}` : sql``}
+        WHERE id = ${r.id} AND status = 'closed'`);
+      await tx.execute(sql`
+        INSERT INTO audit_log (actor, action, details)
+        VALUES ('sentinel', 'row_heal_from_fills', ${JSON.stringify({
+          positionId: r.id,
+          rowPnl: r.rowpnl,
+          fillsPnl: r.fillpnl,
+          reason: "closed live row disagreed with journaled fills (late fill after desync close)",
+        })}::jsonb)`);
+    });
+    console.log(`🩹 row-heal: position ${r.id} $${r.rowpnl.toFixed(2)} → $${r.fillpnl.toFixed(2)} (fills authoritative)`);
+  }
+}
+
 // LEDGER PHASE 2 — journal sync + chain reconciler, every ~5 minutes (10 ticks
 // at the 30s poll). Sync first so the reconciler always judges a fresh journal.
 let ledgerTick = 0;
@@ -737,6 +780,7 @@ while (true) {
         await runLedgerSync();
         const line = await runReconciler(cfg, (title, lines) => notify("OPS", title, lines, 4, ["ledger"]));
         console.log(`📒 ${line}`);
+        await healLiveRowsFromFills();
       } catch (err) {
         console.warn(`ledger phase-2 cycle failed: ${err instanceof Error ? err.message : err}`);
       }
