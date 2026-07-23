@@ -808,6 +808,31 @@ export async function maybeLiveBuy(
       });
       return;
     }
+    // ── BELOW-STRONG CROWD GATE ──────────────────────────────────────────────
+    // Unsellable dissection (2026-07-23): every recent live total-loss was an
+    // ATOMIC LP pull — drain tick = dead tick, no exit machinery applies — and
+    // all shared one entry tell: below-strong inflow with an UNKNOWN crowd
+    // (0W/0R). Live 7d in that cohort: 51 trades, −$57.68, 27% win, across all
+    // venues; winner-rep below-strong ran −$2.20 at 43%. The fakes show up with
+    // fresh wallets: unknown is not neutral here. Below LIQ_INFLOW_STRONG, live
+    // requires a winner-rep crowd; unknown stays paper-only (the explorer lane
+    // and the standing counterfactual band-watch tracks).
+    if (sig && sig.liqGrowth != null && sig.liqGrowth < cfg.LIQ_INFLOW_STRONG) {
+      const wh = sig.walletWinnerHits;
+      const rh = sig.walletRugHits;
+      const winnerRep = wh != null && rh != null && wh - rh >= 1;
+      if (!winnerRep) {
+        await audit("entry_crowd_unknown_refused", {
+          mint,
+          lane: "live",
+          inflow: sig.liqGrowth,
+          walletWinnerHits: wh ?? null,
+          walletRugHits: rh ?? null,
+          reason: `crowd ${wh ?? "?"}W/${rh ?? "?"}R at ${sig.liqGrowth.toFixed(2)}× inflow — below-strong requires winner-rep (unknown cohort −$57.68/7d, 27% win)`,
+        });
+        return;
+      }
+    }
     if (!sig) {
       // Unrouted flow ran −$22.95 on live since routing went live. A trade
       // without a genome has no exit profile and no evidence — paper-only.

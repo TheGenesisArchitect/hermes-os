@@ -754,6 +754,30 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       continue;
     }
 
+    // BELOW-STRONG CROWD GATE, PAPER EDITION (unsellable dissection 2026-07-23):
+    // every recent live total-loss was an atomic LP pull wearing the same entry
+    // tell — below-strong inflow with an unknown crowd (0W/0R). Live 7d in that
+    // cohort: 51 trades, −$57.68, 27% win. Live refuses it; the operator's call
+    // is that paper mirrors the gate so both lanes measure the same market —
+    // "we are not hallucinating what's available." The refused cohort stays
+    // measured through candidate labels (band-watch), which arrive untraded.
+    const inflowNum = liqGrowth != null ? Number(liqGrowth) : null;
+    if (inflowNum != null && Number.isFinite(inflowNum) && inflowNum < cfg.LIQ_INFLOW_STRONG) {
+      const winnerRep = walletWinnerHits != null && walletRugHits != null && walletWinnerHits - walletRugHits >= 1;
+      if (!winnerRep) {
+        await audit("entry_crowd_unknown_refused", {
+          mint,
+          lane: "paper",
+          inflow: inflowNum,
+          walletWinnerHits: walletWinnerHits ?? null,
+          walletRugHits: walletRugHits ?? null,
+          reason: `crowd ${walletWinnerHits ?? "?"}W/${walletRugHits ?? "?"}R at ${inflowNum.toFixed(2)}× inflow — below-strong requires winner-rep`,
+        });
+        await db.update(signals).set({ status: "crowd_refused" }).where(eq(signals.id, signal.id)).catch(() => {});
+        continue;
+      }
+    }
+
     // Open-only duplicate guard — a CLOSED prior position no longer blocks
     // (re-entry policy lives in the recorder's armed flag: cap + cooldown).
     const [held] = await db
