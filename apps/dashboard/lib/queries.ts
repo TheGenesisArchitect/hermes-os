@@ -4166,6 +4166,12 @@ export interface TradeScore {
   /** epoch ms of the close — the Analyzer scatter's history scrubber reads this. */
   closedAtMs: number;
   snapPct: number | null;
+  /** SEAT — trigger multiple at qualification, judged against the radar band. */
+  trigMult: number | null;
+  inBand: boolean | null;
+  /** CROWD — the wallet signature at entry (winner hits / rug hits). */
+  walletWinnerHits: number | null;
+  walletRugHits: number | null;
   /** Managed-quality flags — the things P&L hides. */
   flags: string[];
   grade: "A" | "B" | "C" | "D" | "F";
@@ -4209,13 +4215,33 @@ export async function getTradePerformance(windowHours = 6, lane?: "paper" | "liv
       snapPct: positions.snapPct,
       qtyTokens: positions.qtyTokens,
       qtyRemaining: positions.qtyRemaining,
+      // The funnel context — seat + crowd, so the drawer shows the WHOLE
+      // pipeline each trade travelled, not just its management.
+      trigMult: candidateOutcomes.triggerMultiple,
+      wh: candidateOutcomes.walletWinnerHits,
+      rh: candidateOutcomes.walletRugHits,
     })
     .from(positions)
     .leftJoin(tokens, eq(tokens.mint, positions.mint))
+    .leftJoin(candidateOutcomes, eq(candidateOutcomes.mint, positions.mint))
     .where(and(eq(positions.status, "closed"), gte(positions.closedAt, since),
       lane ? eq(positions.lane, lane) : undefined))
     .orderBy(desc(positions.closedAt))
     .limit(300);
+
+  // The radar's currently locked band — the seat lamp judges each trigger
+  // against it (the band the finder has measured for this regime).
+  let bandLo = 1.35;
+  let bandHi = 1.65;
+  try {
+    const [bandRow] = (await db.execute(sql`select value from config where key = 'sweetspot_band'`)) as unknown as {
+      value: { lo?: number; hi?: number } | null;
+    }[];
+    if (bandRow?.value?.lo != null) bandLo = Number(bandRow.value.lo);
+    if (bandRow?.value?.hi != null) bandHi = Number(bandRow.value.hi);
+  } catch {
+    /* static fallback stands */
+  }
 
   // Rungs AND the quantity they sold, from the same pass so the two can never
   // disagree. "Banked" has to mean sold ON THE WAY UP — reading qtyRemaining on
@@ -4286,7 +4312,12 @@ export async function getTradePerformance(windowHours = 6, lane?: "paper" | "liv
     return {
       id: r.id, lane: r.lane, symbol: r.symbol, signature: r.signature, stars: r.stars,
       sizeUsd: size, pnl, peakX, exitX, captureP, gainAvailUsd, rungsHit, rungsReachable, bankedFrac,
-      exitReason: reason, heldMin, closedAtMs, snapPct: r.snapPct == null ? null : num(r.snapPct), flags, grade,
+      exitReason: reason, heldMin, closedAtMs, snapPct: r.snapPct == null ? null : num(r.snapPct),
+      trigMult: r.trigMult == null ? null : num(r.trigMult),
+      inBand: r.trigMult == null ? null : num(r.trigMult) >= bandLo && num(r.trigMult) <= bandHi,
+      walletWinnerHits: r.wh == null ? null : Number(r.wh),
+      walletRugHits: r.rh == null ? null : Number(r.rh),
+      flags, grade,
     };
   });
 

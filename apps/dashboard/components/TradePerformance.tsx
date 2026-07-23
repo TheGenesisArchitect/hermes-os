@@ -68,11 +68,22 @@ function Row({ t }: { t: TradeScore }) {
         <span className="font-semibold" style={{ color: GRADE_TONE[t.grade] }}>
           {t.grade}
         </span>
-        {isLive ? (
-          <span title="live wallet" className="ml-1.5" style={{ color: "var(--status-serious)" }}>
-            ◆
-          </span>
-        ) : null}
+        {/* Explicit lane chip — every row says which book it belongs to
+            (operator: "ensure that we label paper/live"). */}
+        <span
+          className="ml-1.5 rounded px-1 py-px text-[9px] font-bold tracking-wide"
+          style={
+            isLive
+              ? {
+                  background: "color-mix(in srgb, var(--status-serious) 18%, transparent)",
+                  color: "var(--status-serious)",
+                  border: "1px solid var(--status-serious)",
+                }
+              : { color: "var(--text-muted)", border: "1px solid var(--gridline)" }
+          }
+        >
+          {isLive ? "◆ LIVE" : "SIM"}
+        </span>
         <span className="ml-2" style={{ color: "var(--text-primary)" }}>
           {t.symbol ?? "?"}
         </span>
@@ -83,6 +94,28 @@ function Row({ t }: { t: TradeScore }) {
       </td>
       <td className="py-1.5 pr-3">
         <div className="flex flex-wrap gap-x-3 gap-y-1">
+          <Stage
+            label={t.trigMult != null ? `seat ${t.trigMult.toFixed(2)}×` : "seat —"}
+            state={t.trigMult == null ? "na" : t.inBand ? "ok" : "miss"}
+            title="SEAT — trigger multiple vs the radar-locked sweetspot band; red = boarded outside the seat (pre-ceiling or band drift)"
+          />
+          <Stage
+            label={
+              t.walletWinnerHits != null && t.walletRugHits != null
+                ? `crowd ${t.walletWinnerHits}W/${t.walletRugHits}R`
+                : "crowd —"
+            }
+            state={
+              t.walletWinnerHits == null || t.walletRugHits == null
+                ? "na"
+                : t.walletWinnerHits - t.walletRugHits >= 1
+                  ? "ok"
+                  : t.walletWinnerHits - t.walletRugHits <= -1
+                    ? "miss"
+                    : "na"
+            }
+            title="CROWD — the wallet signature at entry: green = winner-rep (the real), red = rug-history (the fakes, now gated), grey = unknown"
+          />
           <Stage
             label={`snap${t.snapPct != null ? ` +${(t.snapPct * 100).toFixed(0)}%` : ""}`}
             state={t.snapPct != null ? "ok" : "na"}
@@ -125,6 +158,12 @@ function Row({ t }: { t: TradeScore }) {
             {t.captureP.toFixed(0)}%
           </span>
         )}
+        {/* the offering under the capture — the business stat's denominator */}
+        {t.gainAvailUsd > 0 ? (
+          <div className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+            of ${t.gainAvailUsd.toFixed(2)}
+          </div>
+        ) : null}
       </td>
       <td
         className="tabular py-1.5 pr-3 text-right"
@@ -161,7 +200,7 @@ export function TradePerformance({ view, liveEnabled }: { view: TradePerformance
       accent="var(--series-1)"
       storageKey="trade-performance"
       drawerTitle="Every trade, stage by stage"
-      drawerSubtitle="Entry snap → ladder rungs → banked on the way up → exit mechanism"
+      drawerSubtitle="Seat → crowd → snap → rungs → banked → exit — the full funnel, labeled per lane"
       expandLabel="All trades"
       actions={<LivePill enabled={liveEnabled} n={liveN} />}
       drawer={
