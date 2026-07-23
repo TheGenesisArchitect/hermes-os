@@ -393,6 +393,20 @@ const envSchema = z.object({
   TRAIL_GAIN_GB_MID: z.coerce.number().default(0.3), // 30% in the 2.5–6× runner slice
   TRAIL_GAIN_GB_WIDE: z.coerce.number().default(0.45), // 45% above 6× — room to ride the parabola
   HARD_STOP_PCT: z.coerce.number().default(5), // pre-ignition: a confirmed entry that reverses 5% failed — cut it cheap (~-$0.9 not -$17)
+  // INTERIM NEVER-ARMED STOP (operator-approved 2026-07-23; the overnight
+  // replay prices it properly). Four never-armed full-size losses in one day
+  // (CA −$21.36, COW −$15.98, VLAD −$5.21, looong −$4.90 ≈ −$47) once the
+  // compounding sizes landed: a position that has NEVER reached the arm bar
+  // and is down NEVER_ARM_STOP_PCT after NEVER_ARM_STOP_MIN minutes is cut,
+  // instead of riding a class-deep stop to −40..100%. Conservative interim
+  // params: the 8-minute grace clears dbc ignition chop (BULLDOG: −50% for
+  // 2.5m then 153×) and the wick-moon anatomy; atomic rugs are unsavable by
+  // ANY stop and stay the crowd gate's job. Only ever shortens losses — a
+  // trade that armed is untouched.
+  NEVER_ARM_STOP_ENABLED: z.coerce.boolean().default(true),
+  NEVER_ARM_BAR: z.coerce.number().default(1.2), // the trail-arm level — "armed" means reached this
+  NEVER_ARM_STOP_MIN: z.coerce.number().default(8), // grace minutes before the stop is live
+  NEVER_ARM_STOP_PCT: z.coerce.number().default(25), // cut at −25% instead of the deep class stop
   // VENUE-SPLIT pre-ignition stop (user-ruled 2026-07-15, the BULLDOG 153x
   // autopsy): on THIN bonding-curve tape a tight stop is a lie twice over — it
   // gap-fills far below its line ($10.50 "5% stop" filled at −52%) AND ejects

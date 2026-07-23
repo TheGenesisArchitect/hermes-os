@@ -1319,6 +1319,18 @@ export function decideExit(
       venue === "meteoradbc" || venue === "meteora-dbc" || market.liquidityUsd < cfg.THIN_STOP_LIQ_USD;
     const stopPct = thin ? cfg.HARD_STOP_PCT_THIN : cfg.HARD_STOP_PCT;
     if (price <= entry * (1 - stopPct / 100)) return { reason: "hard_stop", fraction: 1 };
+    // INTERIM NEVER-ARMED STOP (operator, 2026-07-23 — "the replay confirms
+    // tonight"): past the grace window, a position that never reached the arm
+    // bar and sits ≥25% under entry is a slow bleeder wearing a deep class
+    // stop (COW rode to 0.59× before the clock cut it). Cut it at bounded
+    // cost; a trade that ever armed is handled by the trail above, never here.
+    if (
+      cfg.NEVER_ARM_STOP_ENABLED &&
+      peakMult < cfg.NEVER_ARM_BAR &&
+      ageHours * 60 >= cfg.NEVER_ARM_STOP_MIN &&
+      price <= entry * (1 - cfg.NEVER_ARM_STOP_PCT / 100)
+    )
+      return { reason: "never_armed_stop", fraction: 1 };
   }
 
   if (ageHours >= cfg.MAX_HOLD_HOURS) return { reason: "stop_time", fraction: 1 };
