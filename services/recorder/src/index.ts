@@ -36,12 +36,6 @@ import { refreshWalletReputation, scoreCandidateWalletEdge } from "./walletReput
 
 const cfg = loadConfig();
 const triggerCfg = entryTriggerConfigFrom(cfg);
-// ENTRY-TIMING GENOME state: mark at each candidate's first qualifying tick.
-// Slow classes must run +20% beyond this pin before a dollar deploys (fast
-// classes are exempt). In-memory by design: a recorder restart re-pins on the
-// next qualifying tick, which is conservative, never permissive.
-const slowEntryPin = new Map<string, number>();
-
 const num = (v: string | null | undefined): number => (v == null ? 0 : Number(v));
 const short = (mint: string) => `${mint.slice(0, 4)}…${mint.slice(-4)}`;
 
@@ -343,7 +337,7 @@ async function observe(
     // pool flat; a real move pulls new capital in.
     const firstTrustedLiq = trustedRows.length > 0 ? num(trustedRows[0]?.liquidityUsd) : market.liquidityUsd;
     const liqGrowth = firstTrustedLiq > 0 ? market.liquidityUsd / firstTrustedLiq : null;
-    const trig = trusted
+    let trig = trusted
       ? evaluateEntryTrigger(
           series,
           {
@@ -370,6 +364,59 @@ async function observe(
           snapPct: 0,
           snapRate: 0,
         };
+    const [book] = await db
+      .select({
+        openCount: sql<number>`count(*) filter (where ${positions.status} = 'open')::int`,
+        totalCount: sql<number>`count(*)::int`,
+        lastClosedAt: sql<Date | null>`max(${positions.closedAt})`,
+      })
+      .from(positions)
+      .where(eq(positions.mint, o.mint));
+    const cooledDown =
+      !book?.lastClosedAt ||
+      Date.now() - new Date(book.lastClosedAt).getTime() >= cfg.REENTRY_COOLDOWN_MIN * 60_000;
+    // ── RE-CONFIRM PATH (Study 1, 2026-07-23) ────────────────────────────────
+    // The confirm aperture is minutes 2–3 of a candidate's life, so an exited
+    // trade could never re-trigger — the 24h replay measured +$45.53 of
+    // harvest at 67.6% wins sitting behind that closed door, carried by RISER
+    // (+$69.31) and CLIMBER (+$18.88). A previously-traded candidate re-opens
+    // the trigger when it prints the replay's exact shape: a post-exit trough
+    // reclaimed by ≥15% within 45 minutes, buy share outside the churn zone,
+    // pool alive. Class-scoped at the arm (RISER/CLIMBER only); the entry cap
+    // (REENTRY_MAX_ENTRIES) still bounds total entries per mint.
+    let reconfirmed = false;
+    if (
+      !trig.triggered &&
+      (book?.openCount ?? 0) === 0 &&
+      (book?.totalCount ?? 0) >= 1 &&
+      (book?.totalCount ?? 0) < cfg.REENTRY_MAX_ENTRIES &&
+      cooledDown &&
+      book?.lastClosedAt &&
+      Date.now() - new Date(book.lastClosedAt).getTime() <= 45 * 60_000 &&
+      market.liquidityUsd >= 1_000
+    ) {
+      const [tr] = (await db.execute(sql`
+        SELECT min(price_usd::float) lo, max(price_usd::float) hi FROM candidate_ticks
+        WHERE mint = ${o.mint} AND snapped_at >= ${new Date(book.lastClosedAt)}`)) as unknown as { lo: number | null; hi: number | null }[];
+      const lo = tr?.lo == null ? 0 : Number(tr.lo);
+      const hi = tr?.hi == null ? 0 : Number(tr.hi);
+      const snap = lo > 0 ? market.priceUsd / lo - 1 : 0;
+      const bs = t.buyShareM5 == null ? 0.7 : Number(t.buyShareM5);
+      if (snap >= 0.15 && !(bs >= 0.5 && bs < 0.6)) {
+        const minSince = Math.max(0.5, (Date.now() - new Date(book.lastClosedAt).getTime()) / 60_000);
+        reconfirmed = true;
+        trig = {
+          ...trig,
+          triggered: true,
+          reason: `reconfirm +${(100 * snap).toFixed(0)}% off the post-exit trough`,
+          buyShare: bs,
+          dipDepth: hi > 0 ? Math.max(0, 1 - lo / hi) : 0,
+          snapPct: snap,
+          snapRate: snap / minSince,
+        };
+      }
+    }
+
     // TRADE SIGNATURE — routed from the trajectory shape at THIS tick. Computed
     // for every armed candidate, traded or not, so the refusal population stays
     // measurable instead of invisible. The trader looks the exit profile up from
@@ -406,41 +453,9 @@ async function observe(
     // with no way back in. A candidate now re-arms after its position closes
     // IF it re-qualifies the full live gate, bounded by an entry cap and a
     // cooldown so a whipsaw can't thrash open/stop/reopen.
-    const [book] = await db
-      .select({
-        openCount: sql<number>`count(*) filter (where ${positions.status} = 'open')::int`,
-        totalCount: sql<number>`count(*)::int`,
-        lastClosedAt: sql<Date | null>`max(${positions.closedAt})`,
-      })
-      .from(positions)
-      .where(eq(positions.mint, o.mint));
-    const cooledDown =
-      !book?.lastClosedAt ||
-      Date.now() - new Date(book.lastClosedAt).getTime() >= cfg.REENTRY_COOLDOWN_MIN * 60_000;
-    // ENTRY-TIMING GENOME (2026-07-22, operator: "every pre-arm is a donation").
-    // The 48h delayed-entry replay: requiring arm-level proof (+20% beyond the
-    // confirm bar) turned RISER from +$4.67 into +$141.75 (n=133), fixed every
-    // slow class, and DESTROYED MOON_FAST (+$109.56 → +$0.44) — speed IS the
-    // fast classes' edge. Entry timing therefore belongs to the signature the
-    // same way exits do: fast classes enter on the snap, slow classes wait for
-    // the move to prove the arm before a single dollar deploys. Refused-but-
-    // labeled candidates keep the sensor honest without positions.
-    const FAST_ENTRY = signature === "MOON_FAST" || signature === "MOON_VIOLENT";
-    // The proof is RELATIVE to the tick that first qualified — DUCK confirmed
-    // already above an absolute 1.62× bar and sailed straight through the first
-    // version of this gate to a pre-arm death. Pin the mark at first qualify;
-    // demand +20% beyond IT. The pin resets when the candidate stops
-    // qualifying, so a fresh trough-snap cycle earns a fresh reference.
-    if (trig.triggered) {
-      if (!slowEntryPin.has(o.mint)) slowEntryPin.set(o.mint, trig.markMultiple);
-    } else {
-      slowEntryPin.delete(o.mint);
-    }
-    const pinned = slowEntryPin.get(o.mint) ?? trig.markMultiple;
-    const armProof = FAST_ENTRY || trig.markMultiple >= pinned * 1.2;
     const armed =
       trig.triggered &&
-      armProof &&
+      (!reconfirmed || signature === "RISER" || signature === "CLIMBER") &&
       (book?.openCount ?? 0) === 0 &&
       (book?.totalCount ?? 0) < cfg.REENTRY_MAX_ENTRIES &&
       cooledDown;

@@ -1027,6 +1027,9 @@ const liveBuyInFlight = new Set<string>();
 // real capital. Paper is the free sensor — it keeps trading everything.
 const REGIME_CORE = new Set(["RISER", "MOON_FAST", "MOON_STEADY", "MOON_SLOW"]);
 const regimeCache = new Map<string, { at: number; allowed: boolean; why: string }>();
+// Hysteresis state: the bench's current verdict per class, held between the
+// decisive thresholds. Restart re-seeds from core priors — conservative.
+const regimeState = new Map<string, boolean>();
 async function classRegimeHealth(cfg: HermesConfig, signature: string): Promise<{ allowed: boolean; why: string }> {
   const hit = regimeCache.get(signature);
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit;
@@ -1043,11 +1046,19 @@ async function classRegimeHealth(cfg: HermesConfig, signature: string): Promise<
     }[];
     const r = rows[0] ?? { n: 0, pnl: 0, deployed: 0 };
     const ret = r.deployed > 0 ? (100 * r.pnl) / r.deployed : 0;
-    if (r.n >= cfg.LIVE_REGIME_CLASS_MIN_N) {
-      out =
-        ret > 0
-          ? { allowed: true, why: `${cfg.LIVE_REGIME_CLASS_WINDOW_H}h paper +${ret.toFixed(1)}% on ${r.n}` }
-          : { allowed: false, why: `${cfg.LIVE_REGIME_CLASS_WINDOW_H}h paper ${ret.toFixed(1)}% on ${r.n} — regime not paying` };
+    // HYSTERESIS (2026-07-23): the zero-line flutter benched winners and admitted
+    // losers three times in one day. Bench only at ≤ BENCH_PCT with a real
+    // sample; re-admit only at ≥ READMIT_PCT; in between, HOLD the prior state.
+    // Thin samples fall back to the core priors exactly as before.
+    if (r.n >= cfg.LIVE_REGIME_HYST_MIN_N) {
+      const prior = regimeState.get(signature) ?? REGIME_CORE.has(signature);
+      let allowed = prior;
+      if (ret <= cfg.LIVE_REGIME_BENCH_PCT) allowed = false;
+      else if (ret >= cfg.LIVE_REGIME_READMIT_PCT) allowed = true;
+      regimeState.set(signature, allowed);
+      out = allowed
+        ? { allowed: true, why: `${cfg.LIVE_REGIME_CLASS_WINDOW_H}h paper ${ret >= 0 ? "+" : ""}${ret.toFixed(1)}% on ${r.n}${ret < cfg.LIVE_REGIME_READMIT_PCT ? " — holding prior (hysteresis)" : ""}` }
+        : { allowed: false, why: `${cfg.LIVE_REGIME_CLASS_WINDOW_H}h paper ${ret.toFixed(1)}% on ${r.n} — benched${ret > cfg.LIVE_REGIME_BENCH_PCT ? " (hysteresis holds)" : ""}` };
     } else {
       out = REGIME_CORE.has(signature)
         ? { allowed: true, why: `thin sample (${r.n}) — proven core trades on priors` }

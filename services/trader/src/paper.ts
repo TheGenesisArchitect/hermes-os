@@ -31,6 +31,7 @@ import {
   signals,
   tokens,
   journalFill,
+  safetyChecks,
 } from "@hermes/db";
 import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { maybeLiveBuy, mirrorLiveSell } from "./live/executor.js";
@@ -368,6 +369,24 @@ async function openFromSignal(
       : cfg.PAPER_POSITION_USD * sizeMult * qualityMult * sessionMult * sigMult
     ).toFixed(2),
   );
+  // MOON_STEADY CONCENTRATED-PROBE RULE (Study 3, 2026-07-23): the class's
+  // exits replay at their ceiling — its bleed is ENTRY selection. Concentrated
+  // books (largest holder ≥30%) ran n=25 −$14.24 at 40% win vs dispersed n=50
+  // +$33.69 at 54%; Bo's 53.52% whale is the archetype. Concentrated entries
+  // drop to a $1.50 probe: the sensor keeps measuring, the bankroll stops
+  // funding the cohort. Live inherits the shrunken fraction automatically.
+  let sizedUsd = sizeUsd;
+  if (sig?.signature === "MOON_STEADY" && sizedUsd > 1.5) {
+    const [hc] = await db
+      .select({ ev: safetyChecks.evidence })
+      .from(safetyChecks)
+      .where(and(eq(safetyChecks.mint, signal.mint), eq(safetyChecks.checkName, "holder_concentration")))
+      .limit(1);
+    const lg = Number((hc?.ev as { largestHolderPct?: number } | null)?.largestHolderPct);
+    if (Number.isFinite(lg) && lg >= 30) sizedUsd = 1.5;
+  }
+  const finalSizeUsd = sizedUsd;
+
   // LIVE FIRES HERE — the instant paper's size is known, before its own insert.
   // Live receives paper's REALISED fraction of capital rather than re-deriving it,
   // because paper's size passes through risk-tier and session multipliers on top
@@ -377,9 +396,9 @@ async function openFromSignal(
   // makes drift impossible by construction: whatever share of capital paper
   // commits, live commits the same share of its own.
   if (sig) {
-    void maybeLiveBuy(cfg, signal.mint, token.symbol, sig, sizeUsd / Math.max(cfg.PAPER_BANKROLL_USD, 1));
+    void maybeLiveBuy(cfg, signal.mint, token.symbol, sig, finalSizeUsd / Math.max(cfg.PAPER_BANKROLL_USD, 1));
   }
-  const slip = slippagePct(sizeUsd, market.liquidityUsd);
+  const slip = slippagePct(finalSizeUsd, market.liquidityUsd);
   // Never buy a corpse: a slip past the cap means the pool has drained since the
   // trigger fired (the 99%-slip dead-pool entries the 1e backlog produced).
   if (cfg.ENTRY_MAX_SLIPPAGE_PCT > 0 && slip > cfg.ENTRY_MAX_SLIPPAGE_PCT) {
@@ -407,8 +426,8 @@ async function openFromSignal(
   }
 
   const entryPrice = market.priceUsd * (1 + slip / 100);
-  const feeUsd = (sizeUsd * FEE_PCT) / 100 + FIXED_FEE_USD;
-  const qty = (sizeUsd - feeUsd) / entryPrice;
+  const feeUsd = (finalSizeUsd * FEE_PCT) / 100 + FIXED_FEE_USD;
+  const qty = (finalSizeUsd - feeUsd) / entryPrice;
 
   await audit("paper_open", {
     mint: signal.mint,
@@ -423,7 +442,7 @@ async function openFromSignal(
     markPrice: market.priceUsd,
     entryPrice,
     slippagePct: slip,
-    sizeUsd,
+    sizeUsd: finalSizeUsd,
   });
 
   // ATOMIC OPEN CLAIM. The `held` check above is a read-then-write: two
@@ -454,7 +473,7 @@ async function openFromSignal(
       lane: "paper",
       tier: lane,
       triggerMult: triggerMult !== null && Number.isFinite(triggerMult) ? String(triggerMult) : null,
-      sizeUsd: String(sizeUsd),
+      sizeUsd: String(finalSizeUsd),
       qualityMult: String(qualityMult),
       // Pinned at open and never changed: the exit profile is looked up from
       // this, and the ledger compares the signal we acted on to what we got.
@@ -497,7 +516,7 @@ async function openFromSignal(
   await db.update(signals).set({ status: "traded_paper" }).where(eq(signals.id, signal.id));
 
   console.log(
-    `📈 OPEN   ${token.symbol ?? "?"} ${short(signal.mint)} $${sizeUsd} «${lane}» [${sig ? `${"★".repeat(conv?.stars ?? 0)}🧬${sig.signature}${sigMult !== 1 ? ` ×${sigMult}` : ""}${conv && conv.stars > 0 ? ` · ${conv.why}` : ""} · ` : ""}${risk?.tier ?? "clean"}${qualityMult < 1 ? ` · quality ×${qualityMult}` : ""}${sessionMult < 1 ? ` · offhrs ×${sessionMult}` : ""}] @ $${entryPrice.toPrecision(4)} (liq $${Math.round(market.liquidityUsd).toLocaleString()}, slip ${slip.toFixed(2)}%, score ${signal.score}${note ? ` · ${note}` : ""})`,
+    `📈 OPEN   ${token.symbol ?? "?"} ${short(signal.mint)} ${finalSizeUsd} «${lane}» [${sig ? `${"★".repeat(conv?.stars ?? 0)}🧬${sig.signature}${sigMult !== 1 ? ` ×${sigMult}` : ""}${conv && conv.stars > 0 ? ` · ${conv.why}` : ""} · ` : ""}${risk?.tier ?? "clean"}${qualityMult < 1 ? ` · quality ×${qualityMult}` : ""}${sessionMult < 1 ? ` · offhrs ×${sessionMult}` : ""}] @ $${entryPrice.toPrecision(4)} (liq $${Math.round(market.liquidityUsd).toLocaleString()}, slip ${slip.toFixed(2)}%, score ${signal.score}${note ? ` · ${note}` : ""})`,
   );
   return true;
 }

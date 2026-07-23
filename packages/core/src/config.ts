@@ -1116,6 +1116,12 @@ const envSchema = z.object({
     .transform((v) => v !== "false"),
   LIVE_REGIME_CLASS_WINDOW_H: z.coerce.number().default(24), // trailing paper window judged
   LIVE_REGIME_CLASS_MIN_N: z.coerce.number().default(5), // below this, fall back to the audit core
+  // HYSTERESIS (2026-07-23 replay: RISER gate flips 6→2 over 48h). The bench
+  // engages only on a decisive negative read and releases only on a decisive
+  // positive one — a ±1% flutter around zero no longer flips real capital.
+  LIVE_REGIME_BENCH_PCT: z.coerce.number().default(-5), // bench at or below this ret%
+  LIVE_REGIME_READMIT_PCT: z.coerce.number().default(3), // re-admit at or above this ret%
+  LIVE_REGIME_HYST_MIN_N: z.coerce.number().default(10), // judgment needs this many closes
   // THE INFLOW BAND (operator: "concentrate trades in the bands with the
   // highest probability"). Pool growth at the trigger tick, measured over 7d:
   // 1.05-1.30x wins 44.8% (rugs 35.7%) · 1.30x+ wins 71.2% (rugs 11.1%) ·
