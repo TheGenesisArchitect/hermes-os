@@ -4072,6 +4072,8 @@ export interface TradeScore {
   bankedFrac: number;
   exitReason: string;
   heldMin: number;
+  /** epoch ms of the close — the Analyzer scatter's history scrubber reads this. */
+  closedAtMs: number;
   snapPct: number | null;
   /** Managed-quality flags — the things P&L hides. */
   flags: string[];
