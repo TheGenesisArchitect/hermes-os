@@ -738,6 +738,18 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
   for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits, walletKnown, liqGrowth, signature, dipDepth, snapPct, snapRate, stars } of armed) {
     if (total() >= cfg.PAPER_MAX_CONCURRENT) break; // global cap hit — leave the rest armed
 
+    // WALLET ANTI-GATE, PAPER EDITION (band dissection 2026-07-23): rug-history
+    // crowds (net rep ≤ −1) ran 29% win / 58% rug inside the 1.05–1.30 inflow
+    // band (n=177 of 477 — a third of the flow carrying nearly all the rugs)
+    // and 9.6% win / 49.3% rug across the whole tape. Candidate labels arrive
+    // whether we trade or not, so refusing costs the sensor nothing but the
+    // management tape of a cohort we never want to manage. Live has refused
+    // this crowd since yesterday; paper now stops paying its tuition too.
+    if (walletWinnerHits != null && walletRugHits != null && walletWinnerHits - walletRugHits <= -1) {
+      await audit("entry_wallet_antigate", { mint, net: walletWinnerHits - walletRugHits });
+      continue;
+    }
+
     // Open-only duplicate guard — a CLOSED prior position no longer blocks
     // (re-entry policy lives in the recorder's armed flag: cap + cooldown).
     const [held] = await db
