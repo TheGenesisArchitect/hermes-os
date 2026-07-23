@@ -46,7 +46,10 @@ async function classCapture(sig: string, lane: string): Promise<number | null> {
 function line(r: Row, avg: number | null): string {
   const armed = r.peak >= 1.2;
   const cap = armed && r.size > 0 ? (100 * r.pnl) / (r.size * (r.peak - 1)) : null;
-  const capS = cap == null ? "pre-arm" : `capture ${cap.toFixed(0)}%`;
+  // "never-armed": peak stayed under the 1.2× trail-arm bar so capture% is
+  // undefined. NOT an un-confirmed entry — that reading caused a false alarm
+  // (2026-07-23) against the operator's pre-arm disqualification order.
+  const capS = cap == null ? "never-armed <1.2×" : `capture ${cap.toFixed(0)}%`;
   const delta = cap != null && avg != null ? ` (class ${avg.toFixed(0)}%, Δ${cap - avg >= 0 ? "+" : ""}${(cap - avg).toFixed(0)}pp)` : "";
   const money = `${r.pnl >= 0 ? "+" : "−"}$${Math.abs(r.pnl).toFixed(2)}`;
   return `${r.lane === "live" ? "◆ LIVE " : "SIM    "}${String(r.symbol ?? "?").slice(0, 10).padEnd(10)} ${String(r.signature).padEnd(11)} $${r.size.toFixed(2).padStart(6)} → ${money.padStart(7)}  peak ${r.peak.toFixed(2)}× ${capS}${delta} · rungs ${r.tp} · ${r.reason ?? "?"}`;
