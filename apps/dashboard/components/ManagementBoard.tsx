@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, YAxis } from "recharts";
 import type { ManagementFeature } from "@hermes/core";
-import { setManagementIntent } from "@/app/actions";
+import { requestLiveClose, setManagementIntent } from "@/app/actions";
 import { fmtTs, fmtTsFull } from "@/components/ui";
 import { TradeDNA } from "@/components/TradeDNA";
 import type { ManagedPosition } from "@/lib/queries";
@@ -187,6 +187,44 @@ function Sparkline({ spark, peakMultiple }: { spark: { i: number; mm: number }[]
   );
 }
 
+/** Two-step live close: first click arms, second confirms and queues the
+ *  trader's fire-sale (user_cut). Auto-disarms after 5s untouched. */
+function LiveCloseButton({ positionId, symbol }: { positionId: number; symbol: string }) {
+  const [armed, setArmed] = useState(false);
+  const [pending, start] = useTransition();
+  const [queued, setQueued] = useState(false);
+  if (queued)
+    return (
+      <span className="text-xs font-semibold" style={{ color: "var(--status-warning)" }}>
+        queued — trader sells next cycle
+      </span>
+    );
+  return (
+    <button
+      disabled={pending}
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          setTimeout(() => setArmed(false), 5000);
+          return;
+        }
+        start(async () => {
+          await requestLiveClose(positionId);
+          setQueued(true);
+        });
+      }}
+      className="rounded px-2.5 py-1 text-xs font-bold tracking-wide"
+      style={
+        armed
+          ? { background: "var(--status-critical)", color: "#0d0d0d" }
+          : { border: "1px solid var(--status-serious)", color: "var(--status-serious)" }
+      }
+    >
+      {pending ? "…" : armed ? `CONFIRM CLOSE ${symbol}` : "CLOSE"}
+    </button>
+  );
+}
+
 function Card({ p }: { p: ManagedPositionView }) {
   const [pending, start] = useTransition();
   const action = p.call?.action ?? "HOLD";
@@ -293,11 +331,15 @@ function Card({ p }: { p: ManagedPositionView }) {
       ) : null}
 
       {isLive ? (
-        // No RIDE/CUT on a live card — the intent channel is consumed by paper's
-        // manage loop only; a queued CUT here would sit unapplied forever while
-        // looking armed. The genome (cover/trail/ladder/clock) owns these exits.
-        <div className="mt-3 border-t pt-3 text-center text-xs" style={{ borderColor: "var(--gridline)", color: "var(--text-muted)" }}>
-          🧬 genome-owned — exits decided by the same formula as paper, executed on-chain
+        // Genome owns the automatic exits — but the OPERATOR owns the override
+        // (2026-07-24: "PigMan opened but there is no way for me to close").
+        // Two-step CLOSE queues live_close_request; the trader (the single
+        // money-mover) fire-sales it as user_cut on its next cycle.
+        <div className="mt-3 flex items-center justify-between gap-2 border-t pt-3" style={{ borderColor: "var(--gridline)" }}>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+            🧬 genome-owned exits · operator override →
+          </span>
+          <LiveCloseButton positionId={p.id} symbol={p.symbol ?? "?"} />
         </div>
       ) : (
       <div className="mt-3 flex items-center gap-2 border-t pt-3" style={{ borderColor: "var(--gridline)" }}>

@@ -1677,6 +1677,32 @@ let sweeping = false;
  * goes through one pipeline with one audit trail. The claim is an atomic
  * UPDATE … WHERE status='pending', so a duplicate daemon can never double-send.
  */
+/** Operator's manual close queue — the dashboard writes `live_close_request`,
+ *  this consumes it: full-fraction sell through the fire-sale machinery as
+ *  `user_cut`. Atomic claim via jsonb status flip; every outcome audited. */
+export async function processLiveCloseRequests(cfg: HermesConfig): Promise<void> {
+  const rows = (await db.execute(sql`
+    SELECT value FROM config WHERE key = 'live_close_request' AND value->>'status' = 'pending'`)) as unknown as
+    { value: { positionId?: number } }[];
+  if (!rows.length) return;
+  const claimed = (await db.execute(sql`
+    UPDATE config SET value = value || '{"status":"claimed"}'::jsonb, updated_at = now()
+    WHERE key = 'live_close_request' AND value->>'status' = 'pending'
+    RETURNING value`)) as unknown as { value: { positionId?: number } }[];
+  if (!claimed.length) return;
+  const pid = Number(claimed[0]!.value.positionId);
+  const [pos] = await db.select().from(positions).where(and(eq(positions.id, pid), eq(positions.lane, "live"), eq(positions.status, "open"))).limit(1);
+  if (!pos) {
+    await db.execute(sql`UPDATE config SET value = value || '{"status":"done","note":"position not open"}'::jsonb WHERE key = 'live_close_request'`);
+    await audit("live_close_request_done", { positionId: pid, note: "position not open (already closed?)" });
+    return;
+  }
+  const ok = await liveSellPosition(cfg, pos, 1, "user_cut");
+  await db.execute(sql`UPDATE config SET value = value || ${JSON.stringify({ status: ok ? "done" : "failed" })}::jsonb WHERE key = 'live_close_request'`);
+  await audit("live_close_request_done", { positionId: pid, sold: ok });
+  console.log(`🖐 operator close ${short(pos.mint)} → ${ok ? "SOLD" : "FAILED (fire-sale escalation continues next cycles)"}`);
+}
+
 export async function processWalletSends(cfg: HermesConfig): Promise<void> {
   const claimed = (await db.execute(sql`
     UPDATE config SET value = value || '{"status":"processing"}'::jsonb, updated_at = now()

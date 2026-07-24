@@ -141,6 +141,28 @@ export async function requestHarvest(): Promise<void> {
   revalidatePath("/");
 }
 
+/**
+ * Manual close for a LIVE position (operator control restored 2026-07-24 —
+ * "PigMan opened but there is no way for me to close and manage the trade").
+ * Writes a `live_close_request` the trader consumes on its next cycle (same
+ * trusted queue pattern as wallet sends — the trader stays the single
+ * money-mover); the close runs through liveSellPosition's full fire-sale
+ * machinery as reason `user_cut`.
+ */
+export async function requestLiveClose(positionId: number): Promise<void> {
+  const value = { positionId, status: "pending", requestedAt: new Date().toISOString() };
+  await db
+    .insert(config)
+    .values({ key: "live_close_request", value, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: config.key, set: { value, updatedAt: new Date() } });
+  await db.insert(auditLog).values({
+    actor: "user",
+    action: "live_close_requested",
+    details: { positionId, via: "dashboard" },
+  });
+  revalidatePath("/");
+}
+
 /** Toggle the kill switch: when enabled, the trader stops opening new positions. */
 export async function toggleKillSwitch(): Promise<void> {
   const current = await getKillSwitch();
