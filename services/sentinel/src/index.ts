@@ -231,12 +231,12 @@ async function saveState(s: SentinelState): Promise<void> {
  */
 type Category =
   | "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP"
-  | "PULSE" | "SUMMARY" | "MOONSHOT" | "OPEN" | "MOONWIN" | "MOONHALF" | "MOONMISS";
+  | "PULSE" | "SUMMARY" | "MOONSHOT" | "OPEN" | "MOONWIN" | "MOONHALF" | "MOONMISS" | "REVIVAL";
 
 const CATEGORY_EMOJI: Record<Category, string> = {
   KILL: "⛔", LIVE: "🔴", RUNNER: "🏃", ARM: "🎯", HEALTH: "🩺", OPS: "🔧",
   TREND: "📈", RECAP: "🧾", PULSE: "❤️", SUMMARY: "📊", MOONSHOT: "🌙", OPEN: "🧬",
-  MOONWIN: "🌕", MOONHALF: "🌗", MOONMISS: "🌑",
+  MOONWIN: "🌕", MOONHALF: "🌗", MOONMISS: "🌑", REVIVAL: "🧟",
 };
 
 async function notify(
@@ -760,6 +760,68 @@ async function healLiveRowsFromFills(): Promise<void> {
   }
 }
 
+// ── ZOMBIE REVIVAL WATCH (operator, 2026-07-24: "how do we get alerted when
+// the market for these tokens is open and relaunching so that we can sell") ──
+// Written-off tokens stay in the wallet when a sell fails; if their pool ever
+// relaunches with real depth, the corpse becomes found money (CATALYSTS marked
+// $8.4k on a revived pool — Jupiter's REAL route paid $0, which is exactly why
+// this watch quotes the ACTUAL sell route, never the mark). Every ledger cycle:
+// enumerate held token accounts, quote the full held amount through Jupiter,
+// and fire a 🧟 REVIVAL card when a real route pays ≥ $1. Transition-only:
+// alert once per revival, re-arm when the route dies back under $0.50.
+const LIVE_WALLET = "rEPAt2uXrLHpN3J7By4PaAjbdi21V7rXozDipw5X1Q5";
+const revivalHot = new Map<string, boolean>();
+async function checkRevivals(cfg2: typeof cfg): Promise<void> {
+  const RPCS = [...cfg2.rpcUrls, "https://api.mainnet-beta.solana.com"];
+  let accts: { mint: string; amount: string; ui: number }[] | null = null;
+  for (const rpc of RPCS) {
+    try {
+      const res = await resilientFetch(rpc, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getTokenAccountsByOwner",
+          params: [LIVE_WALLET, { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { encoding: "jsonParsed" }] }),
+        timeoutMs: 8_000,
+      });
+      const body = (await res.json()) as { result?: { value?: any[] } };
+      if (!body.result) continue;
+      accts = (body.result.value ?? [])
+        .map((a: any) => a.account.data.parsed.info)
+        .filter((i: any) => Number(i.tokenAmount.amount) > 0)
+        .map((i: any) => ({ mint: i.mint, amount: i.tokenAmount.amount, ui: Number(i.tokenAmount.uiAmount ?? 0) }));
+      break;
+    } catch { /* next rpc */ }
+  }
+  if (!accts) return;
+  for (const a of accts) {
+    try {
+      const jr = await resilientFetch(
+        `${cfg2.JUPITER_BASE_URL}/quote?inputMint=${a.mint}&outputMint=So11111111111111111111111111111111111111112&amount=${a.amount}&slippageBps=1000`,
+        { timeoutMs: 8_000 },
+      );
+      const j = (await jr.json()) as { outAmount?: string; priceImpactPct?: string };
+      const outSol = j.outAmount ? Number(j.outAmount) / 1e9 : 0;
+      const [px] = (await db.execute(sql`select value->>'solUsd' p from config where key='ledger_recon_status'`)) as unknown as { p: string | null }[];
+      const outUsd = outSol * Number(px?.p ?? 76);
+      const hot = revivalHot.get(a.mint) ?? false;
+      if (!hot && outUsd >= 1) {
+        revivalHot.set(a.mint, true);
+        const [tk] = (await db.execute(sql`select symbol from tokens where mint=${a.mint}`)) as unknown as { symbol: string | null }[];
+        await notify("REVIVAL", `REVIVAL · ${tk?.symbol ?? a.mint.slice(0, 6)} — corpse sellable for $${outUsd.toFixed(2)}`,
+          [
+            `holding  ${a.ui.toExponential(2)} tokens (written off — any recovery is found money)`,
+            `route    Jupiter pays ${outSol.toFixed(4)} SOL ≈ $${outUsd.toFixed(2)} at ${(Number(j.priceImpactPct ?? 0) * 100).toFixed(0)}% impact`,
+            `action   fire-sale ready — say the word and the machinery harvests it`,
+          ],
+          4, ["zombie"], `https://dexscreener.com/solana/${a.mint}`);
+        await db.insert(auditLog).values({ actor: "sentinel", action: "revival_detected", details: { mint: a.mint, outUsd, outSol } });
+      } else if (hot && outUsd < 0.5) {
+        revivalHot.set(a.mint, false); // route died back — re-arm the alert
+      }
+    } catch { /* quote blip — next cycle */ }
+  }
+}
+
 // LEDGER PHASE 2 — journal sync + chain reconciler, every ~5 minutes (10 ticks
 // at the 30s poll). Sync first so the reconciler always judges a fresh journal.
 let ledgerTick = 0;
@@ -781,6 +843,7 @@ while (true) {
         const line = await runReconciler(cfg, (title, lines) => notify("OPS", title, lines, 4, ["ledger"]));
         console.log(`📒 ${line}`);
         await healLiveRowsFromFills();
+        await checkRevivals(cfg);
       } catch (err) {
         console.warn(`ledger phase-2 cycle failed: ${err instanceof Error ? err.message : err}`);
       }

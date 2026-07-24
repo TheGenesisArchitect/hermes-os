@@ -79,6 +79,45 @@ async function audit(action: string, details: Record<string, unknown>): Promise<
   await db.insert(auditLog).values({ actor: "trader-live", action, details });
 }
 
+/** CLOSE-ON-EXIT rent reclaim — close empty token accounts after a full sell
+ *  or a desync heal. Best-effort: a failure (dust remainder, race with a
+ *  landing sell) logs and leaves the shell for a later pass; never blocks. */
+async function closeEmptyAtas(
+  cfg: HermesConfig,
+  accounts: { toBase58(): string }[],
+  mint: string,
+): Promise<void> {
+  const wallet = liveWallet();
+  if (!wallet || !accounts.length) return;
+  try {
+    const { PublicKey, Transaction, TransactionInstruction } = await import("@solana/web3.js");
+    const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    const rpc = rpcPool(cfg);
+    const tx = new Transaction();
+    for (const a of accounts)
+      tx.add(
+        new TransactionInstruction({
+          programId: TOKEN_PROGRAM,
+          keys: [
+            { pubkey: new PublicKey(a.toBase58()), isSigner: false, isWritable: true },
+            { pubkey: wallet.publicKey, isSigner: false, isWritable: true },
+            { pubkey: wallet.publicKey, isSigner: true, isWritable: false },
+          ],
+          data: Buffer.from([9]), // CloseAccount
+        }),
+      );
+    const { blockhash } = await rpc.read((c) => c.getLatestBlockhash("confirmed"));
+    tx.recentBlockhash = blockhash;
+    tx.feePayer = wallet.publicKey;
+    tx.sign(wallet);
+    const sig = await rpc.send(tx, { skipPreflight: true, maxRetries: 2 });
+    console.log(`🧹 rent reclaimed ${mint.slice(0, 4)}… (${accounts.length} acct) ${String(sig).slice(0, 10)}…`);
+    await audit("ata_closed_on_exit", { mint, accounts: accounts.length });
+  } catch (err) {
+    console.warn(`rent-close deferred ${mint.slice(0, 4)}…: ${err instanceof Error ? err.message.slice(0, 80) : err}`);
+  }
+}
+
 // ── gates ────────────────────────────────────────────────────────────────────
 
 interface LiveGate {
@@ -1396,6 +1435,9 @@ async function liveSellPosition(
           realizedFromFills: hasFills ? fp.pnl : null,
           sells: fp?.sells ?? 0,
         });
+      // The wallet reads zero tokens here — the account is already an empty
+      // rent shell (this exact path minted the 45 shells Sweep A recovered).
+      void closeEmptyAtas(cfg, resp.value.map((v) => v.pubkey), position.mint);
       return true;
     }
     const f = Math.min(1, Math.max(0, fraction));
@@ -1480,6 +1522,11 @@ async function liveSellPosition(
     console.log(
       `💸 LIVE SELL ${short(position.mint)} ${(f * 100).toFixed(0)}% → $${proceedsUsd.toFixed(2)} (pnl ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}, ${reason})`,
     );
+    // CLOSE-ON-EXIT (operator-ratified 2026-07-24): a full sell leaves an empty
+    // $0.15 rent shell — reclaim it immediately so the leak never rebuilds
+    // (Sweeps A+B recovered $16.11 of exactly this). Fire-and-forget; a race
+    // with a partial remainder just logs and the account catches the next pass.
+    if (closing) void closeEmptyAtas(cfg, resp.value.map((v) => v.pubkey), position.mint);
     sellBackoff.delete(position.id); // it sold — clear any accumulated penalty
     sellExclude.delete(position.id);
     return true;
