@@ -55,11 +55,18 @@ export function SweetspotRadar({ view }: { view: SweetspotRadarView }) {
           </defs>
           {/* scope face + rim */}
           <circle cx={cx} cy={cy} r={R_MAX + 8} fill="url(#scopeFace)" stroke="#1d2b24" strokeWidth={1.5} />
-          {/* the locked band — quiet tinted annulus, crisp edges (fat stroke washed the scope out) */}
-          <circle cx={cx} cy={cy} r={bandOuter} fill="#35d07f" fillOpacity={0.055} />
-          <circle cx={cx} cy={cy} r={bandInner} fill="#060a08" fillOpacity={0.9} />
-          <circle cx={cx} cy={cy} r={bandInner} fill="none" stroke="#35d07f" strokeOpacity={0.5} strokeDasharray="1 3" />
-          <circle cx={cx} cy={cy} r={bandOuter} fill="none" stroke="#35d07f" strokeOpacity={0.5} strokeDasharray="1 3" />
+          {/* ARM SPEC zones (ratified 2026-07-24): CONVICTION seat 1.2–1.65
+              (green, live fires full size) · SENSOR slice 1.65–2.05 (amber,
+              paper probes / live declines) · the finder band is a measured
+              overlay for tiers and display — it no longer gates admission. */}
+          <circle cx={cx} cy={cy} r={rOf(1.65)} fill="#35d07f" fillOpacity={0.05} />
+          <circle cx={cx} cy={cy} r={rOf(1.2)} fill="#060a08" fillOpacity={0.9} />
+          <circle cx={cx} cy={cy} r={rOf(2.05)} fill="none" stroke="#ffc44d" strokeOpacity={0.4} strokeDasharray="3 3" />
+          <circle cx={cx} cy={cy} r={rOf(1.2)} fill="none" stroke="#3ee68c" strokeOpacity={0.6} />
+          <circle cx={cx} cy={cy} r={rOf(1.65)} fill="none" stroke="#3ee68c" strokeOpacity={0.6} />
+          {/* finder band — the measured expectancy overlay (blue dashes) */}
+          <circle cx={cx} cy={cy} r={bandInner} fill="none" stroke="#5aa7e8" strokeOpacity={0.55} strokeDasharray="1 4" />
+          <circle cx={cx} cy={cy} r={bandOuter} fill="none" stroke="#5aa7e8" strokeOpacity={0.55} strokeDasharray="1 4" />
           {/* rings + labels down the 45° axis so they never collide */}
           {RINGS.map((m) => {
             const r = rOf(m);
@@ -127,9 +134,9 @@ export function SweetspotRadar({ view }: { view: SweetspotRadarView }) {
       </div>
       <div className="grid min-w-[220px] flex-1 grid-cols-2 gap-3">
         <Stat
-          label="Locked band"
-          value={`${view.lo.toFixed(2)}–${view.hi.toFixed(2)}×`}
-          sub={view.measured ? "measured from tape" : "static fallback"}
+          label="Conviction seat"
+          value="1.20–1.65×"
+          sub={`finder band ${view.lo.toFixed(2)}–${view.hi.toFixed(2)}× (${view.measured ? "measured" : "fallback"}) · sensor to 2.05`}
         />
         <Stat
           label="In-band fills · 1h"
@@ -166,9 +173,21 @@ export function SweetspotRadar({ view }: { view: SweetspotRadarView }) {
           </span>
           <span className="inline-flex items-center gap-1.5">
             <svg width={14} height={14}>
-              <circle cx={7} cy={7} r={5.5} fill="none" stroke="var(--status-good)" strokeOpacity={0.2} strokeWidth={4} />
+              <circle cx={7} cy={7} r={5.5} fill="none" stroke="#3ee68c" strokeOpacity={0.6} />
             </svg>
-            locked sweetspot band
+            conviction seat 1.2–1.65 (live fires)
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <svg width={14} height={14}>
+              <circle cx={7} cy={7} r={5.5} fill="none" stroke="#ffc44d" strokeOpacity={0.5} strokeDasharray="2 2" />
+            </svg>
+            sensor slice to 2.05 (paper probes)
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <svg width={14} height={14}>
+              <circle cx={7} cy={7} r={5.5} fill="none" stroke="#5aa7e8" strokeOpacity={0.6} strokeDasharray="1 3" />
+            </svg>
+            finder band (measured expectancy)
           </span>
           <span style={{ color: "var(--text-muted)" }}>
             rings = trigger multiple (1× center → 2.4× rim) · bearing = age (12 o&apos;clock = now, one turn = 60m) ·
