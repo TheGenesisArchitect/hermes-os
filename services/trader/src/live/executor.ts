@@ -1255,6 +1255,7 @@ export async function maybeLiveBuy(
         positionId: position.id, mint, qty: res.outUi, priceUsd: entryPrice, feeUsd: res.feeSol * sol,
         entryPriceUsd: entryPrice, reason: "live_confirmed", txSignature: res.signature });
     }
+    requeueUntil.delete(mint); // a landed fill closes any retry window
     await audit("live_open", {
       mint, usd, regime, convictionMult, anticipationMult: antiMult, qty: res.outUi, signature: res.signature, feeSol: res.feeSol,
       // the stage clock — where this entry's milliseconds went
@@ -1262,11 +1263,50 @@ export async function maybeLiveBuy(
     });
     console.log(`💰 LIVE OPEN ${symbol ?? "?"} ${short(mint)} $${usd.toFixed(2)} (conv ×${convictionMult.toFixed(2)}, anti ×${antiMult.toFixed(2)}, ${res.outUi} tokens, tx ${res.signature.slice(0, 8)}…)`);
   } catch (err) {
-    await audit("live_buy_failed", { mint, error: err instanceof Error ? err.message : String(err) }).catch(() => {});
-    console.error(`live buy failed ${short(mint)}: ${err instanceof Error ? err.message : err}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    await audit("live_buy_failed", { mint, error: msg }).catch(() => {});
+    console.error(`live buy failed ${short(mint)}: ${msg}`);
+    // ── REQUEUE ON UNROUTABLE (BIO, ratified 2026-07-24) ────────────────────
+    // Aggregators lag 1–3 minutes behind brand-new pools — exactly the age of
+    // the conviction seat. An unroutable formula-pass fill retries every ~15s
+    // for up to 90s; each retry re-runs the FULL gate stack (mirror-freshness
+    // kills it the moment the paper twin exits; seat/crowd re-validate), so
+    // the requeue can only ever produce a fill the gates would bless live.
+    if (sig && /all swap providers down|liquidity must be greater than 0|NO_ROUTES|no route/i.test(msg)) {
+      const until = requeueUntil.get(mint) ?? Date.now() + 90_000;
+      requeueUntil.set(mint, until);
+      if (Date.now() < until) {
+        liveRequeue.set(mint, { next: Date.now() + 15_000, symbol, sig, paperFrac });
+        await audit("live_buy_requeued", { mint, retryInMs: 15_000, windowEndsMs: until - Date.now() }).catch(() => {});
+      } else {
+        requeueUntil.delete(mint);
+        await audit("live_requeue_expired", { mint }).catch(() => {});
+      }
+    }
   } finally {
     liveBuyInFlight.delete(mint);
   }
+}
+
+// ── the requeue machinery ────────────────────────────────────────────────────
+const liveRequeue = new Map<string, { next: number; symbol: string | null; sig: NonNullable<Parameters<typeof maybeLiveBuy>[3]>; paperFrac: number | null }>();
+const requeueUntil = new Map<string, number>();
+
+/** Retry unroutable formula-pass buys while their 90s window lives. Called
+ *  every trader tick; each retry goes back through maybeLiveBuy's full gate
+ *  stack, so success, gate-refusal, or twin-exit all end the queue naturally
+ *  (only a repeat unroutable failure re-queues, and only inside the window). */
+export async function processLiveRequeues(cfg: HermesConfig): Promise<void> {
+  const now = Date.now();
+  for (const [mint, r] of liveRequeue) {
+    if (now < r.next) continue;
+    liveRequeue.delete(mint);
+    const until = requeueUntil.get(mint);
+    if (until == null || now > until) { requeueUntil.delete(mint); continue; }
+    void maybeLiveBuy(cfg, mint, r.symbol, r.sig, r.paperFrac);
+  }
+  // hygiene: drop stale windows so the map never grows unbounded
+  for (const [mint, until] of requeueUntil) if (now > until + 300_000) requeueUntil.delete(mint);
 }
 // Mints with a live buy currently executing — the claim behind the race guard
 // at the top of maybeLiveBuy. Cleared in its finally, so a failed buy frees the
