@@ -1055,11 +1055,28 @@ export async function maybeLiveBuy(
     // paper is winning on. So a routed position is floored to a fee-viable size
     // and TAKEN, never skipped.
     const sized = Math.min(livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult, sig, paperFrac) * dailyThrottle, affordable);
-    let usd = Math.max(cfg.LIVE_MIN_POSITION_USD, sized);
-    // A DBC moon ticket overrides ALL sizing including the fee floor: ≤$2.50
-    // and ≤0.1% of the pool, so the exit-at-size question the depth floor asks
-    // stays honestly answered at ticket scale. The 10x tail is the payer.
-    if (dbcTicket) usd = Math.min(cfg.LIVE_DBC_TICKET_USD, (dbcPoolLiq ?? cfg.LIVE_DBC_TICKET_MIN_LIQ_USD) * cfg.LIVE_DBC_TICKET_POOL_FRAC);
+    // SIZER-RESPONSIVE (operator, 2026-07-24: "scale using sizer"). The fee
+    // floor used to round every small clip UP to a flat $4 — live paid MORE
+    // than paper on exactly the trades paper trusted least, and the adaptive
+    // policy never expressed at small balance. Now the Sizer's number STANDS:
+    // below the fee-viable floor live SKIPS (probe-intent stays paper — fees
+    // measured 18.3pp drag at $2 clips), at/above it the regime-scaled value
+    // flows through un-inflated. Tickets scale with the Sizer too, capped by
+    // the ticket ceiling and the pool-fraction bound.
+    let usd = sized;
+    if (dbcTicket) {
+      usd = Math.min(
+        cfg.LIVE_DBC_TICKET_USD,
+        Math.max(1.0, sized),
+        (dbcPoolLiq ?? cfg.LIVE_DBC_TICKET_MIN_LIQ_USD) * cfg.LIVE_DBC_TICKET_POOL_FRAC,
+      );
+    } else if (usd < cfg.LIVE_MIN_POSITION_USD) {
+      await audit("live_buy_skipped", {
+        mint,
+        reason: `sizer $${usd.toFixed(2)} below fee-viable floor $${cfg.LIVE_MIN_POSITION_USD.toFixed(2)} — probe-class stays paper (sizer-responsive, never floor-inflated)`,
+      });
+      return;
+    }
     const lamports = BigInt(Math.floor((usd / sol) * 1e9));
 
     // ── MIRROR-FRESHNESS GATE (DRILLCAT, 2026-07-23) ─────────────────────────
