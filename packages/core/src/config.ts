@@ -1184,7 +1184,10 @@ const envSchema = z.object({
   // lags the turn: CLIMBER went green in the very window after the audit
   // blocked it. A class earns live capital from its own recent paper tape and
   // loses it the same way.
-  LIVE_CLASS_BLOCKLIST: z.string().default("BASE"),
+  // BASE cleared 2026-07-24 (operator order, signature console): the blanket
+  // predated the F1/F3/seat gates — paper BASE ran 72 trades +$42.03 at 76%
+  // wins while live got 2 through the waiver. The formula is the defense now.
+  LIVE_CLASS_BLOCKLIST: z.string().default(""),
   LIVE_REGIME_CLASS_GATE: z
     .string()
     .default("true")
