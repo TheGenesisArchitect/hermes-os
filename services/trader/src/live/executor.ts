@@ -959,10 +959,13 @@ export async function maybeLiveBuy(
         });
         return;
       }
-      if (sig.liqGrowth != null && sig.liqGrowth > cfg.INFLOW_CEILING) {
+      if (sig.liqGrowth != null && (sig.liqGrowth > cfg.INFLOW_CEILING || sig.liqGrowth < cfg.INFLOW_FLOOR)) {
         await audit("live_buy_skipped", {
           mint,
-          reason: `inflow ${sig.liqGrowth.toFixed(2)}× above the ${cfg.INFLOW_CEILING}× envelope — manufactured-spike territory (F3)`,
+          reason:
+            sig.liqGrowth > cfg.INFLOW_CEILING
+              ? `inflow ${sig.liqGrowth.toFixed(2)}× above the ${cfg.INFLOW_CEILING}× envelope — manufactured-spike territory (F3)`
+              : `inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — sub-envelope crowd-pass ran −$0.81/t at size (F3 floor, ratified; paper probes it)`,
         });
         return;
       }

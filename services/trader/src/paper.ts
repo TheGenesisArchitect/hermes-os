@@ -435,7 +435,7 @@ async function openFromSignal(
       sig.walletWinnerHits >= 1 && sig.walletWinnerHits - sig.walletRugHits >= 1;
     const lgRaw = sig?.liqGrowth != null ? Number(sig.liqGrowth) : null;
     const lgNum = lgRaw != null && Number.isFinite(lgRaw) ? lgRaw : null;
-    const spike = lgNum != null && lgNum > cfg.INFLOW_CEILING;
+    const spike = lgNum != null && (lgNum > cfg.INFLOW_CEILING || lgNum < cfg.INFLOW_FLOOR);
     // ARM SPEC (ratified 2026-07-24): the 1.65–2.05 slice armed but measured
     // −$1.01/t at conviction size — it fires as a sensor probe instead.
     const tmNum = sig?.triggerMultiple != null ? Number(sig.triggerMultiple) : null;
@@ -447,7 +447,7 @@ async function openFromSignal(
         walletWinnerHits: sig?.walletWinnerHits ?? null,
         walletRugHits: sig?.walletRugHits ?? null,
         inflow: lgNum,
-        reason: !crowdPass ? "crowd-fail — F1 sensor probe" : spike ? "inflow above envelope — F3 sensor probe" : "trigger in the 1.65-2.05 sensor slice — probe fire",
+        reason: !crowdPass ? "crowd-fail — F1 sensor probe" : spike ? "inflow outside the 1.20-2.05 envelope — F3 sensor probe" : "trigger in the 1.65-2.05 sensor slice — probe fire",
         sizedUsd,
       });
     }

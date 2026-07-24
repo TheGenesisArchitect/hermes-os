@@ -591,6 +591,12 @@ const envSchema = z.object({
   // manufactured-spike envelope violation (F3).
   SENSOR_TIER_SIZE_MULT: z.coerce.number().default(0.3),
   INFLOW_CEILING: z.coerce.number().default(2.05),
+  // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
+  // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction
+  // size (deaths eat the winners: BIO); demoted to probes the same trades pay
+  // +$25.59. Conviction size requires the envelope; below floor = sensor
+  // (paper probes, live declines). Unmeasured inflow is not vetoed.
+  INFLOW_FLOOR: z.coerce.number().default(1.2),
   CONFIRM_MIN_TICKS: z.coerce.number().default(2), // need a trajectory, not one snap
   // RAISED 1.25 → 1.35 (2026-07-20). Realized P&L by the multiple a token had
   // ALREADY run at confirm exposed the barely-qualified band as the system's
