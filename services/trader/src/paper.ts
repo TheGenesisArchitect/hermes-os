@@ -179,6 +179,8 @@ async function openFromSignal(
     top10Pct?: number | null;
     largestHolderPct?: number | null;
     walletWinnerHits?: number | null;
+    /** PRECISION subset (never-rugged wallets); null = pre-tier row, treat winner hits as strict. */
+    walletStrictHits?: number | null;
     walletRugHits?: number | null;
     /** Pool inflow at trigger — F3 envelope check for the sensor tier. */
     liqGrowth?: number | null;
@@ -450,6 +452,20 @@ async function openFromSignal(
         reason: !crowdPass ? "crowd-fail — F1 sensor probe" : spike ? "inflow outside the 1.20-2.05 envelope — F3 sensor probe" : "trigger in the 1.65-2.05 sensor slice — probe fire",
         sizedUsd,
       });
+    } else if (crowdPass && sig?.walletStrictHits === 0 && sizedUsd > 1.5) {
+      // RECOVERED TIER (ratified 2026-07-24): the crowd is net-positive wallets
+      // only — no never-rugged winner among holders. Leak-free verified 58%
+      // winners / 28% rugs (vs strict 73%/4%), so it trades at a reduced clip
+      // rather than full conviction. Null strictHits = pre-tier row, full size.
+      sizedUsd = Math.max(1.5, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2)));
+      await audit("entry_recovered_tier", {
+        mint: signal.mint,
+        walletWinnerHits: sig?.walletWinnerHits ?? null,
+        walletStrictHits: 0,
+        walletRugHits: sig?.walletRugHits ?? null,
+        reason: "net-positive crowd, no strict winner — RECOVERED tier clip",
+        sizedUsd,
+      });
     }
   }
   const finalSizeUsd = sizedUsd;
@@ -667,6 +683,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       rugProb: candidateOutcomes.rugProb,
       triggerMultiple: candidateOutcomes.triggerMultiple,
       walletWinnerHits: candidateOutcomes.walletWinnerHits,
+      walletStrictHits: candidateOutcomes.walletStrictHits,
       walletRugHits: candidateOutcomes.walletRugHits,
       walletKnown: candidateOutcomes.walletKnown,
       convictionScore: candidateOutcomes.convictionScore,
@@ -804,7 +821,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     return;
   }
 
-  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletRugHits, walletKnown, liqGrowth, signature, dipDepth, snapPct, snapRate, stars } of armed) {
+  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletStrictHits, walletRugHits, walletKnown, liqGrowth, signature, dipDepth, snapPct, snapRate, stars } of armed) {
     if (total() >= cfg.PAPER_MAX_CONCURRENT) break; // global cap hit — leave the rest armed
 
     // WALLET ANTI-GATE, PAPER EDITION (band dissection 2026-07-23): rug-history
@@ -981,6 +998,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
           // Point-in-time wallet-graph reputation of the holder set — live's
           // smart-money gate and boost read these (7d study 2026-07-22).
           walletWinnerHits: walletWinnerHits ?? null,
+          walletStrictHits: walletStrictHits ?? null,
           walletRugHits: walletRugHits ?? null,
         }
       : null;

@@ -286,6 +286,9 @@ export const candidateOutcomes = pgTable("candidate_outcomes", {
   // presence counts the validation keyed on.
   walletEdge: numeric("wallet_edge"),
   walletWinnerHits: integer("wallet_winner_hits"),
+  // PRECISION subset of winner hits (never-rugged wallets). NULL on rows written
+  // before the RECOVERED tier (2026-07-24) — treat NULL as "winnerHits are strict".
+  walletStrictHits: integer("wallet_strict_hits"),
   walletRugHits: integer("wallet_rug_hits"),
   walletKnown: integer("wallet_known"),
   // Conviction score ∈ [0,1] at arm — the fused high-performance model (wallet-

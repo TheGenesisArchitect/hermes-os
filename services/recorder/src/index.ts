@@ -530,6 +530,7 @@ async function observe(
           ? {
               walletEdge: String(wallet.edge),
               walletWinnerHits: wallet.winnerHits,
+              walletStrictHits: wallet.strictHits,
               walletRugHits: wallet.rugHits,
               walletKnown: wallet.known,
             }

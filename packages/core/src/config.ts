@@ -590,6 +590,10 @@ const envSchema = z.object({
   // $1.29 at 5%) and are refused on live. Inflow above the ceiling is the
   // manufactured-spike envelope violation (F3).
   SENSOR_TIER_SIZE_MULT: z.coerce.number().default(0.3),
+  // RECOVERED tier (ratified 2026-07-24): crowd is net-positive wallets only
+  // (wins > rugs, no never-rugged winner present) — leak-free 58% win / 28%
+  // rug (~333/day recovered vs the rugs===0 attrition). Half clip, both lanes.
+  RECOVERED_TIER_SIZE_MULT: z.coerce.number().default(0.5),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction

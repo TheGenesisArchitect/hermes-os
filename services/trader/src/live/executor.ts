@@ -710,6 +710,10 @@ export async function maybeLiveBuy(
      * 2026-07-22, n=9,771 armed+labeled): winner-rep holders lift everything
      * monotonically, negative net rep is a rug tell. */
     walletWinnerHits?: number | null;
+    /** PRECISION subset (never-rugged). 0 with winners present = RECOVERED
+     * crowd (net-positive wallets, ratified 2026-07-24) — passes F1, trades at
+     * the reduced clip live inherits via paperFrac. Null = pre-tier row. */
+    walletStrictHits?: number | null;
     walletRugHits?: number | null;
   } | null = null,
   /**
@@ -958,6 +962,18 @@ export async function maybeLiveBuy(
           reason: `crowd ${wh ?? "?"}W/${rh ?? "?"}R — F1 requires winners aboard and outnumbering (crowd-fail: $0.28/t, 14% dead; live fail-cohort −$128.82 all-time)`,
         });
         return;
+      }
+      // RECOVERED TIER (ratified 2026-07-24): winner hits are now net-positive
+      // wallets — a crowd with NO never-rugged winner passes F1 but at the
+      // reduced clip (inherited from paper via paperFrac). Audited so the
+      // counterfactual watch can split PRECISION vs RECOVERED cohorts.
+      if (sig.walletStrictHits === 0) {
+        await audit("live_recovered_tier", {
+          mint,
+          walletWinnerHits: wh ?? null,
+          walletRugHits: rh ?? null,
+          reason: "net-positive crowd, no strict winner — RECOVERED tier engagement (58% win / 28% rug leak-free cohort, half clip via mirror fraction)",
+        });
       }
       if (sig.liqGrowth != null && (sig.liqGrowth > cfg.INFLOW_CEILING || sig.liqGrowth < cfg.INFLOW_FLOOR)) {
         await audit("live_buy_skipped", {
