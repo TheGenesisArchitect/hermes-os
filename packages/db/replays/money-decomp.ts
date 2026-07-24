@@ -71,5 +71,24 @@ interface Slice { n: number; sz: number; pnl: number; win: number; cap: number |
   process.stdout.write(
     `rule of the loop: name the factor that moved (volume vs edge) before proposing any change — a quality problem is never treated with volume, a volume problem never with more gates.\n`,
   );
+
+  // COVERAGE GROWTH (operator, 2026-07-24) — the wallet graph's verified share
+  // of arrivals IS live's volume forecast: every point of coverage converts
+  // sensor flow into live-fireable flow. Tracked daily so the compounding
+  // asset is a first-class number, not a vibe.
+  process.stdout.write(`\nWALLET-GRAPH COVERAGE — F1 crowd-pass share of settled arrivals, by day:\n`);
+  const cov = (await q.unsafe(`
+    SELECT date_trunc('day', first_seen_at - interval '4 hours') d,
+      count(*)::int n,
+      count(*) filter (where wallet_winner_hits >= 1 AND wallet_winner_hits - wallet_rug_hits >= 1)::int pass,
+      count(*) filter (where wallet_winner_hits IS NOT NULL)::int read
+    FROM candidate_outcomes
+    WHERE first_seen_at > now() - interval '7 days' AND label IN ('winner','dud','rug')
+    GROUP BY 1 ORDER BY 1`)) as unknown as { d: Date; n: number; pass: number; read: number }[];
+  for (const c of cov)
+    process.stdout.write(
+      `  ${new Date(c.d).toISOString().slice(5, 10)}  arrivals ${String(c.n).padStart(5)} · graph-read ${String(Math.round((100 * c.read) / Math.max(c.n, 1))).padStart(3)}% · F1 crowd-pass ${String(Math.round((100 * c.pass) / Math.max(c.n, 1))).padStart(3)}%  (${c.pass} live-fireable)\n`,
+    );
+  process.stdout.write(`coverage rule: crowd-pass % rising = live's pipe widening; flat coverage with rising arrivals = the graph needs help (rep-scoring cadence, holder-snapshot depth).\n`);
   await q.end();
 })();
