@@ -224,11 +224,13 @@ export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
     // refuses to tune it. Shrunk rather than paused deliberately — pausing means
     // it never crosses the sample floor and stays permanently unresolved, so a
     // small live allocation keeps the evidence accruing at a third of the bleed.
-    // SWEEP RUNG 1.55 → 1.40. Whale-held tokens reach 1.5× at 46% — double the
-    // dispersed rate — with a 1.46× median run, so the old 1.55 rung sat just
-    // ABOVE the band this population actually delivers. Its 35.2% rug rate has
-    // to be paid for by an early tranche, and 1.40 sits inside the move.
-    tp0: [1.4, 0.2], tp1: [2.35, 0.25], tp2: [3.0, 0.25], holdSec: CLOCK_SEC, size: 0.2,
+    // SWEEP RUNG 1.40 → 1.22 (ratified 2026-07-24, climber-anatomy 9d n=48):
+    // the class's median POST-ENTRY run is 1.27×, so the 1.40 rung — set from
+    // whale-era peak stats — sat above the median move and banked on only
+    // 16/48 positions while a 1.22 rung reaches 28/48. Same defect, same
+    // recut as RISER/BASE/MOON_FAST. Loss pool was hard stops (−$14.83/9),
+    // NOT rugs (−$4.59/4) — the early tranche is what pays for those stops.
+    tp0: [1.22, 0.2], tp1: [2.35, 0.25], tp2: [3.0, 0.25], holdSec: CLOCK_SEC, size: 0.2,
     note: "whale accumulation into a deep book — 1.6% rug measured, but 0-for-3 live",
   },
   MOON_FAST: {
