@@ -28,6 +28,12 @@ import type { EntryTriggerConfig } from "@hermes/core";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const EDGES = [1.3, 1.45, 1.65, 1.9, 2.2] as const;
+// THE CANON SEAT CEILING (Formula v2, ratified 2026-07-24 after the model
+// run): the finder's first widening to 2.2 — fit on a chase-flattered 24h
+// expectancy — admitted 4 of the 07-23 atomic deaths (triggers 1.70–2.14×).
+// Outer buckets stay MEASURED as evidence; the band tightens inside the seat,
+// never widens past it. Week ledger: ≤1.65 earned $870 of $1,013.
+const SEAT_MAX = 1.65;
 
 interface Bucket {
   lo: number;
@@ -56,7 +62,7 @@ export async function refreshSweetspot(
     const inB = rows.filter((r) => Number(r.t) >= lo && Number(r.t) < hi);
     buckets.push({ lo, hi, n: inB.length, pnl: inB.reduce((a, r) => a + Number(r.pnl), 0) });
   }
-  const qualifies = (b: Bucket) => b.n >= opts.minN && b.pnl / Math.max(b.n, 1) > 0;
+  const qualifies = (b: Bucket) => b.hi <= SEAT_MAX + 1e-9 && b.n >= opts.minN && b.pnl / Math.max(b.n, 1) > 0;
 
   // Widest contiguous qualifying run that touches a core bucket (index 0 or 1).
   let best: { start: number; end: number } | null = null;
@@ -70,8 +76,8 @@ export async function refreshSweetspot(
   }
 
   const band = best
-    ? { lo: Math.max(1.3, buckets[best.start]!.lo), hi: Math.min(2.2, buckets[best.end]!.hi) }
-    : { lo: opts.staticLo, hi: opts.staticHi };
+    ? { lo: Math.max(1.3, buckets[best.start]!.lo), hi: Math.min(SEAT_MAX, buckets[best.end]!.hi) }
+    : { lo: Math.max(1.3, opts.staticLo), hi: Math.min(SEAT_MAX, opts.staticHi) };
 
   if (lastApplied && lastApplied.lo === band.lo && lastApplied.hi === band.hi) return;
 

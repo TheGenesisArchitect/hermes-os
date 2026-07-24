@@ -28,12 +28,16 @@ const HOURS = Number(process.argv[2] ?? 6);
     ["good 1.20-1.30", 1.20, 1.30],
     ["mild 1.05-1.20", 1.05, 1.20],
   ];
-  process.stdout.write(`BAND WATCH — last ${HOURS}h (settled candidates; tradeable = net rep ≥0 or unknown)\n`);
+  // COHORTS UPDATED per Formula v2 (ratified 2026-07-24): tradeable = F1
+  // crowd-pass (wh ≥ 1 AND wh > rh — the live-admissible cohort); refused =
+  // everything else (fresh 0W/0R, no-read, winner-deficient) — the SENSOR
+  // tier, probed on paper, refused on live, measured here as counterfactual.
+  process.stdout.write(`BAND WATCH — last ${HOURS}h (settled candidates; tradeable = F1 crowd-pass wh≥1 & wh>rh)\n`);
   process.stdout.write(`band              cohort      n   win  rug | traded  realized\n`);
   for (const [name, lo, hi] of bands) {
     for (const [cohort, cond] of [
-      ["tradeable", "AND (co.wallet_winner_hits IS NULL OR co.wallet_winner_hits - co.wallet_rug_hits >= 0)"],
-      ["refused", "AND co.wallet_winner_hits IS NOT NULL AND co.wallet_winner_hits - co.wallet_rug_hits <= -1"],
+      ["tradeable", "AND co.wallet_winner_hits >= 1 AND co.wallet_winner_hits - co.wallet_rug_hits >= 1"],
+      ["refused", "AND (co.wallet_winner_hits IS NULL OR co.wallet_winner_hits = 0 OR co.wallet_winner_hits - co.wallet_rug_hits < 1)"],
     ] as [string, string][]) {
       const rows = (await q.unsafe(`
         SELECT count(*)::int n,

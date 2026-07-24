@@ -180,6 +180,8 @@ async function openFromSignal(
     largestHolderPct?: number | null;
     walletWinnerHits?: number | null;
     walletRugHits?: number | null;
+    /** Pool inflow at trigger — F3 envelope check for the sensor tier. */
+    liqGrowth?: number | null;
   } | null = null,
 ): Promise<boolean> {
   const market = await fetchTokenMarket(signal.mint).catch(() => null);
@@ -419,6 +421,30 @@ async function openFromSignal(
       .limit(1);
     const lg = Number((hc?.ev as { largestHolderPct?: number } | null)?.largestHolderPct);
     if (Number.isFinite(lg) && lg >= 30) sizedUsd = 1.5;
+  }
+  // ── FORMULA v2 SENSOR TIER (canon GCE-FORMULA-001, ratified 2026-07-24) ───
+  // Crowd-fail (F1: needs wh ≥ 1 AND wh > rh) or a manufactured-spike inflow
+  // (F3: above the envelope ceiling) demotes this entry to a sensor probe:
+  // census crowd-fail ran $0.28/trade at 14% dead vs crowd-pass $1.29 at 5%.
+  // The probe keeps the tape and the wallet graph fed at bounded tuition.
+  {
+    const crowdPass =
+      sig?.walletWinnerHits != null && sig?.walletRugHits != null &&
+      sig.walletWinnerHits >= 1 && sig.walletWinnerHits - sig.walletRugHits >= 1;
+    const lgRaw = sig?.liqGrowth != null ? Number(sig.liqGrowth) : null;
+    const lgNum = lgRaw != null && Number.isFinite(lgRaw) ? lgRaw : null;
+    const spike = lgNum != null && lgNum > cfg.INFLOW_CEILING;
+    if ((!crowdPass || spike) && sizedUsd > 1.5) {
+      sizedUsd = Math.max(1.5, Number((sizedUsd * cfg.SENSOR_TIER_SIZE_MULT).toFixed(2)));
+      await audit("entry_sensor_tier", {
+        mint: signal.mint,
+        walletWinnerHits: sig?.walletWinnerHits ?? null,
+        walletRugHits: sig?.walletRugHits ?? null,
+        inflow: lgNum,
+        reason: !crowdPass ? "crowd-fail — F1 sensor probe" : "inflow above envelope — F3 sensor probe",
+        sizedUsd,
+      });
+    }
   }
   const finalSizeUsd = sizedUsd;
 
@@ -791,29 +817,13 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       continue;
     }
 
-    // BELOW-STRONG CROWD GATE, PAPER EDITION (unsellable dissection 2026-07-23):
-    // every recent live total-loss was an atomic LP pull wearing the same entry
-    // tell — below-strong inflow with an unknown crowd (0W/0R). Live 7d in that
-    // cohort: 51 trades, −$57.68, 27% win. Live refuses it; the operator's call
-    // is that paper mirrors the gate so both lanes measure the same market —
-    // "we are not hallucinating what's available." The refused cohort stays
-    // measured through candidate labels (band-watch), which arrive untraded.
-    const inflowNum = liqGrowth != null ? Number(liqGrowth) : null;
-    if (inflowNum != null && Number.isFinite(inflowNum) && inflowNum < cfg.LIQ_INFLOW_STRONG) {
-      const winnerRep = walletWinnerHits != null && walletRugHits != null && walletWinnerHits - walletRugHits >= 1;
-      if (!winnerRep) {
-        await audit("entry_crowd_unknown_refused", {
-          mint,
-          lane: "paper",
-          inflow: inflowNum,
-          walletWinnerHits: walletWinnerHits ?? null,
-          walletRugHits: walletRugHits ?? null,
-          reason: `crowd ${walletWinnerHits ?? "?"}W/${walletRugHits ?? "?"}R at ${inflowNum.toFixed(2)}× inflow — below-strong requires winner-rep`,
-        });
-        await db.update(signals).set({ status: "crowd_refused" }).where(eq(signals.id, signal.id)).catch(() => {});
-        continue;
-      }
-    }
+    // FORMULA v2 TIERS, PAPER EDITION (ratified 2026-07-24): the below-strong
+    // crowd REFUSAL is superseded by canon two-tier routing. Crowd-fail and
+    // manufactured-spike flow now trades on paper at SENSOR-probe size (the
+    // sizing tier is applied in openFromSignal, where the compounding bankroll
+    // math lives) instead of being refused — the tape stays fully measured
+    // while live, which refuses this cohort outright, never mirrors it at
+    // conviction size. No refusal here; the tier does the risk work.
 
     // Open-only duplicate guard — a CLOSED prior position no longer blocks
     // (re-entry policy lives in the recorder's armed flag: cap + cooldown).

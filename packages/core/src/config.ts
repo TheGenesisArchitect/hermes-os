@@ -580,7 +580,17 @@ const envSchema = z.object({
   // at 2.3m/1.51x was instead filled at 6.1m/1.95x, turning a +44% opportunity
   // into +11%. Enter inside the sort window or do not enter — a candidate that
   // only qualifies at minute 8 has already made its move without us.
-  CONFIRM_MAX_WATCH_MIN: z.coerce.number().default(3), // the sort window, not a 12-minute tail
+  // 3.0 → 2.5 (Formula v2 model run, ratified 2026-07-24): triggers later than
+  // 2.7m ran −$0.65/trade at 15% dead on the signature-era census — the canon
+  // seat is the 2.0–2.5m window and the tape agrees.
+  CONFIRM_MAX_WATCH_MIN: z.coerce.number().default(2.5),
+  // ── FORMULA v2 TIER KNOBS (canon GCE-FORMULA-001, ratified 2026-07-24) ────
+  // SENSOR tier: crowd-fail / manufactured-spike entries probe on paper at
+  // this multiple (census: crowd-fail $0.28/trade at 14% dead vs crowd-pass
+  // $1.29 at 5%) and are refused on live. Inflow above the ceiling is the
+  // manufactured-spike envelope violation (F3).
+  SENSOR_TIER_SIZE_MULT: z.coerce.number().default(0.3),
+  INFLOW_CEILING: z.coerce.number().default(2.05),
   CONFIRM_MIN_TICKS: z.coerce.number().default(2), // need a trajectory, not one snap
   // RAISED 1.25 → 1.35 (2026-07-20). Realized P&L by the multiple a token had
   // ALREADY run at confirm exposed the barely-qualified band as the system's
