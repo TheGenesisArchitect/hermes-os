@@ -1501,7 +1501,7 @@ async function liveSellPosition(
   // stop slippage so they fill at the crashed price instead of reverting into a −100%
   // sweep. Take-profits bank into strength and get the tight tolerance. Trails sit
   // between: they fire while price pulls away, so landing beats price.
-  const isProtective = /stop|catastrophe|rug|sweep|mirror_cut|unsellable/i.test(reason);
+  const isProtective = /stop|catastrophe|rug|sweep|mirror_cut|unsellable|depth_collapse/i.test(reason);
   const isTakeProfit = !isProtective && /take_profit/i.test(reason);
   try {
     const { PublicKey } = await import("@solana/web3.js");

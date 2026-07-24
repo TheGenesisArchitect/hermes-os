@@ -629,6 +629,14 @@ const envSchema = z.object({
   // qualification; the slot cap + exit chain + runner ratchet bound the rugs.
   // Seat discipline stays: above CONVICTION_SEAT_MAX still probes (ARM SPEC).
   MOONSHOT_TIER_ENABLED: z.coerce.boolean().default(true),
+  // DEPTH-COLLAPSE CUT (F5 wired as a rail, 2026-07-24 pre-window forensics):
+  // Clarity/$MAGIKARP/Cozy/CATALYSTS all had $12-27k pools at entry that
+  // drained to dust within ~90s WHILE PRICE STILL QUOTED — the last sellable
+  // tick sat at 0.94-1.23× entry, minutes before any price-based exit fired.
+  // Pools die by depth first; price teleports later. Below this absolute
+  // depth, sell everything into whatever remains, immediately, both lanes.
+  // Set low enough ($1.2k) that legitimate thin-venue moons are untouched.
+  DEPTH_COLLAPSE_USD: z.coerce.number().default(1200),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction

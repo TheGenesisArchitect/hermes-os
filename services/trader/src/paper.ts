@@ -1266,6 +1266,22 @@ export function decideExit(
   const peakMult = entry > 0 ? peak / entry : 1;
   const peakProfitUsd = n(position.sizeUsd) * (peakMult - 1);
 
+  // ── DEPTH-COLLAPSE CUT (F5 as a rail, 2026-07-24) ─────────────────────────
+  // Pools die by DEPTH first; price teleports later. The unsellable forensics:
+  // $12-27k entry pools drained to dust in ~90s while price still quoted
+  // 0.94-1.23× — every price-based exit below fired minutes after the last
+  // sellable tick. Below the absolute depth floor, sell everything into
+  // whatever liquidity remains, ahead of every other consideration.
+  if (
+    cfg.DEPTH_COLLAPSE_USD > 0 &&
+    market.liquidityUsd != null &&
+    Number.isFinite(market.liquidityUsd) &&
+    market.liquidityUsd < cfg.DEPTH_COLLAPSE_USD &&
+    price > 0
+  ) {
+    return { reason: "depth_collapse_cut", fraction: 1 };
+  }
+
   // ── RUNNER CLOSE — the model's final leg ──────────────────────────────────
   // After the TP ladder, 20% rides until it stalls or hits this cap. A memecoin
   // decides itself inside the first fifteen minutes; holding a runner past ~1000s
