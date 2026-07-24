@@ -620,6 +620,15 @@ const envSchema = z.object({
   // REMAIN as the rug-teleport rails (GDWR: pools vanish between polls).
   MOON_RUNNER_ENABLED: z.coerce.boolean().default(true),
   MOON_RUNNER_RATCHET: z.coerce.number().default(0.7),
+  // MOON SHOT tier (operator ratification 2026-07-24 evening: "these are the
+  // shots we should be taking... the Math outweighs a pass. Sizing and Volume
+  // make the winners pay for the basket"). A 2★ MOON-class candidate takes the
+  // uniform mandate slot in BOTH lanes even when its crowd is unproven — the
+  // alert-cohort trace: 11 winners of the last 20 (9.67×, 7.82×, 4.71×…) all
+  // demoted to $1.50 probes by F1. The moon fingerprint + 2★ conviction IS the
+  // qualification; the slot cap + exit chain + runner ratchet bound the rugs.
+  // Seat discipline stays: above CONVICTION_SEAT_MAX still probes (ARM SPEC).
+  MOONSHOT_TIER_ENABLED: z.coerce.boolean().default(true),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction

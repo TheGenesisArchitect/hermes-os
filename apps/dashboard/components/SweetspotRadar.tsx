@@ -99,14 +99,15 @@ export function SweetspotRadar({ view }: { view: SweetspotRadarView }) {
                   cy={y}
                   r={moon ? 5.5 : 4}
                   fill={b.pnl == null ? "transparent" : moon ? "#ffc44d" : color}
-                  stroke={moon ? "#ffc44d" : color}
+                  stroke={b.lane === "ghost" ? "#c9a94a" : moon ? "#ffc44d" : color}
                   strokeWidth={1.4}
-                  opacity={Math.max(0.55, 1 - b.minutesAgo / 90)}
+                  strokeDasharray={b.lane === "ghost" ? "2.5 2" : undefined}
+                  opacity={b.lane === "ghost" ? 0.7 : Math.max(0.55, 1 - b.minutesAgo / 90)}
                 >
                   <title>
                     {`${b.symbol ?? "?"} · ${b.trig.toFixed(2)}× trigger · ${Math.round(b.minutesAgo)}m ago · ${
                       b.pnl == null ? "riding" : `${b.pnl >= 0 ? "+" : "−"}$${Math.abs(b.pnl).toFixed(2)}`
-                    }${moon ? ` · MOON ${b.peakX.toFixed(1)}×` : ""}${b.lane === "live" ? " · LIVE" : ""}`}
+                    }${moon ? ` · MOON ${b.peakX.toFixed(1)}×` : ""}${b.lane === "live" ? " · LIVE" : b.lane === "ghost" ? " · SEEN, NOT BOARDED" : ""}`}
                   </title>
                 </circle>
                 {b.lane === "live" ? (

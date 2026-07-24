@@ -972,7 +972,24 @@ export async function maybeLiveBuy(
       const wh = sig.walletWinnerHits;
       const rh = sig.walletRugHits;
       const crowdPass = wh != null && rh != null && wh >= 1 && wh - rh >= 1;
-      if (!crowdPass) {
+      // MOON SHOT (ratified 2026-07-24: "these are the shots we should be
+      // taking... the Math outweighs a pass"): a 2★ MOON-class candidate
+      // fires in BOTH lanes at slot size even with an unproven crowd — the
+      // fingerprint + conviction is the qualification, the slot cap and exit
+      // chain bound the rug. Seat discipline below still declines >1.65.
+      const moonShot =
+        cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
+        typeof sig.signature === "string" && sig.signature.startsWith("MOON") &&
+        !(sig.triggerMultiple != null && Number(sig.triggerMultiple) > cfg.CONVICTION_SEAT_MAX);
+      if (moonShot && !crowdPass) {
+        await audit("live_moonshot_tier", {
+          mint,
+          walletWinnerHits: wh ?? null,
+          walletRugHits: rh ?? null,
+          inflow: sig.liqGrowth ?? null,
+          reason: "2★ moon fingerprint — SHOT fires live at slot size (crowd unproven; alert cohort 11/20 winners)",
+        });
+      } else if (!crowdPass) {
         await audit("entry_crowd_unknown_refused", {
           mint,
           lane: "live",
@@ -995,7 +1012,7 @@ export async function maybeLiveBuy(
           reason: "net-positive crowd, no strict winner — RECOVERED tier engagement (58% win / 28% rug leak-free cohort, half clip via mirror fraction)",
         });
       }
-      if (sig.liqGrowth != null && (sig.liqGrowth > cfg.INFLOW_CEILING || sig.liqGrowth < cfg.INFLOW_FLOOR)) {
+      if (!moonShot && sig.liqGrowth != null && (sig.liqGrowth > cfg.INFLOW_CEILING || sig.liqGrowth < cfg.INFLOW_FLOOR)) {
         await audit("live_buy_skipped", {
           mint,
           reason:
@@ -1173,10 +1190,14 @@ export async function maybeLiveBuy(
       const mPrecision =
         cfg.MANDATE_SIZING_ENABLED &&
         sig != null &&
-        sig.signature !== "RUG_RISK" &&
-        sig.walletStrictHits !== 0 &&
-        sig.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) &&
-        Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) <= cfg.INFLOW_CEILING;
+        ((sig.signature !== "RUG_RISK" &&
+          sig.walletStrictHits !== 0 &&
+          sig.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) &&
+          Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) <= cfg.INFLOW_CEILING) ||
+          // MOON SHOT slots buy the fee-viable ticket too — the shot is taken.
+          (cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
+            typeof sig.signature === "string" && sig.signature.startsWith("MOON") &&
+            !(sig.triggerMultiple != null && Number(sig.triggerMultiple) > cfg.CONVICTION_SEAT_MAX)));
       if (mPrecision) {
         await audit("live_mandate_ticket", {
           mint,

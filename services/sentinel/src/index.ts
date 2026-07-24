@@ -342,6 +342,8 @@ async function checkMoonshots(s: SentinelState): Promise<void> {
       snap: candidateOutcomes.snapPct,
       rate: candidateOutcomes.snapRate,
       wWin: candidateOutcomes.walletWinnerHits,
+      wRug: candidateOutcomes.walletRugHits,
+      liqGrowth: candidateOutcomes.liqGrowth,
       trigMult: candidateOutcomes.triggerMultiple,
       symbol: tokens.symbol,
       dex: tokens.dex,
@@ -379,7 +381,22 @@ async function checkMoonshots(s: SentinelState): Promise<void> {
       [
         `shape    ${shape}${dipPct != null && dipPct > 5 ? ` · wick −${dipPct.toFixed(0)}%` : ""}${snapPct != null ? ` · snap +${snapPct.toFixed(0)}%` : ""}${rate != null ? ` @ ${rate.toFixed(1)}×/min` : ""}`,
         `crowd    ${num(r.wWin) > 0 ? `${num(r.wWin)} winner-rep wallet${num(r.wWin) > 1 ? "s" : ""} aboard` : "retrace + holders confirm"}`,
-        `machine  both lanes firing · boost ×1.5 · rung arms 1.2×`,
+        // HONEST DISPOSITION (operator, 2026-07-24: "we are getting Qualified
+        // Moon alerts and we are not entering them") — the old line hardcoded
+        // "both lanes firing" while F1/F3/seat demoted 17 of the last 20
+        // alerts to probes. The card now states what the machine will DO.
+        `machine  ${(() => {
+          const wh = num(r.wWin), rh = num(r.wRug);
+          const lg = r.liqGrowth == null ? null : Number(r.liqGrowth);
+          const tm = r.trigMult == null ? null : Number(r.trigMult);
+          // Every row here is a 2★ MOON — under the MOON SHOT tier (ratified
+          // 2026-07-24) only seat discipline demotes; the shot otherwise fires
+          // at slot size in both lanes regardless of crowd/envelope.
+          if (tm != null && tm > cfg.CONVICTION_SEAT_MAX) return `paper probe only — seat ${tm.toFixed(2)}× above ${cfg.CONVICTION_SEAT_MAX}`;
+          if (!cfg.MOONSHOT_TIER_ENABLED && !(wh >= 1 && wh - rh >= 1)) return `paper probe only — crowd ${wh}W/${rh}R unproven, live declines`;
+          if (wh >= 1 && wh - rh >= 1 && (lg == null || (lg >= cfg.INFLOW_FLOOR && lg <= cfg.INFLOW_CEILING))) return `FULL — formula qualified, both lanes firing`;
+          return `MOON SHOT — slot size, both lanes (crowd ${wh}W/${rh}R)`;
+        })()}`,
         `tap to watch the flight ↗`,
       ],
       4,

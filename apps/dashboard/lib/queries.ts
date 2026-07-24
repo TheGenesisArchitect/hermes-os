@@ -3261,14 +3261,41 @@ export async function getSweetspotRadar(): Promise<SweetspotRadarView> {
       measured: Boolean(row?.value?.measured),
       refreshedAgoMin: row?.updated_at ? (Date.now() - new Date(row.updated_at).getTime()) / 60_000 : null,
       buckets: row?.value?.buckets ?? null,
-      blips: blips.map((b) => ({
-        symbol: b.symbol,
-        trig: Number(b.trig),
-        minutesAgo: Number(b.mins),
-        pnl: b.pnl == null ? null : Number(b.pnl),
-        peakX: Number(b.peakx),
-        lane: b.lane,
-      })),
+      blips: [
+        ...blips.map((b) => ({
+          symbol: b.symbol,
+          trig: Number(b.trig),
+          minutesAgo: Number(b.mins),
+          pnl: b.pnl == null ? null : Number(b.pnl),
+          peakX: Number(b.peakx),
+          lane: b.lane,
+        })),
+        // GHOST BLIPS (operator, 2026-07-24: "qualified moons... not showing up
+        // on the Radar") — the blip query reads positions, so a qualified moon
+        // the formula demoted or refused was invisible by construction. 2★
+        // MOON-class candidates from the last hour with no position render as
+        // ghosts: the radar now shows the moons we saw and did NOT board.
+        ...((await db.execute(sql`
+          select tk.symbol, co.trigger_multiple::float trig,
+            extract(epoch from (now() - co.triggered_at))/60 as mins,
+            co.peak_multiple::float peakx
+          from candidate_outcomes co
+          left join tokens tk on tk.mint = co.mint
+          where co.stars = 2 and co.signature like 'MOON%'
+            and co.triggered_at > now() - interval '60 minutes'
+            and co.trigger_multiple is not null
+            and not exists (select 1 from positions p where p.mint = co.mint and p.opened_at > now() - interval '60 minutes')
+          order by co.triggered_at desc limit 16`)) as unknown as {
+          symbol: string | null; trig: number; mins: number; peakx: number;
+        }[]).map((g) => ({
+          symbol: g.symbol,
+          trig: Number(g.trig),
+          minutesAgo: Number(g.mins),
+          pnl: null,
+          peakX: Number(g.peakx),
+          lane: "ghost",
+        })),
+      ],
       inBandPct1h: fill?.n ? Number(fill.inband) : null,
       bandPerTrade24h: band24?.per == null ? null : Number(band24.per),
       chasesRefused2h: Number(ref?.n ?? 0),

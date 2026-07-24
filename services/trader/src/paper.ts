@@ -473,7 +473,22 @@ async function openFromSignal(
     // −$1.01/t at conviction size — it fires as a sensor probe instead.
     const tmNum = sig?.triggerMultiple != null ? Number(sig.triggerMultiple) : null;
     const upperSlice = tmNum != null && Number.isFinite(tmNum) && tmNum > cfg.CONVICTION_SEAT_MAX;
-    if ((!crowdPass || spike || upperSlice) && sizedUsd > 1.5) {
+    // MOON SHOT (ratified 2026-07-24): 2★ MOON-class fingerprint overrides the
+    // crowd/envelope demotion — the shot is taken at slot size. Seat discipline
+    // (upperSlice) still demotes; the alert cohort triggers inside the seat.
+    const moonShot =
+      cfg.MOONSHOT_TIER_ENABLED && sig?.stars === 2 &&
+      typeof sig.signature === "string" && sig.signature.startsWith("MOON") && !upperSlice;
+    if (moonShot && (!crowdPass || spike)) {
+      await audit("entry_moonshot_tier", {
+        mint: signal.mint,
+        walletWinnerHits: sig?.walletWinnerHits ?? null,
+        walletRugHits: sig?.walletRugHits ?? null,
+        inflow: lgNum,
+        reason: "2★ moon fingerprint — SHOT at slot size (alert cohort: 11/20 winners incl. 9.67×/7.82× were $1.50 probes)",
+        sizedUsd,
+      });
+    } else if ((!crowdPass || spike || upperSlice) && sizedUsd > 1.5) {
       tierDemoted = true;
       sizedUsd = Math.max(1.5, Number((sizedUsd * cfg.SENSOR_TIER_SIZE_MULT).toFixed(2)));
       await audit("entry_sensor_tier", {
@@ -519,7 +534,12 @@ async function openFromSignal(
     const mEnvelope = mLg != null && mLg >= cfg.INFLOW_FLOOR && mLg <= cfg.INFLOW_CEILING;
     const mTm = sig.triggerMultiple != null ? Number(sig.triggerMultiple) : null;
     const mSeat = mTm != null && Number.isFinite(mTm) && mTm <= cfg.CONVICTION_SEAT_MAX;
-    if (mCrowd && mStrict && mEnvelope && mSeat) {
+    // MOON SHOT rides the same uniform slot band — sizing consistency is what
+    // makes the winners pay for the basket (operator, 2026-07-24).
+    const mMoonShot =
+      cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
+      typeof sig.signature === "string" && sig.signature.startsWith("MOON") && mSeat;
+    if ((mCrowd && mStrict && mEnvelope && mSeat) || mMoonShot) {
       const lo = Number((bankrollNow * cfg.MANDATE_SIZE_MIN_FRAC).toFixed(2));
       const hi = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC).toFixed(2));
       const clamped = Math.min(hi, Math.max(lo, sizedUsd));
@@ -529,7 +549,9 @@ async function openFromSignal(
           from: sizedUsd,
           to: clamped,
           bankroll: Math.round(bankrollNow),
-          reason: "PRECISION full-formula — per-slot mandate band 0.2-0.25% of bankroll (~$5/slot × 6-10 concurrent = 1.5-2% deployed)",
+          reason: mMoonShot && !(mCrowd && mStrict && mEnvelope)
+            ? "MOON SHOT — per-slot mandate band 0.2-0.25% of bankroll (uniform slots make winners pay for the basket)"
+            : "PRECISION full-formula — per-slot mandate band 0.2-0.25% of bankroll (~$5/slot × 6-10 concurrent = 1.5-2% deployed)",
         });
         sizedUsd = clamped;
       }
