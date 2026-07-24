@@ -1,0 +1,17 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const url = /DATABASE_URL=(.+)/.exec(fs.readFileSync(path.join(root, ".env"), "utf8"))![1].trim();
+const sql = postgres(url);
+const [hb] = await sql`SELECT value, updated_at FROM config WHERE key = 'trader_health'`;
+const hbAge = hb ? (Date.now() - new Date(hb.updated_at).getTime()) / 1000 : null;
+console.log(`trader heartbeat: ${hbAge != null ? hbAge.toFixed(0) + "s ago" : "MISSING"} · halted=${(hb?.value as any)?.halted}`);
+const [tick] = await sql`SELECT max(snapped_at) AS t FROM candidate_ticks`;
+console.log(`recorder last tick: ${tick?.t ? ((Date.now() - new Date(tick.t).getTime()) / 1000).toFixed(0) + "s ago" : "none"}`);
+const [sig] = await sql`SELECT max(created_at) AS t FROM signals`;
+console.log(`scout last signal: ${sig?.t ? ((Date.now() - new Date(sig.t).getTime()) / 60000).toFixed(1) + "m ago" : "none"}`);
+const [led] = await sql`SELECT max(occurred_at) AS t FROM ledger_events`;
+console.log(`sentinel/ledger last event: ${led?.t ? ((Date.now() - new Date(led.t).getTime()) / 60000).toFixed(1) + "m ago" : "none"}`);
+await sql.end();

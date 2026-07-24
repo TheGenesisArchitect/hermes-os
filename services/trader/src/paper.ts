@@ -565,6 +565,26 @@ async function openFromSignal(
       }
     }
   }
+  // ── UNIVERSAL SLOT CEILING (operator, 2026-07-24: "why does capital keep
+  // getting misapplied") ────────────────────────────────────────────────────
+  // The per-slot mandate clamped the tiers named in its ratification and left
+  // legacy conviction sizing alive underneath — recovered-tier clips reached
+  // $18-31 (3-6× the slot spec) and three died pre-arm in 90 minutes for
+  // −$47 (all/in, opensource, Pumuckel). The ladder is now absolute: NOTHING
+  // on the book exceeds the slot cap, any tier, any path. Floors untouched —
+  // probes stay probes; live inherits through the mirror fraction.
+  if (cfg.MANDATE_SIZING_ENABLED && sig) {
+    const slotCap = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC).toFixed(2));
+    if (sizedUsd > slotCap) {
+      await audit("entry_slot_cap", {
+        mint: signal.mint,
+        from: sizedUsd,
+        to: slotCap,
+        reason: "universal slot ceiling — uniform slots, winners pay through volume (per-slot mandate, all tiers)",
+      });
+      sizedUsd = slotCap;
+    }
+  }
   const finalSizeUsd = sizedUsd;
 
   // LIVE FIRES HERE — the instant paper's size is known, before its own insert.
