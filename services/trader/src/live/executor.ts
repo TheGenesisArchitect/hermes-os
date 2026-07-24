@@ -1161,11 +1161,37 @@ export async function maybeLiveBuy(
         (dbcPoolLiq ?? cfg.LIVE_DBC_TICKET_MIN_LIQ_USD) * cfg.LIVE_DBC_TICKET_POOL_FRAC,
       );
     } else if (usd < cfg.LIVE_MIN_POSITION_USD) {
-      await audit("live_buy_skipped", {
-        mint,
-        reason: `sizer $${usd.toFixed(2)} below fee-viable floor $${cfg.LIVE_MIN_POSITION_USD.toFixed(2)} — probe-class stays paper (sizer-responsive, never floor-inflated)`,
-      });
-      return;
+      // MANDATE TICKETS (operator, 2026-07-24: "This also includes the Live
+      // Wallet Sizing — buy multiple tickets in qualified windows and harvest
+      // the winning lots"). The per-slot mandate fraction (0.2-0.25%) lands
+      // below fee-viability on a small live balance, and the plain skip was
+      // silently benching live from exactly the PRECISION flow that proves the
+      // model. A FULL-formula slot (strict crowd, measured in-envelope inflow,
+      // conviction seat — all re-verified by the gates above) buys a fee-viable
+      // ticket instead; everything else (recovered / RUG_RISK / unmeasured)
+      // still skips — probe-class stays paper.
+      const mPrecision =
+        cfg.MANDATE_SIZING_ENABLED &&
+        sig != null &&
+        sig.signature !== "RUG_RISK" &&
+        sig.walletStrictHits !== 0 &&
+        sig.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) &&
+        Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) <= cfg.INFLOW_CEILING;
+      if (mPrecision) {
+        await audit("live_mandate_ticket", {
+          mint,
+          sizedUsd: usd,
+          ticketUsd: cfg.LIVE_MIN_POSITION_USD,
+          reason: `PRECISION slot — mandate ticket at the fee-viable floor $${cfg.LIVE_MIN_POSITION_USD.toFixed(2)} (sizer $${usd.toFixed(2)} sub-viable; basket harvest, multiple concurrent lots)`,
+        });
+        usd = cfg.LIVE_MIN_POSITION_USD;
+      } else {
+        await audit("live_buy_skipped", {
+          mint,
+          reason: `sizer $${usd.toFixed(2)} below fee-viable floor $${cfg.LIVE_MIN_POSITION_USD.toFixed(2)} — probe-class stays paper (sizer-responsive; mandate tickets are PRECISION-only)`,
+        });
+        return;
+      }
     }
     const lamports = BigInt(Math.floor((usd / sol) * 1e9));
 

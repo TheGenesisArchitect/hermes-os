@@ -501,14 +501,14 @@ async function openFromSignal(
       });
     }
   }
-  // ── MANDATE SIZING (operator vision, ratified 2026-07-24) ─────────────────
-  // "We allocate 1.5 to 2% of the account balance to open qualified trades."
-  // PRECISION full-formula entries (strict crowd + conviction seat + measured
-  // in-envelope inflow, no tier demotion) clamp into [1.5%, 2%] of the
-  // compounding bankroll — quality tilts WITHIN the band, never multiplies
-  // below it. Census 48h: median clip $5.25 vs the $39-52 mandate; sizing
-  // consistency on qualified quality is the compounding engine, defense lives
-  // in tier demotion and the exit chain, not in shrinking the winners.
+  // ── MANDATE SIZING (operator vision, ratified 2026-07-24; per-slot
+  // semantics clarified same night) ──────────────────────────────────────────
+  // "1.5-2% measured across slots — $5.00 per slot, 6-10 trades at a time."
+  // The mandate is AGGREGATE basket exposure; each PRECISION slot (strict
+  // crowd + conviction seat + measured in-envelope inflow, no tier demotion)
+  // clamps into 0.2-0.25% of the compounding bankroll. Consistency per slot ×
+  // breadth across the basket is the compounding engine; defense lives in
+  // tier demotion and the exit chain, not in shrinking or inflating clips.
   // RUG_RISK is excluded — its half clip stands until its counterfactual.
   if (cfg.MANDATE_SIZING_ENABLED && sig && !tierDemoted && sig.signature !== "RUG_RISK") {
     const mCrowd =
@@ -529,7 +529,7 @@ async function openFromSignal(
           from: sizedUsd,
           to: clamped,
           bankroll: Math.round(bankrollNow),
-          reason: "PRECISION full-formula — mandate band 1.5-2% of bankroll (sizing consistency, ratified 2026-07-24)",
+          reason: "PRECISION full-formula — per-slot mandate band 0.2-0.25% of bankroll (~$5/slot × 6-10 concurrent = 1.5-2% deployed)",
         });
         sizedUsd = clamped;
       }

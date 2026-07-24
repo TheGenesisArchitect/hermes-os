@@ -601,14 +601,16 @@ const envSchema = z.object({
   // arbitrate the cell instead of the stale hard veto; the genome trades it at
   // half size under BASE exits until the counterfactual promotes it.
   RUGRISK_FORMULA_ROUTE: z.coerce.boolean().default(true),
-  // MANDATE SIZING (operator vision, ratified 2026-07-24): "we allocate 1.5 to
-  // 2% of the account balance to open qualified trades" — PRECISION trades
-  // (strict crowd + conviction seat + measured in-envelope inflow) clamp into
-  // this band of the compounding bankroll; quality tilts WITHIN it, never
-  // below. Census: median clip was $5.25 vs the $39-52 mandate.
+  // MANDATE SIZING (operator vision, ratified 2026-07-24; PER-SLOT semantics
+  // clarified by operator same night): 1.5-2% of the balance is the AGGREGATE
+  // deployed across the basket — ~$5.00 per slot at 6-10 concurrent trades,
+  // i.e. 0.2-0.25% of the compounding bankroll per PRECISION slot. Sizing
+  // CONSISTENCY is the design: uniform qualified clips, growth comes from
+  // basket breadth and compounding, defense from tiers and exits. PRECISION
+  // trades clamp into this per-slot band; demoted tiers stay below it.
   MANDATE_SIZING_ENABLED: z.coerce.boolean().default(true),
-  MANDATE_SIZE_MIN_FRAC: z.coerce.number().default(0.015),
-  MANDATE_SIZE_MAX_FRAC: z.coerce.number().default(0.02),
+  MANDATE_SIZE_MIN_FRAC: z.coerce.number().default(0.002),
+  MANDATE_SIZE_MAX_FRAC: z.coerce.number().default(0.0025),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction
