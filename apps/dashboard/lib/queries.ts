@@ -4507,3 +4507,143 @@ export async function getLedgerWorkspace(): Promise<LedgerWorkspaceView> {
     },
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRADE MANAGER (operator, 2026-07-24: "a Visual Trade pipeline... Real Time
+// R&D Required to Perfect the Trading Funnel for the Live Wallet"). One row
+// per recent live position, assembled from the five tables the lifecycle
+// already writes to: positions, fills, audit_log, the paper twin, ticks.
+// Headline KPIs: connect / drag / capture / compound — "convert and compound"
+// as numbers. Observation only; every fix it reveals still rides the
+// harness → ratify → ship protocol.
+// ─────────────────────────────────────────────────────────────────────────────
+export interface TradePipelineRow {
+  symbol: string | null;
+  mint: string;
+  openedAt: Date;
+  status: string;
+  sizeUsd: number;
+  pnl: number | null;
+  signature: string | null;
+  tier: string;
+  latencyTotalMs: number | null;
+  requeues: number;
+  sellFails: number;
+  rungs: number;
+  exitReason: string | null;
+  offerUsd: number | null;
+  capturePct: number | null;
+  twinPnl: number | null;
+  dragPp: number | null;
+}
+export interface TradeManagerView {
+  connectPct: number | null;
+  dragPp: number | null;
+  capturePct: number | null;
+  compound24hPct: number | null;
+  rows: TradePipelineRow[];
+}
+
+export async function getTradeManager(limit = 14): Promise<TradeManagerView> {
+  try {
+    const rows = (await db.execute(sql`
+      SELECT p.id, p.mint, tk.symbol, p.opened_at, p.status, p.exit_reason,
+             p.size_usd::float AS size, p.realized_pnl_usd::float AS pnl,
+             p.signature,
+             CASE WHEN p.entry_price_usd::float > 0
+                  THEN (p.peak_price_usd::float / p.entry_price_usd::float - 1) * p.size_usd::float END AS offer,
+             (SELECT count(*)::int FROM fills f WHERE f.position_id = p.id AND f.side = 'sell' AND f.reason LIKE 'take_profit%') AS rungs,
+             tw.pnl AS twin_pnl, tw.size AS twin_size
+      FROM positions p
+      LEFT JOIN tokens tk ON tk.mint = p.mint
+      LEFT JOIN LATERAL (
+        SELECT q.realized_pnl_usd::float AS pnl, q.size_usd::float AS size
+        FROM positions q
+        WHERE q.mint = p.mint AND q.lane = 'paper' AND q.status = 'closed'
+          AND q.opened_at BETWEEN p.opened_at - interval '45 minutes' AND p.opened_at + interval '45 minutes'
+        ORDER BY abs(extract(epoch from (q.opened_at - p.opened_at))) LIMIT 1
+      ) tw ON true
+      WHERE p.lane = 'live'
+      ORDER BY p.opened_at DESC
+      LIMIT ${limit}`)) as unknown as {
+      id: number; mint: string; symbol: string | null; opened_at: Date; status: string;
+      exit_reason: string | null; size: number; pnl: number | null; signature: string | null;
+      offer: number | null; rungs: number; twin_pnl: number | null; twin_size: number | null;
+    }[];
+
+    const out: TradePipelineRow[] = [];
+    for (const r of rows) {
+      const audits = (await db.execute(sql`
+        SELECT action, details FROM audit_log
+        WHERE details->>'mint' = ${r.mint}
+          AND created_at BETWEEN ${r.opened_at}::timestamptz - interval '3 minutes' AND ${r.opened_at}::timestamptz + interval '30 minutes'
+          AND action IN ('live_open','live_moonshot_tier','live_rugrisk_formula','live_mandate_ticket',
+                         'entry_recovered_tier','entry_mandate_size','live_requeue','live_sell_failed')
+        ORDER BY created_at`)) as unknown as { action: string; details: Record<string, unknown> | null }[];
+      const has = (a: string) => audits.some((x) => x.action === a);
+      const tier = has("live_moonshot_tier")
+        ? "MOON SHOT"
+        : has("live_rugrisk_formula")
+          ? "RUG_RISK ✓"
+          : has("live_mandate_ticket")
+            ? "TICKET"
+            : has("entry_mandate_size")
+              ? "PRECISION"
+              : has("entry_recovered_tier")
+                ? "RECOVERED"
+                : "STANDARD";
+      const openAudit = audits.find((x) => x.action === "live_open");
+      const lat = (openAudit?.details as { latencyMs?: { total?: number } } | null)?.latencyMs?.total ?? null;
+      const livePct = r.pnl != null && r.size > 0 ? (r.pnl / r.size) * 100 : null;
+      const twinPct = r.twin_pnl != null && r.twin_size ? (r.twin_pnl / r.twin_size) * 100 : null;
+      out.push({
+        symbol: r.symbol,
+        mint: r.mint,
+        openedAt: new Date(r.opened_at),
+        status: r.status,
+        sizeUsd: Number(r.size),
+        pnl: r.pnl == null ? null : Number(r.pnl),
+        signature: r.signature,
+        tier,
+        latencyTotalMs: lat == null ? null : Number(lat),
+        requeues: audits.filter((x) => x.action === "live_requeue").length,
+        sellFails: audits.filter((x) => x.action === "live_sell_failed").length,
+        rungs: Number(r.rungs),
+        exitReason: r.exit_reason,
+        offerUsd: r.offer == null ? null : Number(r.offer),
+        capturePct:
+          r.pnl != null && r.offer != null && r.offer > 0.01 ? (Number(r.pnl) / Number(r.offer)) * 100 : null,
+        twinPnl: r.twin_pnl == null ? null : Number(r.twin_pnl),
+        dragPp: livePct != null && twinPct != null ? livePct - twinPct : null,
+      });
+    }
+
+    // ── KPIs, trailing 24h ───────────────────────────────────────────────────
+    const [conn] = (await db.execute(sql`
+      SELECT (SELECT count(*)::int FROM positions WHERE lane = 'live' AND opened_at > now() - interval '24 hours') AS opens,
+             (SELECT count(DISTINCT details->>'mint')::int FROM audit_log
+               WHERE action = 'live_buy_skipped' AND created_at > now() - interval '24 hours') AS skips`)) as unknown as {
+      opens: number; skips: number;
+    }[];
+    const connectPct = conn && conn.opens + conn.skips > 0 ? (100 * conn.opens) / (conn.opens + conn.skips) : null;
+    const [cap] = (await db.execute(sql`
+      SELECT round(sum(realized_pnl_usd::float)::numeric, 2) AS actual,
+             round(sum(CASE WHEN entry_price_usd::float > 0 AND peak_price_usd::float / entry_price_usd::float > 1
+                            THEN (peak_price_usd::float / entry_price_usd::float - 1) * size_usd::float ELSE 0 END)::numeric, 2) AS offered
+      FROM positions WHERE lane = 'live' AND status = 'closed' AND closed_at > now() - interval '24 hours'`)) as unknown as {
+      actual: number | null; offered: number | null;
+    }[];
+    const capturePct = cap?.offered && Number(cap.offered) > 0.5 ? (100 * Number(cap.actual ?? 0)) / Number(cap.offered) : null;
+    const drags = out.map((r) => r.dragPp).filter((d): d is number => d != null);
+    const dragPp = drags.length ? drags.reduce((s, d) => s + d, 0) / drags.length : null;
+    const [eq] = (await db.execute(sql`
+      SELECT (SELECT equity_usd::float FROM pnl_snapshots WHERE lane = 'live' ORDER BY snapped_at DESC LIMIT 1) AS now,
+             (SELECT equity_usd::float FROM pnl_snapshots WHERE lane = 'live' AND snapped_at < now() - interval '24 hours'
+              ORDER BY snapped_at DESC LIMIT 1) AS ago`)) as unknown as { now: number | null; ago: number | null }[];
+    const compound24hPct = eq?.now != null && eq?.ago != null && eq.ago > 0 ? (100 * (eq.now - eq.ago)) / eq.ago : null;
+
+    return { connectPct, dragPp, capturePct, compound24hPct, rows: out };
+  } catch {
+    return { connectPct: null, dragPp: null, capturePct: null, compound24hPct: null, rows: [] };
+  }
+}

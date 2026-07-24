@@ -24,6 +24,7 @@ import { WinningFormula } from "@/components/WinningFormula";
 import { WalletDrawer } from "@/components/WalletDrawer";
 import { LaneComparison } from "@/components/LaneComparison";
 import { TimingGrid } from "@/components/TimingGrid";
+import { TradeManager } from "@/components/TradeManager";
 import { MintLink, ScoreBadge, StatTile, fmtTs, fmtTsFull, timeAgo, usd } from "@/components/ui";
 import {
   getEdgeSeparation,
@@ -47,6 +48,7 @@ import {
   getLaneBalances,
   getInflowEdge,
   getSweetspotRadar,
+  getTradeManager,
   getAnticipation,
   getWinningFormula,
   getHourlyWindows,
@@ -106,6 +108,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     laneBalances,
     inflowEdge,
     sweetspotRadar,
+    tradeManager,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -141,6 +144,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     getLaneBalances(),
     getInflowEdge(),
     getSweetspotRadar(),
+    getTradeManager(),
   ]);
 
   const gridView = laneFilter
@@ -387,6 +391,20 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         <WalletDrawer wallet={walletStatus} dnaByMint={dnaByMint} />
         <LaneComparison cmp={laneComparison} />
       </div>
+
+      {/* TRADE MANAGER — the live funnel's R&D bench: per-trade lifecycle
+          pipeline + the convert-and-compound KPIs (operator, 2026-07-24) */}
+      <section>
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
+            Trade Manager · the live funnel, trade by trade
+          </h2>
+          <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+            observation bench — fixes still ride harness → ratify → ship
+          </span>
+        </div>
+        <TradeManager view={tradeManager} />
+      </section>
 
       {/* Anticipation Forecast — the forward-looking brain: when / where / tail odds */}
       <AnticipationForecast view={anticipation} />
