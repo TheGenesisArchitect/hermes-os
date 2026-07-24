@@ -1415,7 +1415,12 @@ export function decideExit(
     // leash — priced by the harness, rug give-back −$141 vs +$1,386 of tail.
     // Stale-take above stays live: it is the only defense that cashes against
     // pool-teleport rugs, and a tape still printing highs never triggers it.
-    if (cfg.MOON_RUNNER_ENABLED && bankedRunner) {
+    // RISER EXCLUDED (ratified 2026-07-24, per-class harness cut): its shape is
+    // the fast single-leg spike and its tight trail + RIDE bonus beat the
+    // ratchet on qualified flow (booked $113.60 vs $104.43, CODE $31.80 vs
+    // $15.78) — confirmed live by HOLLY's first moon_ratchet close at 9%
+    // capture vs the 49% class average. RISER keeps its championship trail.
+    if (cfg.MOON_RUNNER_ENABLED && bankedRunner && position.signature !== "RISER") {
       const MILESTONES = [1.5, 2, 3, 5, 8, 13, 21, 34, 55];
       let msFloor = 0;
       for (const ms of MILESTONES) if (peakMult >= ms) msFloor = ms * cfg.MOON_RUNNER_RATCHET;
