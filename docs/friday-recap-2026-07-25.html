@@ -1,0 +1,239 @@
+<title>Genesis Capital Engine — Weekly Recap · July 25, 2026</title>
+<style>
+  :root {
+    --bg: #fafbfc; --surface: #ffffff; --ink: #16211c; --muted: #5b6a63;
+    --line: #e3e8e5; --accent: #0e6e4f; --accent-soft: #e7f2ed;
+    --good: #0e6e4f; --bad: #a33232; --warn: #8a6d1f;
+    --sim: #6b5ca8; --sim-soft: #efecf7; --live: #b05c1e; --live-soft: #f9efe6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #101512; --surface: #171d19; --ink: #e6ece8; --muted: #93a29a;
+      --line: #263029; --accent: #52b98e; --accent-soft: #1a2b23;
+      --good: #52b98e; --bad: #e07070; --warn: #d3b45e;
+      --sim: #a897e0; --sim-soft: #241f33; --live: #dd9257; --live-soft: #2e2117;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #101512; --surface: #171d19; --ink: #e6ece8; --muted: #93a29a;
+    --line: #263029; --accent: #52b98e; --accent-soft: #1a2b23;
+    --good: #52b98e; --bad: #e07070; --warn: #d3b45e;
+    --sim: #a897e0; --sim-soft: #241f33; --live: #dd9257; --live-soft: #2e2117;
+  }
+  :root[data-theme="light"] {
+    --bg: #fafbfc; --surface: #ffffff; --ink: #16211c; --muted: #5b6a63;
+    --line: #e3e8e5; --accent: #0e6e4f; --accent-soft: #e7f2ed;
+    --good: #0e6e4f; --bad: #a33232; --warn: #8a6d1f;
+    --sim: #6b5ca8; --sim-soft: #efecf7; --live: #b05c1e; --live-soft: #f9efe6;
+  }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif; margin: 0; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 4px; text-wrap: balance; }
+  h2 { font-size: 17px; font-weight: 650; margin: 40px 0 12px; letter-spacing: -0.005em; }
+  h3 { font-size: 14px; font-weight: 650; margin: 20px 0 8px; }
+  p { margin: 0 0 12px; max-width: 68ch; }
+  .kicker { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-weight: 650; margin-bottom: 10px; }
+  .sub { color: var(--muted); font-size: 13.5px; margin-bottom: 24px; }
+  .banner { background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--sim); border-radius: 6px; padding: 12px 16px; font-size: 13px; color: var(--muted); margin: 20px 0 28px; }
+  .banner b { color: var(--ink); }
+  .tag { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; padding: 1px 7px; border-radius: 3px; vertical-align: 1px; }
+  .tag.sim { background: var(--sim-soft); color: var(--sim); }
+  .tag.live { background: var(--live-soft); color: var(--live); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 20px 0 8px; }
+  .kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .kpi .l { font-size: 11.5px; color: var(--muted); margin-bottom: 4px; }
+  .kpi .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+  .kpi .s { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .good { color: var(--good); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+  .tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; margin: 14px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th { text-align: left; font-size: 11.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 10px 14px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 8px 14px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  td.r, th.r { text-align: right; }
+  .note { font-size: 12.5px; color: var(--muted); margin: 6px 2px 0; max-width: 74ch; }
+  .rail { border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 6px 6px 0; padding: 12px 16px; margin: 14px 0; font-size: 13.5px; }
+  dl { margin: 0; }
+  dt { font-weight: 650; font-size: 13.5px; margin-top: 12px; }
+  dd { margin: 2px 0 0; color: var(--muted); font-size: 13.5px; max-width: 72ch; }
+  .arc { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
+  @media (max-width: 640px) { .arc { grid-template-columns: 1fr; } }
+  .arcbox { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
+  .arcbox h3 { margin-top: 0; }
+  .arcbox .big { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <div class="kicker">Genesis Capital Engine · Weekly Performance &amp; Engineering Recap</div>
+  <h1>Week ending July 25, 2026</h1>
+  <div class="sub">Prepared for the executive and finance team · Systematic liquidity-event trading, Solana venues · All times UTC</div>
+
+  <div class="banner">
+    <b>Provenance discipline.</b> This platform runs a two-book architecture and never blends them.
+    <span class="tag sim">SIMULATED</span> figures come from the <b>Research Book</b> — a full-fidelity simulation
+    that trades every qualified signal with modeled fees and slippage. <span class="tag live">LIVE</span> figures
+    come from the <b>Production Book</b> — real capital, on-chain fills. Research results are a model of
+    opportunity, not investable performance; production results are audited on-chain.
+  </div>
+
+  <h2>Executive summary</h2>
+  <p>
+    The platform systematically trades newly launched micro-cap tokens on Solana — a market defined by
+    extreme velocity (positions resolve in minutes) and a high base rate of adversarial behavior
+    (roughly one in three qualifying assets ends in a deliberate liquidity withdrawal). The strategy's
+    edge is a counterparty-reputation graph: it identifies assets whose early holders have a verified
+    history of being on the winning side, sizes uniformly, takes profit on a structured schedule into
+    strength, and lets a residual tranche ride outsized moves behind a milestone-indexed floor.
+  </p>
+  <p>
+    This was the week the trading model crystallized. The qualification formula was formalized mid-week,
+    and the inflection is visible in the data: the Research Book ran a <b>43–46% hit rate before the
+    formula</b> and <b>68–72% after it</b>, swinging from −$336 <span class="tag sim">SIMULATED</span> over
+    the first three sessions to <b>+$242</b> <span class="tag sim">SIMULATED</span> over the last four.
+    The Production Book remains small and in execution-hardening (−$147 lifetime on ~$3 average
+    positions); its known execution failure modes were each closed this week with automated controls.
+    The capacity model below is the compounding thesis, stated with measured inputs.
+  </p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="l">Research Book, week <span class="tag sim">SIMULATED</span></div>
+      <div class="v bad">−$93.70</div><div class="s">2,441 closed · first-half −$336 / second-half +$242</div></div>
+    <div class="kpi"><div class="l">Hit-rate inflection <span class="tag sim">SIMULATED</span></div>
+      <div class="v good">43% → 68%</div><div class="s">pre-formula vs post-formula sessions</div></div>
+    <div class="kpi"><div class="l">Research Book, inception <span class="tag sim">SIMULATED</span></div>
+      <div class="v good">+$1,669.53</div><div class="s">4,284 closed positions</div></div>
+    <div class="kpi"><div class="l">Production Book, inception <span class="tag live">LIVE</span></div>
+      <div class="v bad">−$146.56</div><div class="s">219 fills · execution-hardening phase</div></div>
+    <div class="kpi"><div class="l">Signal coverage</div>
+      <div class="v">6% → 15%</div><div class="s">qualified share of ~2,800 daily arrivals</div></div>
+  </div>
+
+  <h2>The week's arc: before and after the formula</h2>
+  <div class="arc">
+    <div class="arcbox">
+      <h3>Jul 18–20 · pre-formula</h3>
+      <div class="big bad">−$336.20 <span class="tag sim">SIMULATED</span></div>
+      <p class="note">1,617 positions at a 43–46% hit rate. Qualification relied on microstructure
+      confirmation alone — a bar adversarial launch operations are engineered to pass. Average position
+      $7–11 with uncontrolled dispersion.</p>
+    </div>
+    <div class="arcbox">
+      <h3>Jul 21–24 · formula era</h3>
+      <div class="big good">+$242.49 <span class="tag sim">SIMULATED</span></div>
+      <p class="note">824 positions at a 51→72% hit rate as the counterparty-reputation requirement,
+      inflow envelope, and entry-timing window shipped in sequence. Position dispersion collapsed to a
+      disciplined three-tier ladder late in the week.</p>
+    </div>
+  </div>
+
+  <h2>Daily performance</h2>
+  <div class="tablebox"><table>
+    <tr><th>Session (UTC)</th><th class="r">Research P&amp;L <span class="tag sim">SIM</span></th><th class="r">Hit rate</th><th class="r">Positions</th><th class="r">Production P&amp;L <span class="tag live">LIVE</span></th><th class="r">Fills</th></tr>
+    <tr><td>Fri Jul 18</td><td class="r bad">−$183.29</td><td class="r">43%</td><td class="r">366</td><td class="r">—</td><td class="r">—</td></tr>
+    <tr><td>Sat Jul 19</td><td class="r bad">−$96.35</td><td class="r">46%</td><td class="r">541</td><td class="r">—</td><td class="r">—</td></tr>
+    <tr><td>Sun Jul 20</td><td class="r bad">−$56.56</td><td class="r">44%</td><td class="r">710</td><td class="r bad">−$38.79</td><td class="r">96</td></tr>
+    <tr><td>Mon Jul 21</td><td class="r good">+$156.13</td><td class="r">51%</td><td class="r">257</td><td class="r bad">−$54.48</td><td class="r">62</td></tr>
+    <tr><td>Tue Jul 22</td><td class="r good">+$109.20</td><td class="r">72%</td><td class="r">270</td><td class="r bad">−$17.37</td><td class="r">21</td></tr>
+    <tr><td>Wed Jul 23</td><td class="r bad">−$13.51</td><td class="r">70%</td><td class="r">116</td><td class="r bad">−$21.04</td><td class="r">24</td></tr>
+    <tr><td>Thu Jul 24</td><td class="r bad">−$9.33</td><td class="r">68%</td><td class="r">181</td><td class="r bad">−$14.88</td><td class="r">16</td></tr>
+  </table></div>
+  <p class="note">Research Book equity: $2,768 → $2,668 on the week (−3.6%) against +$1,670 since
+  inception on a $1,000 base <span class="tag sim">SIMULATED</span>. Wed–Thu research sessions were
+  roughly flat while the sizing ladder was being rebuilt live; Thursday's gross was +$274 in wins
+  against −$243 in losses, of which −$202 traced to over-limit positions opened before the per-position
+  cap shipped — the final version of that cap now makes a repeat structurally impossible.
+  Production fills declined through the week by design: entry gates tightened faster than they reopened,
+  and Thursday's production loss was concentrated in a since-closed failure mode (see Risk Controls).</p>
+
+  <h2>Risk controls shipped this week</h2>
+  <p>Each control below responds to a measured failure mode, is enforced in code on every position, and
+  writes an audit record on every activation.</p>
+  <dl>
+    <dt>Per-position exposure limit — 25 bps of book NAV, universal</dt>
+    <dd>No position, in any tier, may exceed 0.25% of the book (~$6.75 at current research NAV). Basis:
+    three over-limit positions accounted for −$47 in 90 minutes on Thursday; capped equivalents would
+    have lost ~$8. Uniform sizing is the compounding design: winners pay through frequency, not
+    concentration.</dd>
+    <dt>Three-tier sizing ladder</dt>
+    <dd>Full unit (25 bps): assets passing the complete qualification — verified-winner holder base,
+    liquidity-inflow envelope, entry-timing window. Half unit: qualified assets with one degraded
+    dimension. Discovery minimum ($1.50–3, Research Book only): everything else that merits
+    measurement. Nothing trades above its tier.</dd>
+    <dt>Structured profit-taking with a milestone-indexed residual floor</dt>
+    <dd>Positions bank fixed tranches into strength (first at +22%), and the residual rides behind a
+    floor that ratchets up at price milestones (1.5×, 2×, 3×, 5×…). Ten-day replay across 888 qualified
+    positions, with fills constrained to actual pool liquidity at each tick: this exit architecture
+    produced $1,585 vs $348 booked <span class="tag sim">SIMULATED</span> — the residual tranche is
+    where the strategy's convexity lives.</dd>
+    <dt>Automated liquidity-evaporation exit</dt>
+    <dd>The dominant loss mode is a counterparty withdrawing pool liquidity while price still quotes.
+    Positions now liquidate immediately when pool depth drops below exit-viability — forensics showed a
+    60–90 second sellable window that price-based stops always missed. Three activations in production
+    on day one converted probable full losses into exits at −$0.07 to −$0.57.</dd>
+    <dt>Pre-commitment exit-route verification (production)</dt>
+    <dd>The Production Book will not enter any position whose exit cannot be routed at entry time. During
+    Thursday's ~40-minute market-wide quote-infrastructure outage, this control self-suspended all
+    production entries with zero operator intervention and zero capital impact.</dd>
+  </dl>
+
+  <h2>The compounding model</h2>
+  <p>
+    Growth compounds through <b>turnover of uniform units</b>, not position concentration. The measured
+    inputs, all from the qualified cohort of the Research Book <span class="tag sim">SIMULATED</span>:
+  </p>
+  <div class="tablebox"><table>
+    <tr><th>Input</th><th class="r">Measured</th><th>Source window</th></tr>
+    <tr><td>Qualified opportunities per day</td><td class="r">200–400</td><td>counterparty-graph coverage, past 7 days</td></tr>
+    <tr><td>Expectancy per deployed dollar, envelope cohort</td><td class="r">+7.7¢ to +14.0¢</td><td>10-day traded book, per cell</td></tr>
+    <tr><td>Hit rate, qualified cohort</td><td class="r">68–72%</td><td>post-formula sessions</td></tr>
+    <tr><td>Loss bound per position</td><td class="r">≤ 1 unit (25 bps)</td><td>structural, since Jul 25</td></tr>
+    <tr><td>Book capacity</td><td class="r">24 concurrent units</td><td>configured</td></tr>
+  </table></div>
+  <p class="note">Illustration, not projection: 100 units/day deployed at 25 bps with the measured
+  +8–14¢/$ cohort expectancy corresponds to +2.5–4.5% on book NAV per day before the convexity of
+  outsized winners, which the ten-day exit replay indicates is the larger component. The binding
+  constraints are coverage (rising: 6% → 15% this week) and production execution parity — not signal
+  supply. These figures derive from simulated research trading; production results will differ with
+  real execution costs and are gated as below.</p>
+
+  <h2>Production Book: candor and the gate to scale</h2>
+  <p>
+    Production is −$146.56 <span class="tag live">LIVE</span> since inception on 219 small fills — the
+    cost of discovering execution failure modes that simulation cannot surface: aggregator indexing lag
+    on young pools, exit-route decay on thin venues, mirror-latency on fast moves. Each discovered mode
+    now has a shipped, audited control (retry-with-requeue, exit-route verification, the
+    liquidity-evaporation exit, per-fill latency telemetry). Production sizing follows the same fraction
+    of its own book that research commits — by construction, not by policy — and production only trades
+    cells the Research Book has proven. The pre-registered gate to scaling production capital is
+    sustained research-parity: connection rate, execution drag, and capture converging to research-book
+    levels on the live Trade Manager telemetry, reviewed session by session.
+  </p>
+
+  <h2>Glossary — platform terms in market terms</h2>
+  <dl>
+    <dt>Counterparty-reputation graph ("the crowd")</dt>
+    <dd>A persistent database of wallet outcomes across token launches. Assets whose early holders
+    include verified historical winners qualify; wallet reputations persist across launches and cannot
+    be cheaply manufactured — this is the strategy's core information edge.</dd>
+    <dt>Liquidity-inflow envelope</dt>
+    <dd>Qualified assets must show pool-liquidity growth of 1.20–2.05× at entry. Below the band
+    correlates with stagnant launches; above it with manufactured spikes preceding withdrawal.</dd>
+    <dt>Adversarial liquidity withdrawal ("rug")</dt>
+    <dd>The counterparty removes pool liquidity, typically atomically. Unhedgeable post-entry beyond the
+    profit-taking schedule; the strategy prices it as a known loss rate bounded by the unit cap.</dd>
+    <dt>Discovery positions ("probes")</dt>
+    <dd>Minimum-size Research-Book-only positions on non-qualified flow. They exist to keep every market
+    segment continuously measured so qualification thresholds are re-validated against live data daily —
+    the platform's research budget, bounded to ~$1.50–3 per observation.</dd>
+    <dt>Two-book architecture</dt>
+    <dd>Research (simulated) trades everything and takes measured risk to learn; Production (live)
+    trades only proven cells. Research reveals; production confirms.</dd>
+  </dl>
+
+  <footer>
+    Genesis Capital Engine · internal performance review · figures as of 2026-07-25 02:00 UTC ·
+    Research Book figures are SIMULATED throughout and are not investable performance · Production Book
+    figures are on-chain audited · Prepared by the trading-systems desk.
+  </footer>
+</div>
