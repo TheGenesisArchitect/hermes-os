@@ -1406,8 +1406,25 @@ export function decideExit(
     // lock 50% +$10.18, lock 65% +$16.50, lock 85% +$8.92 — every gain-locking
     // variant positive, every breakeven variant negative.
     const gainLock = entry * (1 + (peakMult - 1) * cfg.PROFIT_LOCK_GAIN_LOCK);
-    const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, gainLock, trailFloor);
-    if (price <= stop) return { reason: "profit_trail", fraction: 1 };
+    // ── MOON RUNNER (ratified 2026-07-24, moon-ride harness +$1,248/9d) ──────
+    // Once a rung has BANKED, the remainder is house money and the tight
+    // percentage trail is what amputated every tail (the wave debrief: exits at
+    // 1.3-1.8× on moves that ran 4.85-43× past them). The banked runner rides
+    // a MULTIPLE-RATCHET leash instead: floor = 0.7 × the highest milestone
+    // crossed. Below the first milestone the profit-lock floor is the only
+    // leash — priced by the harness, rug give-back −$141 vs +$1,386 of tail.
+    // Stale-take above stays live: it is the only defense that cashes against
+    // pool-teleport rugs, and a tape still printing highs never triggers it.
+    if (cfg.MOON_RUNNER_ENABLED && bankedRunner) {
+      const MILESTONES = [1.5, 2, 3, 5, 8, 13, 21, 34, 55];
+      let msFloor = 0;
+      for (const ms of MILESTONES) if (peakMult >= ms) msFloor = ms * cfg.MOON_RUNNER_RATCHET;
+      const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, entry * msFloor);
+      if (price <= stop) return { reason: msFloor > 0 ? "moon_ratchet" : "profit_trail", fraction: 1 };
+    } else {
+      const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, gainLock, trailFloor);
+      if (price <= stop) return { reason: "profit_trail", fraction: 1 };
+    }
   } else {
     // Not yet in profit — the pre-profit hard stop is the only floor.
     // VENUE-SPLIT: thin bonding-curve tape (meteora-dbc, or any pool under

@@ -611,6 +611,15 @@ const envSchema = z.object({
   MANDATE_SIZING_ENABLED: z.coerce.boolean().default(true),
   MANDATE_SIZE_MIN_FRAC: z.coerce.number().default(0.002),
   MANDATE_SIZE_MAX_FRAC: z.coerce.number().default(0.0025),
+  // MOON RUNNER (ratified 2026-07-24, moon-ride harness: 888 F1-qualified
+  // positions since Jul 15, liquidity-aware fills — booked $347.53 vs
+  // ratchet-runner $1,595.09, +$1,248; rug give-back −$141 buys +$1,386 of
+  // tail). Once a TP rung has banked, the remainder rides a MULTIPLE-RATCHET
+  // leash instead of the percentage trail: floor = RATCHET × the highest
+  // milestone crossed (entry-relative). Stale-take and the profit-lock floor
+  // REMAIN as the rug-teleport rails (GDWR: pools vanish between polls).
+  MOON_RUNNER_ENABLED: z.coerce.boolean().default(true),
+  MOON_RUNNER_RATCHET: z.coerce.number().default(0.7),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction
