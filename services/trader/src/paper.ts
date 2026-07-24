@@ -507,7 +507,16 @@ async function openFromSignal(
         reason: !crowdPass ? "crowd-fail — F1 sensor probe" : spike ? "inflow outside the 1.20-2.05 envelope — F3 sensor probe" : "trigger in the 1.65-2.05 sensor slice — probe fire",
         sizedUsd,
       });
-    } else if (crowdPass && sig?.walletStrictHits === 0 && sizedUsd > 1.5) {
+    } else if (
+      crowdPass && sig?.walletStrictHits === 0 && sizedUsd > 1.5 &&
+      // ENVELOPE PROMOTION (ratified 2026-07-25, good-band harness): crowd-pass
+      // + MEASURED in-envelope inflow earns the full slot regardless of
+      // strict-vs-recovered — the 1.20-1.30 cell is the system's best per-$
+      // earner (+14.0¢/$; strong +7.7¢/$) and strict crowds barely exist in
+      // this market. The recovered half-clip now applies only OUTSIDE the
+      // measured envelope (or unmeasured); the slot ceiling bounds the rest.
+      !(lgNum != null && lgNum >= cfg.INFLOW_FLOOR && lgNum <= cfg.INFLOW_CEILING)
+    ) {
       // RECOVERED TIER (ratified 2026-07-24): the crowd is net-positive wallets
       // only — no never-rugged winner among holders. Leak-free verified 58%
       // winners / 28% rugs (vs strict 73%/4%), so it trades at a reduced clip
@@ -547,7 +556,10 @@ async function openFromSignal(
     const mMoonShot =
       cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
       typeof sig.signature === "string" && sig.signature.startsWith("MOON") && mSeat;
-    if ((mCrowd && mStrict && mEnvelope && mSeat) || mMoonShot) {
+    // ENVELOPE PROMOTION (ratified 2026-07-25): strict no longer required —
+    // crowd + measured envelope + seat is the full-slot qualification.
+    void mStrict;
+    if ((mCrowd && mEnvelope && mSeat) || mMoonShot) {
       const lo = Number((bankrollNow * cfg.MANDATE_SIZE_MIN_FRAC).toFixed(2));
       const hi = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC).toFixed(2));
       const clamped = Math.min(hi, Math.max(lo, sizedUsd));

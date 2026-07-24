@@ -1190,8 +1190,9 @@ export async function maybeLiveBuy(
       const mPrecision =
         cfg.MANDATE_SIZING_ENABLED &&
         sig != null &&
+        // ENVELOPE PROMOTION (ratified 2026-07-25): strict not required — the
+        // crowd gate above already passed; measured in-envelope earns the slot.
         ((sig.signature !== "RUG_RISK" &&
-          sig.walletStrictHits !== 0 &&
           sig.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) &&
           Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) <= cfg.INFLOW_CEILING) ||
           // MOON SHOT slots buy the fee-viable ticket too — the shot is taken.
