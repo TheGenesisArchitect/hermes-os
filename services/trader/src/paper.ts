@@ -445,7 +445,17 @@ async function openFromSignal(
   // Any tier demotion below marks the entry non-PRECISION so the mandate clamp
   // never re-inflates a deliberately shrunken clip.
   let tierDemoted = false;
-  if (sig?.signature === "MOON_STEADY" && sizedUsd > 1.5) {
+  // MOON SHOT eligibility, computed BEFORE the concentrated-probe clamp: the
+  // ratified tier ("2★ moons fire at slot size") overrides the MOON_STEADY
+  // concentration shrink — Cooper (10W, 2★) and FORMER (3W, 2★) were audited
+  // as shots but clamped to $1.50 because this block ran first and set
+  // tierDemoted, blocking the mandate band. Seat discipline still applies.
+  const shotTm = sig?.triggerMultiple != null ? Number(sig.triggerMultiple) : null;
+  const isMoonShot =
+    cfg.MOONSHOT_TIER_ENABLED && sig?.stars === 2 &&
+    typeof sig?.signature === "string" && sig.signature.startsWith("MOON") &&
+    !(shotTm != null && Number.isFinite(shotTm) && shotTm > cfg.CONVICTION_SEAT_MAX);
+  if (sig?.signature === "MOON_STEADY" && !isMoonShot && sizedUsd > 1.5) {
     const [hc] = await db
       .select({ ev: safetyChecks.evidence })
       .from(safetyChecks)
@@ -476,9 +486,7 @@ async function openFromSignal(
     // MOON SHOT (ratified 2026-07-24): 2★ MOON-class fingerprint overrides the
     // crowd/envelope demotion — the shot is taken at slot size. Seat discipline
     // (upperSlice) still demotes; the alert cohort triggers inside the seat.
-    const moonShot =
-      cfg.MOONSHOT_TIER_ENABLED && sig?.stars === 2 &&
-      typeof sig.signature === "string" && sig.signature.startsWith("MOON") && !upperSlice;
+    const moonShot = isMoonShot && !upperSlice;
     if (moonShot && (!crowdPass || spike)) {
       await audit("entry_moonshot_tier", {
         mint: signal.mint,
