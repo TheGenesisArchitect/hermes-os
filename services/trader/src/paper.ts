@@ -496,6 +496,30 @@ async function openFromSignal(
         reason: "2★ moon fingerprint — SHOT at slot size (alert cohort: 11/20 winners incl. 9.67×/7.82× were $1.50 probes)",
         sizedUsd,
       });
+    } else if (
+      // DEEP-CROWD FLOOR EXCEPTION (ratified 2026-07-25): sub-floor inflow
+      // with a deep clean crowd (wh≥5, zero rug-rep) is the moon nursery —
+      // 67%/17% with 1-in-3 reaching ≥3× — and rides the HALF-CLIP under the
+      // full ladder instead of a $1.50 probe. Mid/thin crowds fall through to
+      // the sensor tier below; live keeps declining sub-floor until this
+      // half-clip cell proves out.
+      cfg.DEEPCROWD_FLOOR_ENABLED && crowdPass && !upperSlice &&
+      lgNum != null && lgNum < cfg.INFLOW_FLOOR &&
+      (sig?.walletWinnerHits ?? 0) >= cfg.DEEPCROWD_MIN_WH &&
+      (sig?.walletRugHits ?? 0) === 0 &&
+      sizedUsd > 1.5
+    ) {
+      tierDemoted = true;
+      const halfCap = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC * 0.5).toFixed(2));
+      sizedUsd = Math.max(1.5, Math.min(halfCap, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2))));
+      await audit("entry_deepcrowd_floor", {
+        mint: signal.mint,
+        walletWinnerHits: sig?.walletWinnerHits ?? null,
+        walletRugHits: sig?.walletRugHits ?? null,
+        inflow: lgNum,
+        reason: `deep crowd ${sig?.walletWinnerHits}W/0R below the floor — half-clip moon-nursery ride (67%/17%, 1-in-3 ≥3×)`,
+        sizedUsd,
+      });
     } else if ((!crowdPass || spike || upperSlice) && sizedUsd > 1.5) {
       tierDemoted = true;
       sizedUsd = Math.max(1.5, Number((sizedUsd * cfg.SENSOR_TIER_SIZE_MULT).toFixed(2)));

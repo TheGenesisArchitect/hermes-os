@@ -637,6 +637,15 @@ const envSchema = z.object({
   // depth, sell everything into whatever remains, immediately, both lanes.
   // Set low enough ($1.2k) that legitimate thin-venue moons are untouched.
   DEPTH_COLLAPSE_USD: z.coerce.number().default(1200),
+  // DEEP-CROWD FLOOR EXCEPTION (ratified 2026-07-25, subfloor-deepcrowd
+  // harness): the sub-floor band is NOT homogeneous — wh≥5 / 0-rug-rep crowds
+  // run 67% win / 17% rug with 1-in-3 reaching ≥3× (the overnight moon
+  // nursery: SPCX 8.17×, MEMENOTE 6.77×, SmiskJim 260× — all $1.50 probes),
+  // while the 2-4W cell is the rug den (40%/33%, −41.5¢/$) and stays probed.
+  // Deep-crowd sub-floor trades the HALF-CLIP on paper; live keeps declining
+  // sub-floor until the half-clip cell proves (paper reveals, live confirms).
+  DEEPCROWD_FLOOR_ENABLED: z.coerce.boolean().default(true),
+  DEEPCROWD_MIN_WH: z.coerce.number().default(5),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction
