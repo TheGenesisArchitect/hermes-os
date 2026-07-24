@@ -349,10 +349,35 @@ async function openFromSignal(
   // an unconfirmed edge. RUG_RISK never opens.
   const sigProfile = sig ? profileOf(sig.signature) : null;
   if (sigProfile && !sigProfile.trade) {
-    await audit("entry_filtered", { mint: signal.mint, reason: `signature ${sig?.signature} — ${sigProfile.note}` });
-    await db.update(signals).set({ status: "dismissed" }).where(eq(signals.id, signal.id));
-    console.log(`⛔ SKIP   ${token.symbol ?? "?"} ${short(signal.mint)} — ${sig?.signature}: ${sigProfile.note}`);
-    return false;
+    // RUG_RISK FORMULA ROUTE (ratified 2026-07-24 pipe census): the hard veto
+    // predates F1/F3 and fired FIRST, so the better gates never saw the cell —
+    // refused cohort ran 65% winners / 16% rugs (vs the 36.1% the veto was
+    // built on). The formula arbitrates now: crowd-PASS + in-envelope trades
+    // (78%-win cell, half clip via the genome); everything else falls through
+    // to the sensor tier and probes instead of vanishing. Route off = old veto.
+    const rrCrowd =
+      sig?.walletWinnerHits != null && sig?.walletRugHits != null &&
+      sig.walletWinnerHits >= 1 && sig.walletWinnerHits - sig.walletRugHits >= 1;
+    const rrLg = sig?.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null;
+    const rrInEnvelope = rrLg != null && rrLg >= cfg.INFLOW_FLOOR && rrLg <= cfg.INFLOW_CEILING;
+    if (cfg.RUGRISK_FORMULA_ROUTE && sig?.signature === "RUG_RISK") {
+      if (rrCrowd && rrInEnvelope) {
+        await audit("entry_rugrisk_formula", {
+          mint: signal.mint,
+          walletWinnerHits: sig.walletWinnerHits,
+          walletRugHits: sig.walletRugHits,
+          inflow: rrLg,
+          reason: "crowd-PASS + in-envelope RUG_RISK — formula overrides the stale veto (78% win / 1.70× offer cell), half clip",
+        });
+      }
+      // fall through — qualified trades at the genome's half clip; the rest is
+      // demoted to a sensor probe by the tier block below.
+    } else {
+      await audit("entry_filtered", { mint: signal.mint, reason: `signature ${sig?.signature} — ${sigProfile.note}` });
+      await db.update(signals).set({ status: "dismissed" }).where(eq(signals.id, signal.id));
+      console.log(`⛔ SKIP   ${token.symbol ?? "?"} ${short(signal.mint)} — ${sig?.signature}: ${sigProfile.note}`);
+      return false;
+    }
   }
   // PER-CLASS CONFIRMATION BAR — each genome must clear its OWN snap off the low
   // before capital is committed. The profiles have carried a minSnap since they
@@ -417,6 +442,9 @@ async function openFromSignal(
   // drop to a $1.50 probe: the sensor keeps measuring, the bankroll stops
   // funding the cohort. Live inherits the shrunken fraction automatically.
   let sizedUsd = sizeUsd;
+  // Any tier demotion below marks the entry non-PRECISION so the mandate clamp
+  // never re-inflates a deliberately shrunken clip.
+  let tierDemoted = false;
   if (sig?.signature === "MOON_STEADY" && sizedUsd > 1.5) {
     const [hc] = await db
       .select({ ev: safetyChecks.evidence })
@@ -424,7 +452,10 @@ async function openFromSignal(
       .where(and(eq(safetyChecks.mint, signal.mint), eq(safetyChecks.checkName, "holder_concentration")))
       .limit(1);
     const lg = Number((hc?.ev as { largestHolderPct?: number } | null)?.largestHolderPct);
-    if (Number.isFinite(lg) && lg >= 30) sizedUsd = 1.5;
+    if (Number.isFinite(lg) && lg >= 30) {
+      sizedUsd = 1.5;
+      tierDemoted = true;
+    }
   }
   // ── FORMULA v2 SENSOR TIER (canon GCE-FORMULA-001, ratified 2026-07-24) ───
   // Crowd-fail (F1: needs wh ≥ 1 AND wh > rh) or a manufactured-spike inflow
@@ -443,6 +474,7 @@ async function openFromSignal(
     const tmNum = sig?.triggerMultiple != null ? Number(sig.triggerMultiple) : null;
     const upperSlice = tmNum != null && Number.isFinite(tmNum) && tmNum > cfg.CONVICTION_SEAT_MAX;
     if ((!crowdPass || spike || upperSlice) && sizedUsd > 1.5) {
+      tierDemoted = true;
       sizedUsd = Math.max(1.5, Number((sizedUsd * cfg.SENSOR_TIER_SIZE_MULT).toFixed(2)));
       await audit("entry_sensor_tier", {
         mint: signal.mint,
@@ -457,6 +489,7 @@ async function openFromSignal(
       // only — no never-rugged winner among holders. Leak-free verified 58%
       // winners / 28% rugs (vs strict 73%/4%), so it trades at a reduced clip
       // rather than full conviction. Null strictHits = pre-tier row, full size.
+      tierDemoted = true;
       sizedUsd = Math.max(1.5, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2)));
       await audit("entry_recovered_tier", {
         mint: signal.mint,
@@ -466,6 +499,40 @@ async function openFromSignal(
         reason: "net-positive crowd, no strict winner — RECOVERED tier clip",
         sizedUsd,
       });
+    }
+  }
+  // ── MANDATE SIZING (operator vision, ratified 2026-07-24) ─────────────────
+  // "We allocate 1.5 to 2% of the account balance to open qualified trades."
+  // PRECISION full-formula entries (strict crowd + conviction seat + measured
+  // in-envelope inflow, no tier demotion) clamp into [1.5%, 2%] of the
+  // compounding bankroll — quality tilts WITHIN the band, never multiplies
+  // below it. Census 48h: median clip $5.25 vs the $39-52 mandate; sizing
+  // consistency on qualified quality is the compounding engine, defense lives
+  // in tier demotion and the exit chain, not in shrinking the winners.
+  // RUG_RISK is excluded — its half clip stands until its counterfactual.
+  if (cfg.MANDATE_SIZING_ENABLED && sig && !tierDemoted && sig.signature !== "RUG_RISK") {
+    const mCrowd =
+      sig.walletWinnerHits != null && sig.walletRugHits != null &&
+      sig.walletWinnerHits >= 1 && sig.walletWinnerHits - sig.walletRugHits >= 1;
+    const mStrict = sig.walletStrictHits !== 0; // null = pre-tier row, treated strict
+    const mLg = sig.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null;
+    const mEnvelope = mLg != null && mLg >= cfg.INFLOW_FLOOR && mLg <= cfg.INFLOW_CEILING;
+    const mTm = sig.triggerMultiple != null ? Number(sig.triggerMultiple) : null;
+    const mSeat = mTm != null && Number.isFinite(mTm) && mTm <= cfg.CONVICTION_SEAT_MAX;
+    if (mCrowd && mStrict && mEnvelope && mSeat) {
+      const lo = Number((bankrollNow * cfg.MANDATE_SIZE_MIN_FRAC).toFixed(2));
+      const hi = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC).toFixed(2));
+      const clamped = Math.min(hi, Math.max(lo, sizedUsd));
+      if (clamped !== sizedUsd) {
+        await audit("entry_mandate_size", {
+          mint: signal.mint,
+          from: sizedUsd,
+          to: clamped,
+          bankroll: Math.round(bankrollNow),
+          reason: "PRECISION full-formula — mandate band 1.5-2% of bankroll (sizing consistency, ratified 2026-07-24)",
+        });
+        sizedUsd = clamped;
+      }
     }
   }
   const finalSizeUsd = sizedUsd;

@@ -594,6 +594,21 @@ const envSchema = z.object({
   // (wins > rugs, no never-rugged winner present) — leak-free 58% win / 28%
   // rug (~333/day recovered vs the rugs===0 attrition). Half clip, both lanes.
   RECOVERED_TIER_SIZE_MULT: z.coerce.number().default(0.5),
+  // RUG_RISK FORMULA ROUTE (ratified 2026-07-24, pipe census): the class veto
+  // was calibrated at 36.1% rug; the current-market refused cohort runs 65%
+  // winners / 16% rugs, and crowd-PASS + in-envelope RUG_RISK ran 78% win at a
+  // 1.70× avg offer (n=27/48h). The formula gates (F1 crowd + F3 envelope)
+  // arbitrate the cell instead of the stale hard veto; the genome trades it at
+  // half size under BASE exits until the counterfactual promotes it.
+  RUGRISK_FORMULA_ROUTE: z.coerce.boolean().default(true),
+  // MANDATE SIZING (operator vision, ratified 2026-07-24): "we allocate 1.5 to
+  // 2% of the account balance to open qualified trades" — PRECISION trades
+  // (strict crowd + conviction seat + measured in-envelope inflow) clamp into
+  // this band of the compounding bankroll; quality tilts WITHIN it, never
+  // below. Census: median clip was $5.25 vs the $39-52 mandate.
+  MANDATE_SIZING_ENABLED: z.coerce.boolean().default(true),
+  MANDATE_SIZE_MIN_FRAC: z.coerce.number().default(0.015),
+  MANDATE_SIZE_MAX_FRAC: z.coerce.number().default(0.02),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction

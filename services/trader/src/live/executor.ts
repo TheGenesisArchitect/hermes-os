@@ -758,8 +758,28 @@ export async function maybeLiveBuy(
     // profile, so live was trading the single class paper refuses. A 1:1 lane
     // cannot take trades the reference lane declines.
     if (sig && !profileOf(sig.signature).trade) {
-      await audit("live_buy_skipped", { mint, reason: `${sig.signature} — class is not traded` });
-      return;
+      // RUG_RISK FORMULA ROUTE (ratified 2026-07-24 pipe census): crowd-PASS +
+      // in-envelope RUG_RISK ran 78% win / 1.70× avg offer — the formula
+      // arbitrates the cell, not the stale 36.1%-era veto. Only the qualified
+      // cell proceeds on live (the F1/F3 gates below re-verify); size inherits
+      // paper's half clip via the mirror fraction.
+      const rrCrowd =
+        sig.walletWinnerHits != null && sig.walletRugHits != null &&
+        sig.walletWinnerHits >= 1 && sig.walletWinnerHits - sig.walletRugHits >= 1;
+      const rrLg = sig.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null;
+      const rrInEnvelope = rrLg != null && rrLg >= cfg.INFLOW_FLOOR && rrLg <= cfg.INFLOW_CEILING;
+      if (cfg.RUGRISK_FORMULA_ROUTE && sig.signature === "RUG_RISK" && rrCrowd && rrInEnvelope) {
+        await audit("live_rugrisk_formula", {
+          mint,
+          walletWinnerHits: sig.walletWinnerHits,
+          walletRugHits: sig.walletRugHits,
+          inflow: rrLg,
+          reason: "crowd-PASS + in-envelope RUG_RISK — formula overrides the stale veto, half clip via mirror fraction",
+        });
+      } else {
+        await audit("live_buy_skipped", { mint, reason: `${sig.signature} — class is not traded${cfg.RUGRISK_FORMULA_ROUTE && sig.signature === "RUG_RISK" ? " (RUG_RISK not formula-qualified: needs crowd-PASS + in-envelope)" : ""}` });
+        return;
+      }
     }
     // ── THE CONCENTRATION GATES (operator directive 2026-07-22) ─────────────
     // Live deploys real capital only into the audit-proven lanes, only with

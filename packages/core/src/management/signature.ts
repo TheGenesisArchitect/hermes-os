@@ -266,11 +266,17 @@ export const SIGNATURE_PROFILES: Record<Signature, SignatureProfile> = {
     tp0: [1.2, 0.35], tp1: [2.3, 0.2], tp2: [3.2, 0.15], holdSec: FAST_CLOCK_SEC, size: 0.3,
     note: "400%+/min snap off a deep dip — 58% rug, kept small for the 4.5% tail",
   },
-  // ── refused ──
+  // ── refused by default; formula-arbitrated (RUGRISK_FORMULA_ROUTE) ──
   RUG_RISK: {
-    trade: false, minSnap: 0, floor: 0, trail: 0,
-    tp0: [0, 0], tp1: [0, 0], tp2: [0, 0], holdSec: 0, size: 0,
-    note: "draining pool or ≥$30k at discovery — 36.1% rug, 0.0% reach 5×",
+    // trade:false = never opened on the signature alone. The 2026-07-24 pipe
+    // census found the veto stale (refused cohort: 65% winners / 16% rugs vs
+    // the 36.1% it was built on; crowd-PASS + in-envelope cell 78% win at a
+    // 1.70× avg offer), so the entry paths route the cell through the F1/F3
+    // formula gates instead. A qualified entry manages under BASE's defensive
+    // chain at half size until the counterfactual watch promotes it.
+    trade: false, minSnap: 0.2, floor: 0.7, trail: 0.45,
+    tp0: [1.22, 0.2], tp1: [2.1, 0.25], tp2: [2.85, 0.25], holdSec: CLOCK_SEC, size: 0.5,
+    note: "draining pool or ≥$30k at discovery — stale-veto cell, formula-arbitrated at half clip",
   },
 };
 
