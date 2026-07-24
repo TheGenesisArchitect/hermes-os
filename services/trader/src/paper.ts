@@ -182,6 +182,8 @@ async function openFromSignal(
     walletRugHits?: number | null;
     /** Pool inflow at trigger — F3 envelope check for the sensor tier. */
     liqGrowth?: number | null;
+    /** Trigger multiple — the seat position; >CONVICTION_SEAT_MAX fires at sensor size. */
+    triggerMultiple?: number | null;
   } | null = null,
 ): Promise<boolean> {
   const market = await fetchTokenMarket(signal.mint).catch(() => null);
@@ -434,14 +436,18 @@ async function openFromSignal(
     const lgRaw = sig?.liqGrowth != null ? Number(sig.liqGrowth) : null;
     const lgNum = lgRaw != null && Number.isFinite(lgRaw) ? lgRaw : null;
     const spike = lgNum != null && lgNum > cfg.INFLOW_CEILING;
-    if ((!crowdPass || spike) && sizedUsd > 1.5) {
+    // ARM SPEC (ratified 2026-07-24): the 1.65–2.05 slice armed but measured
+    // −$1.01/t at conviction size — it fires as a sensor probe instead.
+    const tmNum = sig?.triggerMultiple != null ? Number(sig.triggerMultiple) : null;
+    const upperSlice = tmNum != null && Number.isFinite(tmNum) && tmNum > cfg.CONVICTION_SEAT_MAX;
+    if ((!crowdPass || spike || upperSlice) && sizedUsd > 1.5) {
       sizedUsd = Math.max(1.5, Number((sizedUsd * cfg.SENSOR_TIER_SIZE_MULT).toFixed(2)));
       await audit("entry_sensor_tier", {
         mint: signal.mint,
         walletWinnerHits: sig?.walletWinnerHits ?? null,
         walletRugHits: sig?.walletRugHits ?? null,
         inflow: lgNum,
-        reason: !crowdPass ? "crowd-fail — F1 sensor probe" : "inflow above envelope — F3 sensor probe",
+        reason: !crowdPass ? "crowd-fail — F1 sensor probe" : spike ? "inflow above envelope — F3 sensor probe" : "trigger in the 1.65-2.05 sensor slice — probe fire",
         sizedUsd,
       });
     }
@@ -970,6 +976,8 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
           // Pool inflow at the trigger tick — live's probability-band gate
           // reads it (1.30×+ wins 71.2% vs 44.8% below; 2×+ ran 18-for-18).
           liqGrowth: liqGrowth === null ? null : Number(liqGrowth),
+          // Seat position — the conviction/sensor slice boundary reads this.
+          triggerMultiple: triggerMultiple === null ? null : Number(triggerMultiple),
           // Point-in-time wallet-graph reputation of the holder set — live's
           // smart-money gate and boost read these (7d study 2026-07-22).
           walletWinnerHits: walletWinnerHits ?? null,

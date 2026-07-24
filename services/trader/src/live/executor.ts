@@ -704,6 +704,8 @@ export async function maybeLiveBuy(
     snapRate?: number | null;
     /** Pool inflow multiple at the trigger tick — the probability-band gate. */
     liqGrowth?: number | null;
+    /** Trigger multiple — live fires the conviction seat only (1.2–1.65). */
+    triggerMultiple?: number | null;
     /** Point-in-time wallet-graph reputation of the holder set (7d study
      * 2026-07-22, n=9,771 armed+labeled): winner-rep holders lift everything
      * monotonically, negative net rep is a rug tell. */
@@ -961,6 +963,16 @@ export async function maybeLiveBuy(
         await audit("live_buy_skipped", {
           mint,
           reason: `inflow ${sig.liqGrowth.toFixed(2)}× above the ${cfg.INFLOW_CEILING}× envelope — manufactured-spike territory (F3)`,
+        });
+        return;
+      }
+      // ARM SPEC (ratified 2026-07-24): live fires the CONVICTION seat only
+      // (1.2–1.65 — 83% win / $2.51/t). The 1.65–2.05 sensor slice measured
+      // −$1.01/t at size; paper probes it, real capital declines it.
+      if (sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX) {
+        await audit("live_buy_skipped", {
+          mint,
+          reason: `trigger ${sig.triggerMultiple.toFixed(2)}× in the sensor slice (>${cfg.CONVICTION_SEAT_MAX}) — paper probes it, live declines (−$1.01/t measured)`,
         });
         return;
       }

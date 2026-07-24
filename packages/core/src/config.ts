@@ -601,14 +601,18 @@ const envSchema = z.object({
   // TIMING artifact, not a quality one, so the fix is a higher proof-of-move bar
   // rather than another filter. Tokens clearing 1.35× have shown real follow-through,
   // and the cost-recoup floor banks the basis on the ones that stall.
-  CONFIRM_MIN_MULT: z.coerce.number().default(1.35), // green and established vs ref
-  // THE BOARDING BAND (operator, 2026-07-23): entry seat is 1.30–1.65×. The
-  // floor-only bar drifted with the hot market — in-band fills 93% (07-16,
-  // median 1.29×) → 27% (07-23, median 1.77×) — while the ≤1.65 band earned
-  // $870 of the week's $1,013 at 3× the per-trade rate of >2× entries. Movers
-  // that gap past the band are released to the re-confirm retrace path, not
-  // chased. 0 disables the ceiling.
-  CONFIRM_MAX_MULT: z.coerce.number().default(1.65),
+  // 1.35 → 1.20 (ARM SPEC ratified 2026-07-24): the arm bar IS the signal —
+  // armed trades convert at 87% regardless of crowd; crowd+seat 1.2–1.65 ran
+  // 83% win / $2.51/t / 47% capture on the harness.
+  CONFIRM_MIN_MULT: z.coerce.number().default(1.2),
+  // THE ADMISSION CEILING (ARM SPEC ratified 2026-07-24): triggers arm up to
+  // 2.05× — but the CONVICTION seat is 1.2–1.65 (83%/$2.51/t/47% capture);
+  // the 1.65–2.05 slice measured −$1.01/t and fires at SENSOR probe size on
+  // paper only (live declines it). Above 2.05 = manufactured-spike territory,
+  // refused outright. Admission and sizing tiers are deliberately decoupled:
+  // the sweetspot finder's band informs tiers and the radar, never admission.
+  CONFIRM_MAX_MULT: z.coerce.number().default(2.05),
+  CONVICTION_SEAT_MAX: z.coerce.number().default(1.65), // full-size fire zone ceiling
   // SWEETSPOT FINDER — the boarding band as a rolling measurement, not a
   // constant (operator: "sweetspot finder at any moment in the day"). Every
   // refresh the recorder re-fits [minMult, maxMult] from trailing realized

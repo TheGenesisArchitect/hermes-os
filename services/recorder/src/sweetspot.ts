@@ -76,13 +76,18 @@ export async function refreshSweetspot(
   }
 
   const band = best
-    ? { lo: Math.max(1.3, buckets[best.start]!.lo), hi: Math.min(SEAT_MAX, buckets[best.end]!.hi) }
-    : { lo: Math.max(1.3, opts.staticLo), hi: Math.min(SEAT_MAX, opts.staticHi) };
+    ? { lo: Math.max(1.2, buckets[best.start]!.lo), hi: Math.min(SEAT_MAX, buckets[best.end]!.hi) }
+    : { lo: Math.max(1.2, opts.staticLo), hi: Math.min(SEAT_MAX, opts.staticHi) };
 
   if (lastApplied && lastApplied.lo === band.lo && lastApplied.hi === band.hi) return;
 
-  triggerCfg.minMult = band.lo;
-  triggerCfg.maxMult = band.hi;
+  // DECOUPLED (ARM SPEC ratified 2026-07-24): the finder's band informs the
+  // radar and the sizing tiers but NEVER admission — mutating the trigger's
+  // min/max here is what starved the morning's boardings (9 crowd-pass
+  // arrivals, 0 armed). Admission is owned by CONFIRM_MIN/MAX_MULT statics
+  // (1.2 floor, 2.05 sensor ceiling); the conviction seat cap lives in
+  // CONVICTION_SEAT_MAX. triggerCfg is intentionally untouched.
+  void triggerCfg;
   lastApplied = band;
   const evidence = buckets.map((b) => `${b.lo}-${b.hi}: n=${b.n} $${b.pnl.toFixed(2)}`).join(" · ");
   console.log(`🎯 SWEETSPOT ${band.lo}–${band.hi}× (${best ? "measured" : "fallback static"}) — ${evidence}`);
