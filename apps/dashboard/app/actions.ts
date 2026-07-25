@@ -149,6 +149,20 @@ export async function requestHarvest(): Promise<void> {
  * money-mover); the close runs through liveSellPosition's full fire-sale
  * machinery as reason `user_cut`.
  */
+/** Read back the close request's verdict so the button can report it —
+ * the DIP incident (2026-07-25): a close against a drained pool failed
+ * silently and looked like the click did nothing. */
+export async function getLiveCloseStatus(
+  positionId: number,
+): Promise<"pending" | "failed" | "done" | "superseded" | null> {
+  const [row] = await db.select().from(config).where(eq(config.key, "live_close_request"));
+  const v = row?.value as { positionId?: number; status?: string } | undefined;
+  if (!v || v.positionId !== positionId) return v ? "superseded" : null;
+  if (v.status === "failed") return "failed";
+  if (v.status === "done") return "done";
+  return "pending";
+}
+
 export async function requestLiveClose(positionId: number): Promise<void> {
   const value = { positionId, status: "pending", requestedAt: new Date().toISOString() };
   await db

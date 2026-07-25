@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, YAxis } from "recharts";
 import type { ManagementFeature } from "@hermes/core";
-import { requestLiveClose, setManagementIntent } from "@/app/actions";
+import { getLiveCloseStatus, requestLiveClose, setManagementIntent } from "@/app/actions";
 import { fmtTs, fmtTsFull } from "@/components/ui";
 import { TradeDNA } from "@/components/TradeDNA";
 import type { ManagedPosition } from "@/lib/queries";
@@ -193,10 +193,37 @@ function LiveCloseButton({ positionId, symbol }: { positionId: number; symbol: s
   const [armed, setArmed] = useState(false);
   const [pending, start] = useTransition();
   const [queued, setQueued] = useState(false);
+  // VERDICT READBACK (the DIP incident, 2026-07-25): a close against a
+  // drained pool failed silently and looked like the click did nothing. The
+  // button now polls the request status and reports the outcome.
+  const [verdict, setVerdict] = useState<"pending" | "failed" | "done" | "superseded" | null>(null);
+  useEffect(() => {
+    if (!queued) return;
+    let tries = 0;
+    const iv = setInterval(async () => {
+      tries++;
+      const v = await getLiveCloseStatus(positionId);
+      if (v === "done" || v === "failed" || tries > 20) {
+        setVerdict(v);
+        clearInterval(iv);
+      }
+    }, 2000);
+    return () => clearInterval(iv);
+  }, [queued, positionId]);
   if (queued)
     return (
-      <span className="text-xs font-semibold" style={{ color: "var(--status-warning)" }}>
-        queued — trader sells next cycle
+      <span
+        className="text-xs font-semibold"
+        style={{
+          color:
+            verdict === "done" ? "var(--status-good)" : verdict === "failed" ? "var(--status-critical)" : "var(--status-warning)",
+        }}
+      >
+        {verdict === "done"
+          ? "✓ closed — sold on-chain"
+          : verdict === "failed"
+            ? "✗ close failed — pool unroutable (write-off/revival watch armed)"
+            : "queued — trader sells next cycle"}
       </span>
     );
   return (
