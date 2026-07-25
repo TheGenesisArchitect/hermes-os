@@ -1,0 +1,153 @@
+<title>GCE Foundation Spec — v1.0 · July 25, 2026</title>
+<style>
+  :root {
+    --bg: #fafbfc; --surface: #fff; --ink: #16211c; --muted: #5b6a63;
+    --line: #e3e8e5; --accent: #0e6e4f; --accent-soft: #e7f2ed; --warn: #8a6d1f; --gold: #9a7b1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101512; --surface: #171d19; --ink: #e6ece8; --muted: #93a29a;
+      --line: #263029; --accent: #52b98e; --accent-soft: #1a2b23; --warn: #d3b45e; --gold: #d9b44a; }
+  }
+  :root[data-theme="dark"] { --bg: #101512; --surface: #171d19; --ink: #e6ece8; --muted: #93a29a;
+    --line: #263029; --accent: #52b98e; --accent-soft: #1a2b23; --warn: #d3b45e; --gold: #d9b44a; }
+  :root[data-theme="light"] { --bg: #fafbfc; --surface: #fff; --ink: #16211c; --muted: #5b6a63;
+    --line: #e3e8e5; --accent: #0e6e4f; --accent-soft: #e7f2ed; --warn: #8a6d1f; --gold: #9a7b1f; }
+  body { background: var(--bg); color: var(--ink); font: 14.5px/1.6 "Segoe UI", system-ui, sans-serif; margin: 0; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 25px; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 16.5px; font-weight: 650; margin: 36px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  h3 { font-size: 13.5px; font-weight: 650; margin: 18px 0 6px; }
+  p { margin: 0 0 10px; max-width: 72ch; }
+  .kicker { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-weight: 650; margin-bottom: 8px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+  .stone { background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; padding: 12px 16px; font-size: 13.5px; margin: 16px 0; }
+  .tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; margin: 12px 0 18px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 9px 12px 7px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 7px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  code { font-family: Consolas, monospace; font-size: 12.5px; background: var(--accent-soft); padding: 0 4px; border-radius: 3px; }
+  .sup { color: var(--gold); font-weight: 650; font-size: 11px; }
+  .flow { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; font-family: Consolas, monospace; font-size: 12.5px; overflow-x: auto; white-space: pre; margin: 12px 0; }
+  ul { margin: 0 0 12px; padding-left: 20px; } li { margin-bottom: 4px; max-width: 70ch; }
+  footer { margin-top: 44px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <div class="kicker">Genesis Capital Engine · Foundation Specification v1.0</div>
+  <h1>The Foundation, set in stone</h1>
+  <div class="sub">Ratified July 25, 2026 · supersedes the initial-launch spec · companion to Canon GCE-FORMULA-001 · every value below is the live default in <code>packages/core/src/config.ts</code></div>
+
+  <div class="stone">
+    <b>Purpose of this document.</b> The complete engineering baseline as of the harvest-restoration
+    ratification — architecture, formula, sizing ladder, exit chain, live doors, command terminal,
+    and the full settings registry with every initial-launch default that was <span class="sup">SUPERSEDED</span>
+    by an upgraded filter marked as such. Revisit point: after the new harvest era has produced its
+    counterfactual record. Change control is unchanged and absolute:
+    <b>full-dataset harness → model replay → operator ratification → ship → counterfactual watch.</b>
+  </div>
+
+  <h2>1 · Mission &amp; the master equation</h2>
+  <p><b>E[moon P&amp;L] = arrivals × P(board) × P(ride) × capture × size.</b> The platform finds the
+  highest-probability opportunities, takes the shot at uniform size, and manages the trade flawlessly
+  back to the wallet. Two-book architecture: the <b>Research Book</b> (simulated) trades everything and
+  probes the periphery; the <b>Production Book</b> (live capital) trades only proven cells and follows
+  research sizing by construction (the mirror fraction). Benchmarks binding on the desk: armed capture
+  ≥40%/class · gross wins:losses ≥1.5 daily · rungless-death tax ≤25% of gross wins · live drag ≤5pp ·
+  boarding = 100% of qualified triggers (measured at 100%, Jul 25).</p>
+
+  <h2>2 · The pipeline</h2>
+  <div class="flow">SCOUT (discovery, safety gates: honeypot/mint/freeze — hard traps never soften)
+  → RECORDER (watch every candidate · trigger on confirmed demand 1.20–2.05× @ 2–2.5 min
+      · route signature genome · score wallet graph (3-min recompute) · stamp F6 launch order
+      · sweetspot finder = display only, DECOUPLED from admission)
+  → TRADER / RESEARCH BOOK (tier ladder sizing → open → manage @5s, entry scan @2s
+      · exits: rungs → micro-TPs → milestone ratchet → rails)
+  → MIRROR (live fires on the same signal; sizes = paper's realized fraction of its own book)
+  → LIVE EXECUTOR (doors §6 · stage-clock latency telemetry · requeue-on-unroutable 90s
+      · sub-floor tickets · depth rail w/ read-confirm · ATA close-on-exit)
+  → SENTINEL (ntfy cards · 🌙 sharpened alerts · trade_diagnosis verdict per close
+      · double-entry ledger sync · revival watch · row-heal)</div>
+
+  <h2>3 · The Winning Formula (F1–F6)</h2>
+  <div class="tablebox"><table>
+    <tr><th>Factor</th><th>Rule</th><th>Basis</th></tr>
+    <tr><td><b>F1 CROWD</b> (the spine)</td><td>winner-rep holders aboard and outnumbering (wh≥1, wh&gt;rh); winner-rep = net-positive wallets (wins&gt;rugs); strict subset tracked separately</td><td>the one signal fakes can't manufacture; 2.2× winner lift</td></tr>
+    <tr><td><b>F2 SEAT</b></td><td>trigger 1.20–1.65× = conviction; 1.65–2.05 = sensor probe</td><td>armed ≥1.2× converts 87%; upper slice −$1.01/t</td></tr>
+    <tr><td><b>F3 ENVELOPE</b></td><td>inflow 1.20–2.05× for full size; sub-floor = tiered (deep-crowd half-clip / probes); above ceiling = refuse</td><td>sub-floor at size −$0.81/t; manufactured spikes above</td></tr>
+    <tr><td><b>F4 TEXTURE</b></td><td>sizing tilt only (chart breathed) — never a gate</td><td>flawless-chart lethality is episodic</td></tr>
+    <tr><td><b>F5 DEPTH BEHAVIOR</b></td><td>in-trade management signal: the depth rail (§5); pre-entry stability is non-discriminating</td><td>winners hold ≥1.15× entry depth; deaths stall</td></tr>
+    <tr><td><b>F6 LAUNCH ORDER</b></td><td>the adversary's tempo, recorder-stamped: L2 = re-harvest (half-clip); L3-4 = golden window; L1 = fizzle-den (muted from alerts)</td><td>full book: L2 −2.3¢/$, L3-4 +19.5¢/$; L1 fizzles 64%</td></tr>
+  </table></div>
+
+  <h2>4 · The sizing ladder (absolute)</h2>
+  <div class="tablebox"><table>
+    <tr><th>Rung</th><th>Size</th><th>Who rides it</th></tr>
+    <tr><td><b>Slot (ceiling)</b></td><td>0.20–0.25% of book NAV × session (<code>MANDATE_SIZE_MIN/MAX_FRAC</code> 0.002/0.0025)</td><td>in-envelope crowd-pass (strict NOT required) · 2★ moon shots · precision</td></tr>
+    <tr><td>Half-clip</td><td>0.5× (<code>RECOVERED_TIER_SIZE_MULT</code>)</td><td>out-of-envelope recovered crowds · qualified RUG_RISK · deep-crowd sub-floor (wh≥5/0R, capped at slot/2) · F6 second launches</td></tr>
+    <tr><td>Probe</td><td>$1.50–3 (<code>SENSOR_TIER_SIZE_MULT</code> 0.3)</td><td>crowd-fail · mid/thin sub-floor · sensor slice · clone-wave relaunches (&lt;60m after a sibling rug)</td></tr>
+    <tr><td colspan="3"><b>Universal governors, every entry:</b> slot ceiling × session posture (off-hours ×0.5) · exit-viability ≤ pool/25 · <code>entry_slot_cap</code>/<code>entry_depth_scaled</code> audits. Nothing trades above the ceiling, any tier, any path.</td></tr>
+  </table></div>
+  <p class="sub">The mandate is per-slot by definition: ~$5/slot × 6–10 concurrent = 1.5–2% deployed. Consistency per slot × basket breadth is the compounding engine.</p>
+
+  <h2>5 · The exit chain — the Moon Leash</h2>
+  <div class="tablebox"><table>
+    <tr><th>Stage</th><th>Spec (defaults)</th></tr>
+    <tr><td>Rungs (per-class genome)</td><td>global <code>TP0/1/2</code> = 1.15/1.30/1.58× at cum 40/50/80%; classes override (RISER/BASE tp0 1.22; CLIMBER recut 1.40→1.22; farm tape cost-recoup 87/90/95%)</td></tr>
+    <tr><td>Micro-TPs</td><td>5% of original at each milestone crossed {2.5,3,5,8,13,21,34,55}, <b>peak-triggered</b>, fill guard ≥0.7×milestone, cap 95% cum — <code>take_profit_micro</code></td></tr>
+    <tr><td>Milestone ratchet (runner)</td><td>floor = 0.7 × highest milestone crossed; <b>MOON classes have no sub-1.5× price floor</b> (booked $2.84 vs $89.96 replayed with the floor removed); RISER excluded — keeps its championship trail</td></tr>
+    <tr><td>Rails (never loosened)</td><td>depth rail &lt;$1.2k pool w/ <b>2-read confirmation</b> · stale-take (3-min flat while green, sell into strength) · pre-arm hard stop 5% (45% thin-venue) w/ 2-tick wick confirm · never-armed cut (≥8m, −25%, peak&lt;1.2) · runner clock 1000s · profit-lock arm 1.2× / floor 1.02× (non-MOON)</td></tr>
+    <tr><td>Harvest</td><td>manual dashboard sweep (the golden engine: +$2,074/57 sweeps) + <b>auto-harvest armed</b>: ≥4 greens ≥1.08× carrying ≥$8 → certified <code>harvest_now</code> sweep, 15m cooldown</td></tr>
+  </table></div>
+
+  <h2>6 · Live executor doors (in firing order)</h2>
+  <ul>
+    <li>Class/route: RUG_RISK via formula only (crowd-PASS + envelope = half-clip; sub-floor deep-crowd = ticket); blocklist empty <span class="sup">SUPERSEDED</span> (was "BASE" — formula gates are the defense)</li>
+    <li>F1 crowd gate (moon-shot override at 2★) · F3 envelope (sub-floor ticket exception wh≥2/0R) · seat ≤1.65</li>
+    <li>Clone wave: sibling rugged/open &lt;60m → refuse (paper mirrors at probe scale)</li>
+    <li>Depth floors: $8k standard / $2.5k smart-money — no exit at size, no entry</li>
+    <li>Exit-route probe (never enter what can't be sold) · mirror-freshness (twin exiting = no chase) · chase guard (&gt;10% since first quote)</li>
+    <li>Sizing: mirror fraction → fee floor $3.50 with PRECISION/sub-floor tickets · sub-floor capped AT ticket until cohort proves ≥55%/30 fills</li>
+    <li>Rails: daily loss throttle ($24 cap → throttle) · kill $36 · <code>LIVE_MAX_CONCURRENT</code> 15 · requeue-on-unroutable 90s/15s</li>
+  </ul>
+
+  <h2>7 · Command Terminal &amp; Adaptive Policy</h2>
+  <p>The dashboard is the command terminal: runtime overrides merge over static config each tick
+  (<code>readEffectiveConfig</code>) — manual pins always win; the <b>Adaptive Policy</b> recomputes every 60s
+  (regime + balance-aware Sizer; POSITION_FRAC range picked by conviction stars) and applies only when
+  <code>autoMode=live</code>. Operator controls: kill switches per lane · harvest button (sellable-greens-only,
+  two-path flag clear) · two-step live CLOSE per card → <code>live_close_request</code> queue · wallet sends via the
+  trader (single money-mover). Surfaces: Position Command (cards + TradeDNA + F6 chips) · Trade Manager
+  (lifecycle pipeline, 5 KPIs, diagnosis Pareto) · Sweetspot Radar (ghost blips = seen-not-boarded) ·
+  Ledger workspace (4-book reconciliation, verified to the cent).</p>
+
+  <h2>8 · Settings registry — initial launch → today</h2>
+  <p class="sub"><span class="sup">SUPERSEDED</span> = the launch default was replaced by an upgraded filter; the old knob remains for rollback but the new mechanism governs.</p>
+  <div class="tablebox"><table>
+    <tr><th>Setting</th><th>Launch</th><th>Today</th><th>Superseded by / basis</th></tr>
+    <tr><td>Entry confirm band</td><td>1.35–1.65× @ ≤3m</td><td><code>CONFIRM_MIN/MAX_MULT</code> 1.20–2.05 @ 2–2.5m</td><td>ARM SPEC — the arm is the signal</td></tr>
+    <tr><td>Sweetspot finder</td><td>mutated admission band</td><td>display-only</td><td><span class="sup">SUPERSEDED</span> — band mutation starved boardings</td></tr>
+    <tr><td>Risk-tier multiplier</td><td>0.35× speculative etc.</td><td>retired (sellability 0.5 only)</td><td><span class="sup">SUPERSEDED</span> by tier ladder; 7d counterfactual $277→$583</td></tr>
+    <tr><td>8-factor quality chain</td><td>buyShare×rug×conv×wallet×hot×liq×late×band</td><td>bypassed for routed positions</td><td><span class="sup">SUPERSEDED</span> — 200× size spread; conviction frac + ladder governs</td></tr>
+    <tr><td>Per-trade sizing</td><td>$50 base × mults</td><td>per-slot 0.2–0.25% NAV, ceiling absolute</td><td>mandate ratification + universal ceiling</td></tr>
+    <tr><td>Wallet gate</td><td>veto on rugger rap sheet</td><td>F1 spine + recovered tier + antigate</td><td>crank 3 — rugs===0 attrition recovered +139% coverage</td></tr>
+    <tr><td>RUG_RISK class</td><td>hard veto (36.1%-era)</td><td>formula-arbitrated, half-clip</td><td><span class="sup">SUPERSEDED</span> — cell measured 65% win / 16% rug</td></tr>
+    <tr><td>Live class blocklist</td><td>"BASE"</td><td>"" (empty)</td><td><span class="sup">SUPERSEDED</span> by F1/F3/seat</td></tr>
+    <tr><td>Runner leash</td><td>pct trail + gain-lock</td><td>milestone ratchet; MOON floor-free; micro-TPs</td><td>moon-ride harness +$1,248/10d; NOs on record: gain-lock hybrid, micro-rung 1.10, pre-arm scratch</td></tr>
+    <tr><td>Off-hours</td><td>entries paused → ×0.1 probes</td><td>×0.5 session scaling through the whole ladder</td><td>probe-mode doctrine + session seam fix</td></tr>
+    <tr><td>Moonshot alert</td><td>every 2★ MOON arm</td><td>L≥2 + machine-taking-the-shot only</td><td>conversion audit 10%; L1 fizzles 64%</td></tr>
+    <tr><td>Capture stat</td><td>actual/offered always</td><td>undefined below $0.50–1 offer</td><td>near-zero denominators manufacture absurdities</td></tr>
+  </table></div>
+
+  <h2>9 · Watches open at ratification</h2>
+  <ul>
+    <li>Sub-floor live ticket cohort → half-clip at ≥55% over ~30 fills (pre-registered)</li>
+    <li>Moon alerts next-50: P(board) ≥70% · conversion ≥30% · banked-vs-offered positive</li>
+    <li>Auto-harvest first fires as float rebuilds · MOON capture vs 40% bar · F6 cohorts as stamps reach full coverage</li>
+    <li>Model-cycle queue: texture tilt (F4) · add-at-arm sizing · deployer fingerprinting (F6 deepening) · L5+ deep-crowd elite cell (89% fly)</li>
+  </ul>
+
+  <footer>GCE Foundation Spec v1.0 · committed to <code>docs/GCE_FOUNDATION_SPEC.html</code> · authority order:
+  operator ratification → Canon GCE-FORMULA-001 → this spec → code. Any shipped behavior not traceable to
+  this document is drift: revert or ratify.</footer>
+</div>

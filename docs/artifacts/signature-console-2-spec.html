@@ -1,0 +1,105 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Signature Console 2.0 — Tech Spec</title>
+<style>
+:root{--paper:#FAFAF7;--ink:#14181C;--sub:#5A6570;--faint:#8B949C;--line:#E3E4DE;--card:#FFFFFF;
+--accent:#0E8A6D;--good:#12915E;--bad:#C2453A;--warn:#9A6A10;--band:#3D6ED4}
+@media (prefers-color-scheme:dark){:root{--paper:#12161A;--ink:#E8EAEC;--sub:#9AA5AE;--faint:#6C7680;--line:#262C31;--card:#191F24;
+--accent:#2FB48F;--good:#37B37E;--bad:#D96A5F;--warn:#C99A3F;--band:#6E96E8}}
+:root[data-theme="dark"]{--paper:#12161A;--ink:#E8EAEC;--sub:#9AA5AE;--faint:#6C7680;--line:#262C31;--card:#191F24;
+--accent:#2FB48F;--good:#37B37E;--bad:#D96A5F;--warn:#C99A3F;--band:#6E96E8}
+:root[data-theme="light"]{--paper:#FAFAF7;--ink:#14181C;--sub:#5A6570;--faint:#8B949C;--line:#E3E4DE;--card:#FFFFFF;
+--accent:#0E8A6D;--good:#12915E;--bad:#C2453A;--warn:#9A6A10;--band:#3D6ED4}
+body{background:var(--paper);color:var(--ink);font:15px/1.62 "Segoe UI",system-ui,sans-serif;margin:0;padding:0 20px 80px}
+main{max-width:780px;margin:0 auto}
+h1{font-family:Georgia,serif;font-size:2rem;line-height:1.15;font-weight:600;margin:.2em 0 .1em;text-wrap:balance}
+h2{font-family:Georgia,serif;font-size:1.28rem;font-weight:600;margin:2.1em 0 .5em;text-wrap:balance}
+h3{font-size:.98rem;font-weight:650;margin:1.4em 0 .3em}
+.eyebrow{color:var(--accent);font-size:.72rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin-top:44px}
+.sub{color:var(--sub);margin:0 0 1.4em}
+table{width:100%;border-collapse:collapse;font-size:.85rem;margin:.8em 0}
+th{color:var(--faint);font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+code{font-family:Consolas,monospace;font-size:.85em;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font:12.5px/1.5 Consolas,monospace;overflow-x:auto}
+.note{background:var(--card);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:10px 14px;font-size:.88rem;margin:1.2em 0}
+.warnnote{background:var(--card);border-left:3px solid var(--warn);border-radius:0 8px 8px 0;padding:10px 14px;font-size:.88rem;margin:1.2em 0}
+ol li,ul li{margin:.4em 0}
+.phase{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin:1em 0}
+.phase b.t{color:var(--accent)}
+.small{color:var(--faint);font-size:.78rem}
+</style>
+<main>
+<p class="eyebrow">GR-HERMES-SIGCON-SPEC-001 · Internal · 2026-07-22</p>
+<h1>Signature Console 2.0</h1>
+<p class="sub">One desk that answers the only question that matters each hour: <b>which classes deserve capital right now, at what size, at what expected capture — and is live executing them at forecast-grade drag?</b></p>
+
+<h2>1 · Why now</h2>
+<p>The console (v1) pairs each genome's <em>rule</em> with its <em>result</em> — geometry beside EV — and that scaffolding is right. But the ecosystem has outgrown it. In the last 48 hours the platform gained a wallet-reputation edge (79% win compound cohort), an 11-gate live admission stack, a regime window, fire-sale execution, a chain-proven ledger, and a 30-day forecast with daily scoring. None of that is on the console. Today the operator reconstructs "why isn't class X trading live?" from four surfaces and an audit table. The console must become the place where the whole ecosystem converges into <b>actionable, per-class KPIs</b> — and where the optimized wallet is visible as a recommendation, not a feeling.</p>
+
+<h2>2 · Current state → gaps</h2>
+<table>
+<tr><th>Dimension</th><th>Lives today</th><th>Console gap</th></tr>
+<tr><td>Genome geometry + EV/$</td><td>SignatureConsole v1</td><td class="good">✓ keep — the spine of the row</td></tr>
+<tr><td>Wallet-graph edge</td><td>gates + study only</td><td>smart-money share per class, net-rep mix, compound-cohort hit rate — the biggest edge is invisible</td></tr>
+<tr><td>Regime status</td><td><code>classRegimeHealth</code> (8h)</td><td>benched/active badge, the 8h read, distance-to-readmit — today it surfaces only as audit skips</td></tr>
+<tr><td>Admission funnel</td><td><code>audit_log</code> rows</td><td>confirms → refusals by gate → live fills, per class; the funnel answers "aligned or missing?" in one glance</td></tr>
+<tr><td>Capture</td><td>sentinel checkpoints</td><td>pooled kept÷offered vs the 40% target, trailed-red count, banked rate — per class</td></tr>
+<tr><td>Execution drag</td><td>forecast study (manual)</td><td>live−paper twin gap, per class — <b>the</b> forecast variable, measured nowhere continuously</td></tr>
+<tr><td>Forecast band</td><td>sentinel 📐 line</td><td>band position belongs on the desk header</td></tr>
+<tr><td>Allocation</td><td>operator intuition</td><td>recommended capital weight per class — the "optimized wallet" output</td></tr>
+</table>
+
+<h2>3 · The KPI contract (per-class row)</h2>
+<p>Every class row carries five KPI groups. Each cell is clickable → the class drawer (last 10 trades + last 10 refusals with reasons, mini-replay).</p>
+<table>
+<tr><th>Group</th><th>KPIs</th><th>Actionable because</th></tr>
+<tr><td><b>REGIME</b></td><td>8h EV%, n, status (ACTIVE / BENCHED / PRIOR), re-admit distance</td><td>says whether live is allowed to touch the class and what would change that</td></tr>
+<tr><td><b>SIGNAL</b></td><td>confirms/day, smart-money share (wh≥2 &amp; net≥1), avg inflow, golden-window density</td><td>says how much qualifying flow exists and how rich it runs</td></tr>
+<tr><td><b>ADMISSION</b></td><td>funnel: confirmed → refused (top gate named) → live-filled; refusal-book P&amp;L</td><td>separates "nothing qualified" from "we missed" — and prices what the gates cost</td></tr>
+<tr><td><b>EXECUTION</b></td><td>capture % (pooled, vs 40%), drag pp (twin gap), unsellable count, TP-banked rate</td><td>drag is the number the forecast lives or dies on; capture is the exit report card</td></tr>
+<tr><td><b>MONEY</b></td><td>EV/$ (paper · live), P&amp;L, deployed, current vs <b>recommended weight</b></td><td>the allocation column IS the optimized wallet</td></tr>
+</table>
+
+<h3>KPI definitions (frozen)</h3>
+<pre>capture   = Σ dollars kept ÷ Σ dollars peaks offered   -- POOLED, never averaged; rung-gated; per class
+drag      = mean( paper_twin_ret − live_ret )          -- same-mint twins, opened ≤120s apart, pp/trade
+ev_per_$  = Σ pnl ÷ Σ size + 1                          -- the learning loop's unit, unchanged from v1
+sm_share  = confirms(wh≥2 ∧ net≥1 ∧ ★≥1) ÷ confirms    -- point-in-time wallet reads only
+refusal_pnl = Σ hypothetical(size_floor × candidate outcome) over refused confirms -- gate cost, labeled HYPOTHETICAL</pre>
+
+<h2>4 · The Allocation Advisor — the "optimized wallet" output</h2>
+<p>A deterministic, explainable formula — not a black box. For each class with regime status ACTIVE:</p>
+<pre>edge_c   = max(0, ev8h_c − drag_c)            -- net edge after measured execution cost
+score_c  = edge_c × capture_c × √n_c          -- capture-weighted, evidence-damped
+weight_c = score_c ÷ Σ score  (clamped: none &gt; 40% exposure cap, floor $4/position)
+BENCHED and PRIOR classes → weight 0, shown with the reason</pre>
+<p>The console renders <b>current deployed weight vs recommended weight</b> as paired bars per class. Phase 3 adds one-click <em>Apply</em>: writes per-class size multipliers into <code>runtime_overrides.manual</code> with a full audit row — the operator approves every allocation change; nothing self-applies.</p>
+<div class="warnnote"><b>Guardrails carried from hard lessons:</b> ratio KPIs pool, never average (capture −347% incident). SIM and ◆ LIVE never sum. Refusal-book P&amp;L is labeled HYPOTHETICAL everywhere it renders. Stale manual pins killed us once (arm 1.03 ghost) — every advisor Apply stamps <code>appliedAt</code> + source and the console shows active pins with age, so no pin is ever invisible again.</div>
+
+<h2>5 · Architecture</h2>
+<ul>
+<li><b>Data layer (queries.ts):</b> <code>getSignatureConsole(v2)</code> assembles one row per class from: <code>positions</code> (EV, capture inputs via fills), <code>candidate_outcomes</code> (signal + wallet KPIs, refusal book), <code>audit_log</code> (admission funnel by reason prefix), twin-join (drag), <code>classRegimeHealth</code> parity query (regime), <code>config.smart_money_forecast</code> (band header). Heavy aggregates go into two SQL views (<code>sig_console_flow</code>, <code>sig_console_twins</code>) so the page render stays &lt;300ms.</li>
+<li><b>UI (SignatureConsole.tsx):</b> keep the geometry spine; add the five KPI groups as compact cells with semantic chips (ACTIVE/BENCHED, ⚠ drag&gt;9pp, 🐋 sm-share&gt;15%); class drawer via the house Panel/Drawer standard; header carries the 📐 forecast band + wallet lane filter compliance (<code>?lane=</code>).</li>
+<li><b>Advisor engine (packages/core):</b> pure function <code>recommendAllocation(rows, caps)</code> — unit-testable, no DB. Sentinel reuses it nightly to write an <code>allocation_advice</code> config snapshot; console diffs advice-vs-actual next morning.</li>
+<li><b>No new daemons, no schema migrations</b> — two views + one config key. Everything derives from tables that already exist.</li>
+</ul>
+
+<h2>6 · Phases</h2>
+<div class="phase"><b class="t">Phase 1 — Data layer.</b> Views + <code>getSignatureConsole</code> v2 returning the full KPI contract. Twin-drag calculator with the ≤120s pairing rule. Acceptance: every KPI reproducible by hand-query; drag matches the forecast study's 12.8pp on the same window.</div>
+<div class="phase"><b class="t">Phase 2 — Console UI.</b> Row redesign + drawers + funnel cells, Panel standard, lane-filter compliant. Acceptance: RENDERED review (not typecheck) on both themes; the Li-class miss (regime skip on a 5.25× smart-money runner) must be reconstructable from the console alone in under 30 seconds.</div>
+<div class="phase"><b class="t">Phase 3 — Allocation Advisor.</b> Recommended-weight column + Apply flow writing audited pins. Acceptance: advisor output is stable across refreshes on unchanged data; Apply → visible pin with age badge; a second Apply supersedes cleanly.</div>
+<div class="phase"><b class="t">Phase 4 — Closed loop.</b> Nightly advisor snapshot from the sentinel (Analyzer 2.0 M2 home); console shows last-night's advice vs today's realized per-class P&amp;L — the advisor is itself scored, exactly like the forecast. Acceptance: 7 consecutive nightly snapshots with advice-vs-actual deltas rendered.</div>
+
+<h2>7 · Falsifiers &amp; review cadence</h2>
+<ul>
+<li>If advisor-recommended weights underperform equal-weight over 14 days of snapshots, the score formula is wrong — revert to display-only and re-derive.</li>
+<li>If drag per class disagrees &gt;3pp with the weekly forecast re-measure, the twin-pairing rule is biased — audit the ≤120s join.</li>
+<li>Console KPIs are frozen definitions (§3); changes require a spec revision (SPEC-002), never a silent redefinition.</li>
+</ul>
+<p class="small">Companions: GR-HERMES-LEDGER-SPEC-001 (ledger), Smart Money Forecast (ef68ffe1), Analyzer 2.0 design (7d85ae88). Build order after approval: P1+P2 same session; P3 after one clean day of P2 KPIs; P4 lands with Analyzer M2.</p>
+</main>
+
+</body></html>

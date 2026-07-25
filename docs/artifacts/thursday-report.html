@@ -1,0 +1,142 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Genesis Capital Engine OS — Thursday Report · Jul 23, 2026</title>
+<style>
+  /* Deliberately single-theme: this is the Engine's terminal, dark by identity.
+     All tokens forced — the page never mixes with the viewer's theme. */
+  html, body { background: #0b0e11 !important; color-scheme: dark; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; color: #e8edf2; margin: 0; line-height: 1.55; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 40px 22px 80px; }
+  .tabular, td.num, .kpi b { font-variant-numeric: tabular-nums; font-family: "Cascadia Code", Consolas, monospace; }
+  header { border-bottom: 1px solid #232b33; padding-bottom: 22px; margin-bottom: 30px; }
+  .eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #66737f; }
+  h1 { font-size: 26px; margin: 6px 0 4px; letter-spacing: -0.01em; color: #f2f6fa; }
+  .sub { color: #9fadb8; font-size: 14px; margin: 0; }
+  h2 { font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase; color: #9fadb8; margin: 38px 0 14px; }
+  h2 .n { color: #66737f; margin-right: 8px; font-family: Consolas, monospace; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .kpi { background: #12161b; border: 1px solid #232b33; border-radius: 10px; padding: 14px 16px; }
+  .kpi .l { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; color: #66737f; }
+  .kpi b { display: block; font-size: 24px; font-weight: 600; margin: 3px 0 2px; color: #f2f6fa; }
+  .kpi .s { font-size: 11.5px; color: #9fadb8; }
+  .tag { display: inline-block; font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; border-radius: 4px; padding: 1px 7px; vertical-align: 2px; margin-left: 6px; }
+  .tag.sim { color: #5aa7e8; border: 1px solid #5aa7e8; }
+  .tag.live { color: #ff8c42; border: 1px solid #ff8c42; }
+  .tag.new { color: #3ee68c; border: 1px solid #3ee68c; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; background: #12161b; border: 1px solid #232b33; border-radius: 10px; overflow: hidden; }
+  .tblwrap { overflow-x: auto; border-radius: 10px; }
+  th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: #66737f; padding: 9px 12px; border-bottom: 1px solid #232b33; background: #171c22; }
+  td { padding: 8px 12px; border-bottom: 1px solid #232b33; color: #9fadb8; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; white-space: nowrap; }
+  .pos { color: #3ee68c; } .neg { color: #ff5d5d; } .warn { color: #ffc44d; }
+  .card { background: #12161b; border: 1px solid #232b33; border-radius: 10px; padding: 16px 18px; margin: 10px 0; }
+  .card h3 { margin: 0 0 6px; font-size: 14px; color: #e8edf2; }
+  .card p { margin: 4px 0; font-size: 13.5px; color: #9fadb8; }
+  .arrow { color: #66737f; }
+  .foot { margin-top: 44px; padding-top: 16px; border-top: 1px solid #232b33; font-size: 11.5px; color: #66737f; }
+  .mission { border-left: 3px solid #3ee68c; padding: 10px 16px; background: #12161b; border-radius: 0 10px 10px 0; margin: 14px 0; font-size: 14px; color: #9fadb8; }
+  .mission b { color: #e8edf2; }
+  .breaking { border: 1px solid #3ee68c55; background: #0e1a14; border-radius: 10px; padding: 14px 18px; margin: 14px 0; }
+  .breaking h3 { margin: 0 0 6px; font-size: 14px; color: #3ee68c; }
+  .breaking p, .breaking li { font-size: 13.5px; color: #b9c7bf; margin: 4px 0; }
+  ul { margin: 6px 0; padding-left: 20px; } li { margin: 5px 0; font-size: 13.5px; color: #9fadb8; }
+  li b { color: #e8edf2; font-weight: 600; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Genesis Capital Engine OS · Weekly Progress · Thursday Call 7:45 PM ET</div>
+    <h1>Master the Moon — Week of July 20–23</h1>
+    <p class="sub">The week the funnel learned to tell the real from the fakes — and the capital learned to follow it.</p>
+  </header>
+
+  <h2><span class="n">01</span>Balances &amp; the week's shape</h2>
+  <div class="kpis">
+    <div class="kpi"><span class="l">Paper equity <span class="tag sim">SIMULATED</span></span><b>$2,703.55</b><span class="s">$1,000 base + $1,703.55 realized, all-time</span></div>
+    <div class="kpi"><span class="l">Live wallet <span class="tag live">◆ LIVE</span></span><b>$171.26</b><span class="s">2.2505 SOL · chain-verified · drift $0.00 + $2.50 riding</span></div>
+    <div class="kpi"><span class="l">Paper, last 24h <span class="tag sim">SIM</span></span><b class="pos">+$57.40</b><span class="s">119 trades · 71% win — post-upgrade tape</span></div>
+    <div class="kpi"><span class="l">Live, last 24h <span class="tag live">◆</span></span><b class="neg">−$15.39</b><span class="s">22 trades · evening turned: −$1.23 last 4h</span></div>
+  </div>
+
+  <div class="breaking">
+    <h3>⚡ Breaking at press time — all three new doors opened with real capital</h3>
+    <ul>
+      <li><b>First DBC Moon Ticket is riding now:</b> $2.50 on a MOON_STEADY, pool $2,724, admitted via strong inflow — live's first seat in the venue that births 79% of witnessed 10×+ moons.</li>
+      <li><b>First funnel waivers fired:</b> two previously-blanket-blocked candidates admitted on measured strength (1.41× and 1.48× inflow), every waiver audited.</li>
+      <li><b>Live capture above spec:</b> Creative (RISER) closed +$0.91 at <b>72% capture</b> with 2 rungs banked — live's best capture of the day, on its own independently-managed ride.</li>
+    </ul>
+  </div>
+
+  <div class="tblwrap" style="margin-top:14px">
+  <table>
+    <thead><tr><th>Day</th><th>Paper P&amp;L <span class="tag sim" style="margin-left:4px">SIM</span></th><th>Paper win</th><th>Live P&amp;L <span class="tag live" style="margin-left:4px">◆</span></th><th>Live win</th><th>The story</th></tr></thead>
+    <tbody>
+      <tr><td>Mon 07-20</td><td class="num neg">−$56.26</td><td class="num">42%</td><td class="num neg">−$45.25</td><td class="num">26%</td><td>The rough tape that triggered the deep audits</td></tr>
+      <tr><td>Tue 07-21</td><td class="num pos">+$231.80</td><td class="num">57%</td><td class="num neg">−$51.95</td><td class="num">28%</td><td>Trail + gate rebuild lands; live gap identified</td></tr>
+      <tr><td>Wed 07-22</td><td class="num pos">+$42.87</td><td class="num">70%</td><td class="num neg">−$15.10</td><td class="num">53%</td><td>Wallet-graph gates ship; live losses cut 70%</td></tr>
+      <tr><td>Thu 07-23</td><td class="num pos">+$4.10*</td><td class="num">69%</td><td class="num neg">−$13.74</td><td class="num">50%</td><td>The optimization day — 15 ships (§3); evening tape green</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="font-size:11.5px;color:#66737f;margin:6px 2px">*Thursday's paper figure absorbs a −$47 one-day cost of discovering the never-armed loss class at new position sizes — found, bounded (interim stop), and priced into tonight's replay. The trailing-24h read (+$57.40 at 71%) shows the post-fix tape.</p>
+
+  <div class="mission">
+    <b>The week in one line:</b> paper win-rate climbed 42% → 57% → 70% → 69% while live's daily loss shrank −$45 → −$14 with its win-rate doubling — <b>quality is solved; the remaining term is volume, and it is now the only term below the line.</b>
+  </div>
+
+  <h2><span class="n">02</span>Forecast — next 24 hours</h2>
+  <div class="card">
+    <h3>Live wallet <span class="tag live">◆ LIVE</span></h3>
+    <p>Tracking <b class="pos">above</b> the 30-day Monte-Carlo baseline ($161.50 anchor, set 07-22): wallet $171.26 + $2.50 deployed. Next-24h posture: <b>first sustained green day</b> is the target — the structural blockers found this week (atomic-rug cohort, receiver gates, penny sizing, mirror staleness) are each individually closed and audited, and the evening tape already turned (−$1.23 last 4h with the day's best capture inside it).</p>
+    <p><span class="arrow">Expected band:</span> −$10 to +$15 on the day. Downside is rail-bounded (−$35 daily cap, −$32 kill); upside now has three exercised doors: winner-rep full-size entries, funnel-admissible seats, and DBC moon tickets ($10/day bounded lane).</p>
+  </div>
+  <div class="card">
+    <h3>Paper engine <span class="tag sim">SIMULATED</span></h3>
+    <p>Run-rate at current (still-suppressed) volume: <b>+$50–90/day</b> at the post-upgrade 65–71% win rate, compounding — every banked dollar now raises the next position's size. Upside lever: volume recovery through the sweetspot-band retrace re-entries and the moon-window arrivals (this week's market delivered 5× the 3×+ runs of last week).</p>
+    <p><span class="arrow">Overnight:</span> the 02:23 capture replay prices the three remaining exit levers (moon rungs up, RISER post-2× ratchet, never-armed stop confirmation) — ship/no-ship matrix on the morning desk. Nothing tunes unattended.</p>
+  </div>
+
+  <h2><span class="n">03</span>Tech optimizations — the day the machine got honest about money</h2>
+  <p style="font-size:13.5px;color:#9fadb8">Fifteen production ships today, every one from a measurement, organized by the master equation — <span class="tabular">E[moon P&amp;L] = arrivals × P(board) × P(ride) × capture × size</span>:</p>
+
+  <div class="card"><h3>Selection — refuse the fakes</h3>
+    <ul>
+      <li><b>Below-strong crowd gate (both lanes):</b> unsellable dissection proved 80% of live bleed was atomic LP pulls wearing one tell — unknown wallet crowds below strong inflow (51 trades, −$57.68/wk). Refused everywhere now; the refused cohort runs 9–20% win as the standing counterfactual.</li>
+      <li><b>Sweetspot Finder + Radar:</b> the entry band is no longer a constant — it's re-measured every 10 minutes from realized expectancy (currently 1.45–2.20×) and displayed as a live spinning radar. The golden-week seat (93% in-band fills) is the recovery target.</li>
+    </ul>
+  </div>
+  <div class="card"><h3>P(board) — open the doors the data earned</h3>
+    <ul>
+      <li><b>Winner-rep receiver:</b> proven crowds (82–89% win) bypass the stars bar, regime bench, and inflow floor — the crowd's track record <i>is</i> the evidence those gates approximated.</li>
+      <li><b>DBC Moon Tickets:</b> bounded micro-seats (≤$2.50, ≤0.1% of pool, $10/day) in the venue that births 79% of witnessed 10×+ moons — previously 99% locked out by the depth floor. <span class="tag new">EXERCISED TONIGHT</span></li>
+      <li><b>Funnel over blankets:</b> class blocklists yield to admissibility (a gated BASE ran 12-for-12 +$43 the day it was tested). Every waiver audited. <span class="tag new">EXERCISED TONIGHT</span></li>
+    </ul>
+  </div>
+  <div class="card"><h3>Size — let the model compound</h3>
+    <ul>
+      <li><b>Compounding bankroll:</b> sizing was frozen at the day-one $1,000 while equity hit $2,700 — 63% of capital invisible to the sizer. Now base + realized, refreshed every 30s.</li>
+      <li><b>Regime sensor fed:</b> close-count window (last 30 closes) replaced the starving 60-minute clock that floored hostility against a 90%-win tape.</li>
+      <li><b>Risk-tier multiplier retired:</b> "speculative" won 72% vs clean's 73% — zero discrimination left, yet it cut every position to ⅓. Same 2★ setup: ~$27 → ~$130. Seven-day counterfactual: +110% P&amp;L at identical entries.</li>
+    </ul>
+  </div>
+  <div class="card"><h3>Capture &amp; honesty — keep what the ride offers, book what happened</h3>
+    <ul>
+      <li><b>Offer-vs-Actual 15-minute clock:</b> every window scored as offered-at-traded-size vs banked — the business stat, continuously.</li>
+      <li><b>Moonshot debriefs:</b> every 🌙 call now resolves to 🌕 caught / 🌗 half / 🌑 missed with capture % and the named gate on misses.</li>
+      <li><b>Interim never-armed stop:</b> the −$47 loss class cut to bounded −25% exits; overnight replay confirms the final geometry.</li>
+      <li><b>One truth, all panels:</b> money-honest desync closes, automated row-heals from journaled fills, value-keyed ledger corrections — paper ledger now matches the book to the cent. The Analyzer no longer floors green live trades; the stage-by-stage drawer shows the full funnel (seat → crowd → snap → rungs → banked → exit) with explicit ◆ LIVE / SIM chips.</li>
+      <li><b>The fastest horse:</b> live entry scan 5s → 2s, mirror-freshness gate (never buy a move that already ended), and a stage clock on every live open so the next latency cut targets measured milliseconds.</li>
+    </ul>
+  </div>
+
+  <div class="mission">
+    <b>Setting up success:</b> the funnel now prices risk better than any blanket rule it replaced — selection finds the real liquidity, the receiver puts compounding capital behind it, the tickets buy seats where moons are born, and every number on every surface speaks from one journal-verified truth. What remains is throughput: the market is delivering twice the arrivals of last week, and the machine is finally shaped to receive them.
+  </div>
+
+  <div class="foot">
+    Genesis Capital Engine OS · report generated Thu 2026-07-23 for the 7:45 PM call, updated at press time · paper figures are SIMULATED sensor-lane results and are never blended with live; live figures are chain-verified against the wallet (reconciler green, drift $0.00). Risk rails: −$35/day throttle, −$32 kill, exposure ≤40%, all unchanged.
+  </div>
+</div>
+
+</body></html>

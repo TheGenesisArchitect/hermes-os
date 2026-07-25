@@ -1,0 +1,131 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Analyzer 2.0 — The Quant Desk · Design</title>
+<style>
+  :root{
+    --bg:#0E1116; --card:#151A22; --card2:#111620; --line:#2A3240;
+    --ink:#E6E9EE; --dim:#8C95A4; --acc:#5B8DEF; --acc-soft:rgba(91,141,239,.12);
+    --good:#46C08A; --bad:#E0566047; --warn:#D9A54A;
+    --mono:ui-monospace,"Cascadia Code","SF Mono",Consolas,monospace;
+    --body:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#F2F4F8; --card:#FFFFFF; --card2:#F7F9FC; --line:#D5DBE5;
+      --ink:#1A2230; --dim:#5C6674; --acc:#2C5FCC; --acc-soft:rgba(44,95,204,.09);
+      --good:#177A50; --warn:#8A5A00; }
+  }
+  :root[data-theme="dark"]{ --bg:#0E1116; --card:#151A22; --card2:#111620; --line:#2A3240;
+    --ink:#E6E9EE; --dim:#8C95A4; --acc:#5B8DEF; --acc-soft:rgba(91,141,239,.12);
+    --good:#46C08A; --warn:#D9A54A; }
+  :root[data-theme="light"]{ --bg:#F2F4F8; --card:#FFFFFF; --card2:#F7F9FC; --line:#D5DBE5;
+    --ink:#1A2230; --dim:#5C6674; --acc:#2C5FCC; --acc-soft:rgba(44,95,204,.09);
+    --good:#177A50; --warn:#8A5A00; }
+  html{background:var(--bg)} body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6}
+  .wrap{max-width:880px;margin:0 auto;padding:44px 22px 80px}
+  .kick{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--acc)}
+  h1{font-size:clamp(26px,4.5vw,40px);margin:8px 0 6px;letter-spacing:-.015em;line-height:1.1;text-wrap:balance}
+  .sub{color:var(--dim);max-width:64ch;margin:0}
+  h2{font-size:19px;margin:42px 0 10px;letter-spacing:-.01em}
+  h2 .m{font-family:var(--mono);color:var(--acc);font-size:13px;margin-right:8px;letter-spacing:.06em}
+  p,li{max-width:70ch}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .mod{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px 20px;margin:16px 0}
+  .mod .why{font-size:13px;color:var(--dim);border-left:3px solid var(--acc);padding-left:12px;margin:10px 0}
+  .mod .why b{color:var(--ink)}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:10px 0}
+  th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:left;border-bottom:1px solid var(--line);padding:6px 10px}
+  td{border-bottom:1px solid var(--line);padding:7px 10px}
+  .tscroll{overflow-x:auto}
+  ul{padding-left:20px} li{margin:6px 0}
+  .flow{font-family:var(--mono);font-size:12.5px;background:var(--card2);border:1px solid var(--line);border-radius:6px;padding:12px 16px;overflow-x:auto;white-space:pre;line-height:1.7}
+  .phase{display:flex;gap:10px;align-items:baseline;margin:8px 0}
+  .phase .tag{font-family:var(--mono);font-size:11px;color:var(--acc);border:1px solid var(--acc);border-radius:4px;padding:1px 8px;white-space:nowrap}
+  .foot{margin-top:48px;border-top:1px solid var(--line);padding-top:14px;font-size:12px;color:var(--dim)}
+  .principle{background:var(--acc-soft);border:1px solid var(--acc);border-radius:8px;padding:14px 18px;margin:18px 0;font-size:14.5px}
+</style>
+
+<div class="wrap">
+  <div class="kick">HERMES OS · DESIGN · ANALYZER 2.0</div>
+  <h1>The Quant Desk: replay, improve, model, advise</h1>
+  <p class="sub">The Trade Performance Analyzer graduates from a scoring panel into the system's quantitative brain — five modules on one substrate, driving trade-to-trade adjustments that reduce risk and amplify every qualified opportunity.</p>
+
+  <div class="principle"><b>One substrate, five lenses.</b> Every module reads the same two immutable stores — the ledger journal (what money did) and the tick tapes (what prices did: <span class="mono">candidate_ticks</span> watches every candidate ~2s for 15 minutes, including tokens we refused and exits we left). Nothing is estimated that can be replayed; nothing is replayed that can't be traced to evidence. This is why the night's findings were findable at all — the tapes kept recording after our exits, which is how a 658× escape and a 1,247× never-armed run became measurable instead of invisible.</div>
+
+  <h2><span class="m">M1</span>Replay Lab — the counterfactual machine</h2>
+  <div class="mod">
+    <p>Deterministic tape replay: any trade, any window, any class — re-run against an alternate geometry (arm, gain-lock, trail width, rungs, clock, gates) and diff the outcome. What was hand-rolled five separate times on 07-21 (the scratch-zone replay, the trail-structure shootout, the arm sweep, the ratchet bands, the gate backtests) becomes a service with a UI.</p>
+    <div class="why"><b>Proven need:</b> every major exit decision this cycle was settled by a hand-built replay — including the one that reversed my own recommendation (breakeven floors looked right and replayed −$23; the gain lock replayed +$16.50 and shipped). The lab makes that rigor the default instead of an effort.</div>
+    <ul>
+      <li><b>Trade view:</b> pick any position → its full tape with entry, rungs, trail floor drawn as it moved → drag the knobs → the counterfactual exit renders instantly.</li>
+      <li><b>Cohort view:</b> select a population (class, star, venue, hour, flag) → replay a config diff across all of it → fit/holdout split enforced, plateau required — the learning loop's guardrails baked into the UI so a pretty backtest can't skip them.</li>
+      <li><b>Escape autopsy:</b> for every labeled winner we exited early or never armed (psyopcat 658× kept $5.81; POOL 1,247× never entered), an automatic replay answers: what gate or geometry would have captured it, and what would that change cost across the whole cohort? Misses become experiments, not anecdotes.</li>
+    </ul>
+  </div>
+
+  <h2><span class="m">M2</span>Standing Quant — the nightly performance dissection</h2>
+  <div class="mod">
+    <p>The overnight review, run by the machine every night and every hour — the exact dissection the operator specified: how signatures fired, how each wallet responded, which obvious winners existed, whether we entered, at what price, how long the hold, whether stops/TPs/trails did their jobs.</p>
+    <div class="why"><b>Proven need:</b> tonight's manual pass found three never-armed 100×+ runs and an unmeasured refusal book — <b>18 of 50 RUG_RISK refusals ran 2×+</b>. Facts this large should surface themselves.</div>
+    <ul>
+      <li><b>Funnel report:</b> fired → armed → entered → managed → banked, per signature per lane, with take-rates and the P&amp;L of every branch not taken.</li>
+      <li><b>Refusal book:</b> every refused candidate's full outcome tracked as a shadow position — the gates get a continuously-measured P&amp;L of their own, so a gate that starts costing more than it saves names itself.</li>
+      <li><b>Mechanism scorecard:</b> per exit type: activation count, capture, give-back — with drift alarms against the trailing-7-day baseline.</li>
+      <li><b>Improvement queue:</b> each gap auto-generates a Replay Lab experiment spec; the nightly report ranks them by dollars at stake. The morning starts with a ranked worklist, not a blank page.</li>
+    </ul>
+  </div>
+
+  <h2><span class="m">M3</span>Monte Carlo Desk — modeling the money</h2>
+  <div class="mod">
+    <p>Bootstrap resampling over the journal's real trade distributions (per class × star × venue × hour) to model what the strategy <em>does to a bankroll</em> — not what one history happened to do.</p>
+    <div class="why"><b>Proven need:</b> the $200 top-up sizing ($4 floors, 2★ ×1.5 boost) was set by arithmetic on averages. The desk answers the real questions: probability of drawdown &gt; X, risk of ruin at each sizing, growth-path bands $200 → $1k.</div>
+    <ul>
+      <li><b>Equity fans:</b> 10,000 resampled 30-day paths per proposed config → median/band outcomes, max-drawdown distribution, time-to-double estimates.</li>
+      <li><b>Sizing surface:</b> fractional-Kelly per class/star from measured win/loss distributions — the aggression dial with confidence intervals instead of vibes.</li>
+      <li><b>Stress scenarios:</b> rug-cluster days, venue outages, fee-regime shifts — replayed against the book to size the caps (daily loss, exposure) from tail risk rather than round numbers.</li>
+    </ul>
+  </div>
+
+  <h2><span class="m">M4</span>Live Trade Advisor — real-time, trade to trade</h2>
+  <div class="mod">
+    <p>The Analyzer's knowledge applied <em>while the trade is alive</em> — the operator's "real time adjustments from trade to trade."</p>
+    <ul>
+      <li><b>At arm:</b> every qualified setup scored against its historical cohort — percentile EV, gap-death rate, expected hold — stamped on the position and shown on its card. A 90th-percentile setup and a 40th-percentile one stop looking identical.</li>
+      <li><b>In flight:</b> the position's live path drawn against its class's replay envelope (p25/p50/p75 trajectories). Off-script behavior — stalling where winners accelerate, outliving the cohort's clock — surfaces as an advisory chip before the exit fires.</li>
+      <li><b>At exit:</b> the instant grade (existing) plus the counterfactual: what the class-optimal geometry would have kept. The gap between them is M2's improvement queue, fed in real time.</li>
+      <li><b>Guardrail:</b> the advisor <em>informs</em>; the genome <em>decides</em>. Advisory-first, exactly like the adaptive policy — promotion to acting requires the same fit/holdout evidence as any config change.</li>
+    </ul>
+  </div>
+
+  <h2><span class="m">M5</span>Venue Lab — testing the watch list without capital</h2>
+  <div class="mod">
+    <p>Watch-list venues (Heaven, Boop, post-reset Raydium LaunchLab, quote-leg USD1 pairs) run the <em>entire</em> pipeline in shadow: discovered, safety-checked, routed, conviction-scored, entries and exits simulated on their real tapes — zero dollars at risk.</p>
+    <div class="why"><b>Proven need:</b> the venue census caught fluxbeam's honeypot factory and Orca's zero-moon profile from data we already had. The lab makes that judgment continuous and forward-looking instead of retrospective.</div>
+    <ul>
+      <li><b>Graduation criteria, pre-committed:</b> n ≥ 100 shadow trades, holdout EV ≥ 1.1, rug rate within class bounds, execution route proven by on-chain simulation → auto-promote to paper. Paper proves it → operator gates live. No venue ever skips the ladder.</li>
+      <li><b>Standing census:</b> the weekly venue table (discoveries, win/rug, best run) as a dashboard panel with trend arrows, not a hand-run query.</li>
+    </ul>
+  </div>
+
+  <h2>Build order</h2>
+  <div class="phase"><span class="tag">P1 · nights</span><span>M2 Standing Quant — the nightly dissection + refusal book + improvement queue. Highest value, lowest risk; it's tonight's manual review, automated.</span></div>
+  <div class="phase"><span class="tag">P2</span><span>M1 Replay Lab service + cohort replays (the UI can trail). Unblocks every geometry decision with one command.</span></div>
+  <div class="phase"><span class="tag">P3</span><span>M4 Advisor at-arm scoring (percentile stamps on cards) — advisory only.</span></div>
+  <div class="phase"><span class="tag">P4</span><span>M3 Monte Carlo Desk — needs the journal's fee-true data from Ledger Phase 2 to model honestly.</span></div>
+  <div class="phase"><span class="tag">P5</span><span>M5 Venue Lab full shadow pipeline (partial exists: census + recorder-only watching).</span></div>
+
+  <div class="tscroll"><table>
+    <tr><th>Module</th><th>Substrate it reads</th><th>What it writes</th></tr>
+    <tr><td>M1 Replay Lab</td><td>candidate_ticks · position_ticks · config history</td><td>counterfactual runs (versioned, reproducible)</td></tr>
+    <tr><td>M2 Standing Quant</td><td>journal · outcomes · replay results</td><td>nightly report · improvement queue · drift alarms</td></tr>
+    <tr><td>M3 Monte Carlo</td><td>journal trade distributions</td><td>equity fans · sizing surfaces · cap recommendations</td></tr>
+    <tr><td>M4 Advisor</td><td>cohort stats · live ticks</td><td>percentile stamps · in-flight advisories (never orders)</td></tr>
+    <tr><td>M5 Venue Lab</td><td>shadow pipeline on watch-list tapes</td><td>graduation scorecards · standing census</td></tr>
+  </table></div>
+
+  <div class="foot">
+    Analyzer 2.0 design · 2026-07-22 · grounded in the 07-21/22 session: every module's "proven need" cites a real incident from the tape.
+    Foundation dependencies: the ledger journal (Phase 1 shipped; Phase 2 dual-write feeds M3), candidate_ticks retention (extend from 15m watch to configurable for M1's escape autopsies).
+  </div>
+</div>
+
+</body></html>

@@ -1,0 +1,140 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Wednesday Field Report — Master the Moon</title>
+<style>
+:root{--paper:#FAFAF7;--ink:#14181C;--sub:#5A6570;--faint:#8B949C;--line:#E3E4DE;--card:#FFFFFF;
+--accent:#0E8A6D;--good:#12915E;--bad:#C2453A;--warn:#9A6A10;--band:#3D6ED4}
+@media (prefers-color-scheme:dark){:root{--paper:#12161A;--ink:#E8EAEC;--sub:#9AA5AE;--faint:#6C7680;--line:#262C31;--card:#191F24;
+--accent:#2FB48F;--good:#37B37E;--bad:#D96A5F;--warn:#C99A3F;--band:#6E96E8}}
+:root[data-theme="dark"]{--paper:#12161A;--ink:#E8EAEC;--sub:#9AA5AE;--faint:#6C7680;--line:#262C31;--card:#191F24;
+--accent:#2FB48F;--good:#37B37E;--bad:#D96A5F;--warn:#C99A3F;--band:#6E96E8}
+:root[data-theme="light"]{--paper:#FAFAF7;--ink:#14181C;--sub:#5A6570;--faint:#8B949C;--line:#E3E4DE;--card:#FFFFFF;
+--accent:#0E8A6D;--good:#12915E;--bad:#C2453A;--warn:#9A6A10;--band:#3D6ED4}
+body{background:var(--paper);color:var(--ink);font:15px/1.62 "Segoe UI",system-ui,sans-serif;margin:0;padding:0 20px 80px}
+main{max-width:760px;margin:0 auto}
+h1{font-family:Georgia,serif;font-size:2.1rem;line-height:1.12;font-weight:600;margin:.2em 0 .1em;text-wrap:balance}
+h2{font-family:Georgia,serif;font-size:1.28rem;font-weight:600;margin:2em 0 .5em;text-wrap:balance}
+.eyebrow{color:var(--accent);font-size:.72rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin-top:44px}
+.sub{color:var(--sub);margin:0 0 1.4em;font-size:1.02rem}
+.mission{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:0 10px 10px 0;padding:18px 20px;margin:1.4em 0;font-size:1.02rem}
+.mission b.f{font-family:Georgia,serif;font-size:1.1rem}
+.kpis{display:flex;gap:10px;flex-wrap:wrap;margin:1.2em 0}
+.kpi{flex:1;min-width:148px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.kpi b{display:block;font-size:1.4rem;font-variant-numeric:tabular-nums;font-weight:650}
+.kpi span{color:var(--sub);font-size:.75rem}
+table{width:100%;border-collapse:collapse;font-size:.86rem;margin:.8em 0}
+th{color:var(--faint);font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:7px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums;vertical-align:top}
+td.num{text-align:right}
+.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.cap{color:var(--faint);font-size:.76rem;margin:.3em 0 0}
+.note{background:var(--card);border-left:3px solid var(--warn);border-radius:0 8px 8px 0;padding:10px 14px;font-size:.88rem;margin:1.1em 0}
+ol li,ul li{margin:.4em 0}
+code{font-family:Consolas,monospace;font-size:.85em;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.timeline td:first-child{white-space:nowrap;color:var(--faint);width:70px}
+</style>
+<main>
+<p class="eyebrow">Hermes OS · Wednesday 2026-07-22 · 7:45 PM Team Call</p>
+<h1>Master the Moon</h1>
+<p class="sub">Wednesday Field Report — the day the mission got a formula, the engine got its gates, and the live wallet beat its own simulation for the first time.</p>
+
+<div class="mission">
+<b class="f">The Mission Statement.</b> We source these markets because the 100–500× event is real and recurring — two per day cross our radar, measured, not imagined. Everyone else buys lottery tickets. We are engineering each coefficient of one equation, separately and measurably:
+<p style="text-align:center;font-family:Georgia,serif;margin:.8em 0"><b>E[moon P&amp;L] = arrivals × P(board) × P(ride) × capture × size × (P−1)</b></p>
+<b>What it is designed to accomplish:</b> survive the 99 with measured gates, compound the micro-wins so the bankroll is always alive, and be structurally aboard when the 1 rips the atmosphere. The Optimizer is the leverage; capital is only the accelerant. When every coefficient is engineered, the moon stops being luck — that is the unicorn we are building, and today every coefficient moved.
+</div>
+
+<div class="kpis">
+<div class="kpi"><b>80%</b><span>capture on TREMP — best live trade ever (+49%), on the day's new entry gate</span></div>
+<div class="kpi"><b>2 of 2</b><span>arm-proven boosted entries beat their own paper twins (negative drag)</span></div>
+<div class="kpi"><b>267</b><span>live gate refusals today — the engine said no 12× for every yes</span></div>
+<div class="kpi"><b>+$62.99</b><span>paper lane today, 190/265 wins (72%) — SIMULATED</span></div>
+</div>
+
+<h2>1 · What shipped today — the day in one table</h2>
+<table class="timeline">
+<tr><th>When</th><th>Shipped</th><th>Measured basis</th></tr>
+<tr><td>morning</td><td><b>Ghost daemon purged</b> — a stale trader had run 8h on old config</td><td>process-roster sweep now standard</td></tr>
+<tr><td>morning</td><td><b>Weak-confirm RISER gate</b> (snap &lt;42% &amp; rate ≤0.30 → refused)</td><td>held 12 of 22 deaths, −EV cell n=62</td></tr>
+<tr><td>midday</td><td><b>Fire-sale exits + dust-bumped rungs + $8k depth floor</b></td><td>7 unsellable write-offs dissected; zero stranded positions since the clone gate</td></tr>
+<tr><td>midday</td><td><b>Wallet-graph edge → anti-gate + smart-money boost</b></td><td>compound cohort 79.2% win / 58.3% reach 3× / 4.2% rug (n=24); rug-crowd refusal (49% rug cohort, half the tape)</td></tr>
+<tr><td>midday</td><td><b>Smart Money Forecast</b> — 30-day Monte Carlo, scored daily by the sentinel</td><td>drag is the managed number: 12.8pp = 92% failure; ≤6pp = compounding</td></tr>
+<tr><td>afternoon</td><td><b>Wallet panel</b> — send / receive / connect, trader as single money-mover</td><td>type-to-confirm rails, journaled transfers, $40 deposit verified on-chain</td></tr>
+<tr><td>afternoon</td><td><b>Signature Console 2.0</b> — five-KPI contract per class + drawers</td><td>spec GR-HERMES-SIGCON-SPEC-001; Phases 1–2 rendered; dashboard hot path fixed (28–64s → 8–12s)</td></tr>
+<tr><td>evening</td><td><b>Clone-wave gate</b> — live refuses same-ticker relaunches after a rug</td><td>Bear Ripper ×2 (−$8 live) made un-repeatable; paper keeps exploring (+$68 wave cohort)</td></tr>
+<tr><td>evening</td><td><b>Entry-timing genome</b> — slow classes need +20% proof past the qualifying tick; fast classes keep the snap</td><td>replay: RISER +$4.67 → +$141.75 (n=133); MOON_FAST preserved (+$109.56 edge)</td></tr>
+<tr><td>evening</td><td><b>Moonshot Curve + Anatomy of the Moon</b> in the Smart Money artifact</td><td>if-then payoff model + the five-shape field guide, every number from our tape</td></tr>
+</table>
+
+<h2>2 · The honest scoreboard</h2>
+<table>
+<tr><th>Book</th><th class="num">Today</th><th>The story</th></tr>
+<tr><td>◆ LIVE</td><td class="num bad">−$18.07 (21 closed, 8 wins)</td><td>Tuition, itemized: the clone rugs and dust pools that funded five new gates — each loss is now structurally un-repeatable. Equity $151.26 with full headroom intact.</td></tr>
+<tr><td>SIM (paper)</td><td class="num good">+$62.99 (265 closed, 72% win)</td><td>The sensor ran hot and paid for its own experiments — including the pre-arm cohort the entry genome now refuses.</td></tr>
+<tr><td>The turn</td><td class="num good">evening: 4 of 6 green</td><td><b>TREMP +$1.95 (+49%, 80% capture)</b> and COMPUTE +$0.85 — both arm-proven, boosted entries, both with <b>negative drag</b>: live out-managed its own simulation. The forecast's entire thesis, demonstrated on real capital.</td></tr>
+</table>
+<p class="cap">All paper figures SIMULATED. Live figures are real capital on-chain, chain-reconciled every five minutes, drift $0.000.</p>
+
+<h2>3 · The formula's coefficients — where each one stands tonight</h2>
+<table>
+<tr><th>Coefficient</th><th class="num">Tonight's value</th><th>The lever</th></tr>
+<tr><td><b>arrivals</b></td><td class="num">~2/day ≥100× (14 this week, 11 ≥400×)</td><td>discovery already sees them — solved</td></tr>
+<tr><td><b>P(board)</b></td><td class="num">6 of 11 400×+ names traded</td><td>eleven measured gates + shape-timed entries — strong, improving</td></tr>
+<tr><td><b>P(ride)</b></td><td class="num warn">the bottleneck</td><td>93% of exits kept running; re-entry engine in study TONIGHT (3:43 AM, ship rule attached)</td></tr>
+<tr><td><b>capture</b></td><td class="num">47% pooled → 80% (TREMP) / 92% (BRIBE, SIM)</td><td>rungs + ratchet + fire-sale, proven both lanes today</td></tr>
+<tr><td><b>size</b></td><td class="num">×1.5 conviction boost live</td><td>scales with bankroll — capital is the accelerant, not the edge</td></tr>
+</table>
+
+<h2>4 · Overnight: three studies run while we sleep</h2>
+<ol>
+<li><b>Continuation re-entry</b> — the P(ride) lever. Smoke test: RISER +$32.68 in 6h while the existing re-arm captured zero. Ship rule pre-committed.</li>
+<li><b>Entry-timing out-of-sample</b> — validates today's genome on a window it has never seen; disagreement means revert, and we say so.</li>
+<li><b>MOON_STEADY dissection</b> — the class with the 30× tail that captures 5%; trail replay + probe-size review. Benched from live until it re-proves.</li>
+</ol>
+<p>Every study lands in the morning report with a verdict. Every recommendation waits for operator approval. The forecast gets scored against live equity every single day — <code>📐</code> in the hourly summary. That is the operating system now: <b>measure, replay, ship, verify — in hours, not quarters.</b></p>
+
+
+<h2>5 · 8:15 PM addendum — two moons printed mid-call, and the machine answered in minutes</h2>
+<p>While this report was being presented, the paper lane banked <b>Chillmothy (MOON_FAST, $30 conviction) +$37.97 at 86% capture</b> and <b>DUCK (MOON_STEADY) +$9.07 at 66% capture</b>. Live took neither. The forensics ran during the call, and the two refusals tell opposite stories:</p>
+<table>
+<tr><th>Moon</th><th>Live's refusal</th><th>Verdict</th></tr>
+<tr><td><b>DUCK</b> +$9.07 <span class="cap">SIM</span></td><td>MOON_STEADY regime bench (−12.4% on 19 at decision time)</td><td class="good">CORRECT — the bench saved ~$25 across seven losers today and missed this one winner; still net-positive. Self-correcting: DUCK's own win pulled the 8h read to −4.1%; one more winner re-admits the class automatically.</td></tr>
+<tr><td><b>Chillmothy</b> +$37.97 <span class="cap">SIM</span></td><td>pool $1,972 vs the flat $8k depth floor</td><td class="warn">REFINED IN REAL TIME — a 2★ moon with three winner-rep wallets and zero rug history was refused by a floor that exists as a rug proxy, when the wallet graph already discriminates rugs better (4.2% cohort). Shipped mid-call: smart-money-warm crowds now clear a $2,500 floor; wallet-cold keeps $8,000. Commit <code>224908c</code>, live before the meeting ended.</td></tr>
+</table>
+<p class="cap">This addendum is the business model demonstrating itself: a miss was measured, diagnosed, and structurally repaired inside twenty minutes — during the meeting that was presenting the system. That cadence — not any single gate — is the moat.</p>
+
+<h2>6 · The London Flight Plan — 11:30 PM onward</h2>
+<p>What the moon forensics demonstrated, as one picture — ten moons, two structural blocks, one lane that converts them:</p>
+<div class="chart"><svg viewBox="0 0 680 210" width="100%">
+<style>.fbox{fill:var(--card);stroke:var(--line)}.ftxt{fill:var(--ink);font-size:11px;font-weight:600}.fsub{fill:var(--sub);font-size:9.5px}.farrow{stroke:var(--faint);stroke-width:1.6;fill:none;marker-end:url(#ah)}</style>
+<defs><marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6" fill="none" stroke="var(--faint)"/></marker></defs>
+<rect x="10" y="80" width="120" height="50" rx="8" class="fbox"/><text x="70" y="100" class="ftxt" text-anchor="middle">10 session moons</text><text x="70" y="114" class="fsub" text-anchor="middle">24×–695× · ttp 2–7m</text>
+<path d="M130,95 L250,55" class="farrow"/><path d="M130,115 L250,155" class="farrow"/>
+<rect x="252" y="30" width="170" height="50" rx="8" class="fbox" style="stroke:var(--bad)"/><text x="337" y="50" class="ftxt" text-anchor="middle">6 never confirmed</text><text x="337" y="64" class="fsub" text-anchor="middle">trigger has no fast path — flight over in 2–5m</text>
+<rect x="252" y="130" width="170" height="50" rx="8" class="fbox" style="stroke:var(--warn)"/><text x="337" y="150" class="ftxt" text-anchor="middle">4 refused by the bench</text><text x="337" y="164" class="fsub" text-anchor="middle">average-EV logic on a lottery-value class</text>
+<path d="M422,55 L520,95" class="farrow"/><path d="M422,155 L520,115" class="farrow"/>
+<rect x="522" y="78" width="148" height="56" rx="8" class="fbox" style="stroke:var(--good);stroke-width:2"/><text x="596" y="97" class="ftxt" text-anchor="middle" style="fill:var(--good)">MOON TICKET LANE</text><text x="596" y="111" class="fsub" text-anchor="middle">$1–2 · velocity fast-path</text><text x="596" y="124" class="fsub" text-anchor="middle">bench/depth-exempt by size</text>
+<text x="340" y="203" class="fsub" text-anchor="middle">Perfect-catch replay: ten $4 tickets ($40 risk) ≈ +$1,880 at pooled 47% capture · Carina alone ≈ $1,305 · Study 4 measures the rug denominator tonight</text>
+</svg></div>
+<p>And the night ahead, on the clock we measured — the midnight pocket is real (42 of this week's 3×+ runs landed midnight–2 AM ET, ~6 per night, anatomy intact: wick → pool holds → snap), London flow builds behind it, and the four studies fire while the tape is still warm:</p>
+<div class="chart"><svg viewBox="0 0 680 250" width="100%">
+<style>.ttxt{fill:var(--ink);font-size:10.5px;font-weight:600}.tsub{fill:var(--sub);font-size:9.5px}.taxis{fill:var(--faint);font-size:9.5px}.tline{stroke:var(--line)}</style>
+<line x1="40" y1="40" x2="660" y2="40" style="stroke:var(--faint);stroke-width:2"/>
+<line x1="40" y1="34" x2="40" y2="46" class="tline" style="stroke:var(--faint)"/><text x="40" y="26" class="taxis" text-anchor="middle">23:30</text><line x1="93" y1="34" x2="93" y2="46" class="tline" style="stroke:var(--faint)"/><text x="93" y="26" class="taxis" text-anchor="middle">0:00</text><line x1="199" y1="34" x2="199" y2="46" class="tline" style="stroke:var(--faint)"/><text x="199" y="26" class="taxis" text-anchor="middle">1:00</text><line x1="305" y1="34" x2="305" y2="46" class="tline" style="stroke:var(--faint)"/><text x="305" y="26" class="taxis" text-anchor="middle">2:00</text><line x1="414" y1="34" x2="414" y2="46" class="tline" style="stroke:var(--faint)"/><text x="414" y="26" class="taxis" text-anchor="middle">3:43</text><line x1="496" y1="34" x2="496" y2="46" class="tline" style="stroke:var(--faint)"/><text x="496" y="26" class="taxis" text-anchor="middle">5:00</text><line x1="600" y1="34" x2="600" y2="46" class="tline" style="stroke:var(--faint)"/><text x="600" y="26" class="taxis" text-anchor="middle">7:00</text><line x1="653" y1="34" x2="653" y2="46" class="tline" style="stroke:var(--faint)"/><text x="653" y="26" class="taxis" text-anchor="middle">8:00</text>
+<rect x="93" y="48" width="212" height="16" rx="4" fill="var(--band)" opacity=".22"/><text x="199" y="60" class="tsub" text-anchor="middle">🌙 the midnight pocket — 6 moons/night witnessed (7d avg), anatomy intact</text>
+<rect x="305" y="70" width="355" height="16" rx="4" fill="var(--accent)" opacity=".18"/><text x="480" y="82" class="tsub" text-anchor="middle">London flow builds — RISER tide + STEADY staircases</text>
+<circle cx="414" cy="40" r="5" fill="var(--warn)"/><text x="414" y="104" class="ttxt" text-anchor="middle">3:43 — four studies fire</text>
+<text x="414" y="117" class="tsub" text-anchor="middle">continuation · entry OOS · MOON_STEADY · Moon Ticket EV</text>
+<circle cx="653" cy="40" r="5" fill="var(--good)"/><text x="628" y="104" class="ttxt" text-anchor="middle">morning report + verdicts</text>
+<text x="40" y="150" class="ttxt">Overnight outcome bands (live wallet · daily caps reset at midnight → fresh −$35 headroom):</text>
+<rect x="40" y="162" width="620" height="20" rx="4" fill="var(--bad)" opacity=".12"/><text x="52" y="176" class="tsub"><tspan style="font-weight:700">BASE</tspan> — quiet tape, gates refuse most flow: 6–10 live trades, ~60% green · day ≈ −$2 to +$3 · paper +$15–30 SIM</text>
+<rect x="40" y="188" width="620" height="20" rx="4" fill="var(--band)" opacity=".14"/><text x="52" y="202" class="tsub"><tspan style="font-weight:700">MIDLINE</tspan> — evening pattern holds: 70% green, one boosted runner à la TREMP · +$5 to +$10 live · paper +$40–70 SIM</text>
+<rect x="40" y="214" width="620" height="20" rx="4" fill="var(--good)" opacity=".14"/><text x="52" y="228" class="tsub"><tspan style="font-weight:700">P90</tspan> — the pocket delivers: a boosted MOON_FAST catch at 47–80% capture on a 5–20× flight · +$15 to +$40 live · paper $100+ SIM</text>
+</svg>
+<p class="cap">Bands are grounded, not promised: BASE assumes the gates keep refusing 12-for-1 as they did today; MIDLINE extends this evening's proven-entry pattern (3-for-3 negative drag, 70%+ green); P90 requires one pocket moon to reach a boosted live entry — the shape the wallet is now specifically engineered to receive. MOON_FAST enters at the snap tonight; the Moon Ticket lane, if Study 4's denominator holds, adds the 2–5-minute flights tomorrow. All paper figures SIMULATED.</p></div>
+<p><b>Why we visualize this:</b> the winners we want to attract — capital, talent, conviction — join missions that can draw their own future in measured ink and then score themselves against it in public. This page does both: the flight plan tonight, the 📐 verdict tomorrow. That is what mastery looks like while it is still being earned.</p>
+<div class="note"><b>The close.</b> Twenty-four hours ago this wallet was halted at a kill switch. Tonight it runs behind eleven measured gates, exits that escalate instead of strand, entries that demand proof, a wallet graph that reads the crowd, a forecast that scores itself daily, and a mission with a formula. The moon arrives about twice a day. We are building the machine that is always standing on the pad — and today, for the first time, it out-executed its own simulation. What a day it has been.</div>
+<p class="cap">Companions: Smart Money Forecast + Moonshot Curve + Anatomy (ef68ffe1) · Signature Console spec (53a48447) · Ledger spec · Analyzer 2.0 design. Hermes OS · internal · real-time.</p>
+</main>
+
+</body></html>

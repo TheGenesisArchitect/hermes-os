@@ -1,0 +1,150 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Live Wallet Autopsy — Paper vs Live Pairing · Genesis Capital Engine OS</title>
+<style>
+  html, body { background:#0b0e11 !important; color-scheme: dark; }
+  body { font-family:"Segoe UI",system-ui,sans-serif; color:#e8edf2; margin:0; line-height:1.5; }
+  .wrap { max-width:960px; margin:0 auto; padding:36px 20px 80px; }
+  .eyebrow { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:#66737f; }
+  h1 { font-size:24px; margin:6px 0 4px; } .sub { color:#9fadb8; font-size:13.5px; margin:0 0 18px; }
+  h2 { font-size:14px; letter-spacing:.08em; text-transform:uppercase; color:#9fadb8; margin:30px 0 10px; border-bottom:1px solid #232b33; padding-bottom:5px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:14px; }
+  .kpi { background:#12161b; border:1px solid #232b33; border-radius:9px; padding:10px 14px; }
+  .kpi i { font-style:normal; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#66737f; display:block; }
+  .kpi b { font-size:19px; font-family:Consolas,monospace; }
+  table { width:100%; border-collapse:collapse; font-size:12px; background:#12161b; border:1px solid #232b33; border-radius:10px; overflow:hidden; }
+  .tblwrap { overflow-x:auto; border-radius:10px; }
+  th { text-align:left; font-size:9.5px; text-transform:uppercase; letter-spacing:.08em; color:#66737f; padding:7px 10px; border-bottom:1px solid #232b33; background:#171c22; white-space:nowrap; }
+  td { padding:6px 10px; border-bottom:1px solid #1a2027; color:#9fadb8; vertical-align:top; }
+  tr:last-child td { border-bottom:none; } td.num { text-align:right; white-space:nowrap; font-family:Consolas,monospace; }
+  tr.fired { background:#0e1a1422; } tr.silent { background:#2a101033; }
+  .g { color:#3ee68c; } .r { color:#ff5d5d; } .a { color:#ffc44d; } .dim { color:#66737f; }
+  .verdict { font-weight:700; font-size:11px; white-space:nowrap; }
+  .verdict.fired { color:#ff8c42; } .verdict.declined { color:#5aa7e8; } .verdict.silent { color:#ff5d5d; }
+  .reason { font-size:10.5px; color:#8b98a3; }
+  .box { border-left:3px solid #3ee68c; background:#0e1a14; border-radius:0 10px 10px 0; padding:13px 17px; margin:14px 0; font-size:13.5px; color:#c9d6cf; }
+  .box.warn { border-color:#ffc44d; background:#12161b; color:#b9c3cc; }
+  .box b { color:#e8edf2; }
+  .foot { margin-top:36px; padding-top:14px; border-top:1px solid #232b33; font-size:11px; color:#66737f; }
+</style>
+<div class="wrap">
+  <div class="eyebrow">Genesis Capital Engine OS · Forensic Tech Spec · Live Wiring Autopsy</div>
+  <h1>Paper vs Live — Every Entry Paired With Live's Exact Response</h1>
+  <p class="sub">Last 3 hours under the ARM SPEC. The question: is the live wallet running blind? The method: every paper entry paired with live's decision and the audit that names it. Generated 7/24/2026, 4:15:15 AM ET.</p>
+  <div class="kpis">
+    <div class="kpi"><i>Paper entries</i><b>9</b></div>
+    <div class="kpi"><i>◆ Live fired</i><b>0</b></div>
+    <div class="kpi"><i>Audited declines</i><b class="g">9</b></div>
+    <div class="kpi"><i>Silent (blind)</i><b class="g">0</b></div>
+  </div>
+  <div class="box"><b>Verdict: the wallet is not blind — it is obedient.</b> 9 entries, 9 named decisions, 0 silent. Every decline traces to a ratified rule: F1 crowd (0W/0R declined), the blocklist funnel, or the sensor slice. The Shiloh case that prompted this audit sat perfectly in the seat (1.62× @2.2m, 73% buys) — and carried a 0W/0R crowd. Under ratified F1, live <i>must</i> decline it; the audit fired at 07:45:44 saying exactly that. The wiring is sound; what Shiloh exposes is a <b>formula-level tension</b>, quantified below.</div>
+
+  <h2>The pairing — every entry, every response</h2>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Open (ET)</th><th>Trade</th><th>Size</th><th>Paper P&L</th><th>Seat</th><th>Crowd</th><th>Live response</th><th>Named reason (audit)</th></tr></thead>
+    <tbody><tr class="declined">
+    <td>04:00:35</td><td><b>Khamphong</b> <span class="dim">BASE · SENSOR</span></td>
+    <td class="num">$5.01</td>
+    <td class="num r">−$4.98</td>
+    <td class="num g">1.53×@2.0m</td>
+    <td class="dim">0W/0R</td>
+    <td class="verdict declined">live_buy_skipped</td>
+    <td class="reason">BASE — dead lane, live-blocked by operator order (not funnel-admissible)</td>
+  </tr>
+<tr class="declined">
+    <td>03:52:44</td><td><b>Shiloh</b> <span class="dim">MOON_STEADY</span></td>
+    <td class="num">$1.50</td>
+    <td class="num g">+$0.19</td>
+    <td class="num g">1.60×@2.1m</td>
+    <td class="dim">0W/0R</td>
+    <td class="verdict declined">entry_crowd_unknown_refused</td>
+    <td class="reason">crowd 0W/0R — F1 requires winners aboard and outnumbering (crowd-fail: $0.28/t, 14% dead; live fail-cohort −$1</td>
+  </tr>
+<tr class="declined">
+    <td>03:45:44</td><td><b>Shiloh</b> <span class="dim">RISER · SENSOR</span></td>
+    <td class="num">$14.49</td>
+    <td class="num g">+$0.13</td>
+    <td class="num g">1.62×@2.2m</td>
+    <td class="dim">0W/0R</td>
+    <td class="verdict declined">entry_crowd_unknown_refused</td>
+    <td class="reason">crowd 0W/0R — F1 requires winners aboard and outnumbering (crowd-fail: $0.28/t, 14% dead; live fail-cohort −$1</td>
+  </tr>
+<tr class="declined">
+    <td>03:44:19</td><td><b>Shiloh</b> <span class="dim">BASE · SENSOR</span></td>
+    <td class="num">$5.13</td>
+    <td class="num g">+$1.75</td>
+    <td class="num g">1.55×@2.3m</td>
+    <td class="dim">0W/0R</td>
+    <td class="verdict declined">live_buy_skipped</td>
+    <td class="reason">BASE — dead lane, live-blocked by operator order (not funnel-admissible)</td>
+  </tr>
+<tr class="declined">
+    <td>03:11:08</td><td><b>Catbus</b> <span class="dim">MOON_SLOW · SENSOR</span></td>
+    <td class="num">$2.00</td>
+    <td class="num g">+$0.21</td>
+    <td class="num g">1.47×@2.1m</td>
+    <td class="dim">0W/0R</td>
+    <td class="verdict declined">entry_crowd_unknown_refused</td>
+    <td class="reason">crowd 0W/0R — F1 requires winners aboard and outnumbering (crowd-fail: $0.28/t, 14% dead; live fail-cohort −$1</td>
+  </tr>
+<tr class="declined">
+    <td>02:43:44</td><td><b>neitzshce</b> <span class="dim">BASE · SENSOR</span></td>
+    <td class="num">$5.00</td>
+    <td class="num g">+$0.58</td>
+    <td class="num g">1.60×@2.2m</td>
+    <td class="dim">0W/0R</td>
+    <td class="verdict declined">live_buy_skipped</td>
+    <td class="reason">BASE — dead lane, live-blocked by operator order (not funnel-admissible)</td>
+  </tr>
+<tr class="declined">
+    <td>02:31:27</td><td><b>neitzshce</b> <span class="dim">BASE · SENSOR</span></td>
+    <td class="num">$5.13</td>
+    <td class="num g">+$1.14</td>
+    <td class="num g">1.55×@2.5m</td>
+    <td class="dim">0W/0R</td>
+    <td class="verdict declined">live_buy_skipped</td>
+    <td class="reason">BASE — dead lane, live-blocked by operator order (not funnel-admissible)</td>
+  </tr>
+<tr class="declined">
+    <td>02:11:21</td><td><b>Orcpedo</b> <span class="dim">MOON_SLOW · SENSOR</span></td>
+    <td class="num">$1.95</td>
+    <td class="num g">+$0.37</td>
+    <td class="num g">1.63×@2.0m</td>
+    <td class="dim">0W/0R</td>
+    <td class="verdict declined">live_buy_skipped</td>
+    <td class="reason">pool 6388 below the 8000 depth floor — no exit at size</td>
+  </tr>
+<tr class="declined">
+    <td>01:39:18</td><td><b>SEABULL</b> <span class="dim">RISER · SENSOR</span></td>
+    <td class="num">$18.03</td>
+    <td class="num r">−$17.96</td>
+    <td class="num g">1.47×@2.0m</td>
+    <td class="dim">0W/0R</td>
+    <td class="verdict declined">entry_crowd_unknown_refused</td>
+    <td class="reason">crowd 0W/0R — F1 requires winners aboard and outnumbering (crowd-fail: $0.28/t, 14% dead; live fail-cohort −$1</td>
+  </tr></tbody>
+  </table></div>
+
+  <h2>Wiring-path audit — every way maybeLiveBuy can end, and whether it speaks</h2>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Exit path</th><th>Audit</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>F1 crowd decline</td><td><span class="g">entry_crowd_unknown_refused</span></td><td>audited ✓</td></tr>
+      <tr><td>Inflow envelope (&gt;2.05)</td><td><span class="g">live_buy_skipped</span></td><td>audited ✓</td></tr>
+      <tr><td>Sensor slice (trig &gt;1.65)</td><td><span class="g">live_buy_skipped</span></td><td>audited ✓ (new)</td></tr>
+      <tr><td>Blocklist / regime / stars / depth / clone-wave / anticipation / inflow floor</td><td><span class="g">live_buy_skipped</span></td><td>audited ✓</td></tr>
+      <tr><td>Sizer below fee floor</td><td><span class="g">live_buy_skipped</span></td><td>audited ✓ (new)</td></tr>
+      <tr><td>Mirror-freshness (twin already exiting)</td><td><span class="g">live_buy_skipped</span></td><td>audited ✓</td></tr>
+      <tr><td>DBC ticket caps (concurrent / daily budget)</td><td><span class="g">live_buy_skipped</span></td><td>audited ✓</td></tr>
+      <tr><td>Duplicate in-flight claim (same mint, seconds apart)</td><td>—</td><td class="dim">silent by design (dedupe, not a decision)</td></tr>
+      <tr><td>Wallet key unavailable</td><td>—</td><td class="a">silent — benign (lane reads disarmed at startup) but worth an audit line; queued as a polish item</td></tr>
+      <tr><td>Gate returns "disabled" (LIVE_TRADING_ENABLED=false)</td><td>—</td><td class="dim">silent by design (lane off = no decisions to narrate)</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>The real finding — the coverage tension, quantified</h2>
+  <div class="box warn"><b>Live's firing set = crowd-pass × conviction seat, and crowd coverage is the throttle.</b> All 9 declines this window were crowd-fail, blocklist, or sensor-slice — none were wiring faults. But the same window shows the cost: the declined cohort (Shiloh ×3, Catbus, neitzshce ×2…) printed <b>−$18.59</b> on paper. The wallet graph verifies ~18% of arrivals today and compounds daily — coverage is the organic cure. The operator-decidable accelerant: a <b>live micro-sensor tier</b> (e.g., $2.50 seats on crowd-unknown, conviction-seat, in-envelope arrivals — Shiloh-class) would buy live participation in this cohort at bounded cost while the graph grows. Harness first, per canon; this page is the evidence that motivates the run, not the run itself.</div>
+
+  <div class="foot">Genesis Capital Engine OS · SIM figures never blend with live · every live decision in this window is reproducible from audit_log · Radar updated this session: conviction seat 1.2–1.65 (green), sensor slice to 2.05 (amber), finder band as measured overlay (blue) — display only, admission owned by config statics per ARM SPEC.</div>
+</div>
+</body></html>

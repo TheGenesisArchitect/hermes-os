@@ -1,0 +1,191 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>System Health · Sell-Route Watchdog</title>
+<style>
+  :root{
+    --page:#0d0d0d; --drawer:#0b0d10; --surface-1:#1a1a19;
+    --text-primary:#fff; --text-secondary:#c3c2b7; --text-muted:#898781;
+    --gridline:#2c2c2a; --border:rgba(255,255,255,.1);
+    --series-1:#3987e5; --good:#0ca30c; --warn:#fab219; --crit:#d03b3b;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(57,135,229,.06), transparent 60%),
+      var(--page);
+    color:var(--text-secondary);
+    font-family:"Segoe UI",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased; padding:32px 20px 64px;
+  }
+  .tab{font-variant-numeric:tabular-nums}
+  .wrap{max-width:1180px;margin:0 auto}
+  .lede{margin:0 auto 28px;max-width:760px}
+  .lede h1{font-size:20px;font-weight:650;color:var(--text-primary);margin:0 0 6px;letter-spacing:-.01em}
+  .lede p{font-size:13.5px;line-height:1.55;margin:0;color:var(--text-muted)}
+  .lede code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--text-secondary);background:var(--surface-1);border:1px solid var(--gridline);border-radius:4px;padding:1px 5px}
+
+  /* ---- Dot with glow, matches the real component ---- */
+  .dot{display:inline-block;height:8px;width:8px;flex:0 0 auto;border-radius:9999px}
+  .dot.good{background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
+  .dot.warn{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 22%,transparent)}
+  .dot.crit{background:var(--crit);box-shadow:0 0 0 3px color-mix(in srgb,var(--crit) 22%,transparent)}
+
+  /* ---- Drawer shell ---- */
+  .stage{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-start;justify-content:center}
+  .drawer{
+    width:440px;max-width:100%;background:var(--drawer);
+    border:1px solid var(--border);border-left:1px solid var(--border);
+    border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.55);overflow:hidden
+  }
+  .dhead{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
+  .dhead .l{display:flex;align-items:center;gap:8px}
+  .dhead h2{font-size:14px;font-weight:600;color:var(--text-primary);margin:0}
+  .dhead .sub{font-size:12px;color:var(--text-muted)}
+  .dhead .r{display:flex;gap:8px}
+  .ibtn{border:0;border-radius:6px;background:var(--surface-1);color:var(--text-secondary);font-size:13px;padding:4px 9px;cursor:default}
+  .dbody{padding:16px;display:flex;flex-direction:column;gap:20px}
+
+  h3.sec{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin:0 0 8px;display:flex;align-items:center;justify-content:space-between}
+  .modechip{font-size:9px;letter-spacing:0;border-radius:4px;padding:1px 6px}
+
+  .row{display:flex;align-items:center;justify-content:space-between;background:var(--surface-1);border:1px solid var(--gridline);border-radius:6px;padding:8px 12px}
+  .row+.row{margin-top:6px}
+  .row .l{display:flex;align-items:center;gap:8px}
+  .row .name{font-size:13px;font-weight:500;color:var(--text-primary)}
+  .row .det{font-size:11px;color:var(--text-muted)}
+  .row .age{font-size:12px}
+
+  .banner{border-radius:6px;padding:8px 12px;font-size:11px;font-weight:600;margin-bottom:6px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  .fcell{display:flex;align-items:center;justify-content:space-between;background:var(--surface-1);border:1px solid var(--gridline);border-radius:6px;padding:8px 12px}
+  .fcell .name{font-size:12px;font-weight:500;color:var(--text-primary)}
+  .fcell .lat{font-size:11px;color:var(--text-muted)}
+
+  .funnel{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+  .step{background:var(--surface-1);border:1px solid var(--gridline);border-radius:6px;padding:6px 10px;text-align:center;min-width:56px}
+  .step .v{font-size:14px;font-weight:600;color:var(--text-primary)}
+  .step .k{font-size:10px;color:var(--text-muted)}
+  .arrow{color:var(--text-muted)}
+  .eqrow{display:flex;align-items:center;justify-content:space-between;margin-top:12px}
+  .pill{border-radius:4px;padding:2px 8px;font-size:11px;font-weight:500}
+
+  .foot{font-size:10px;color:var(--text-muted);padding-top:2px}
+
+  /* ---- state comparison column ---- */
+  .states{display:flex;flex-direction:column;gap:16px;width:440px;max-width:100%}
+  .states .cap{font-size:11px;color:var(--text-muted);margin:0 0 2px}
+  .panel{background:var(--drawer);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .panel .lbl{font-size:9px;letter-spacing:.04em;border-radius:4px;padding:1px 6px;text-transform:uppercase}
+</style>
+
+<div class="wrap">
+  <div class="lede">
+    <h1>System Health · sell-route watchdog</h1>
+    <p>The System Health drawer, faithfully rendered from the live <code>/api/health</code> payload
+      (<span class="tab">23:28 ET</span>, everything green after <code>-9</code>). The new
+      <strong style="color:var(--text-secondary)">Sell route · live exit path</strong> section sits
+      right under Services so it reads first. It probes the <em>real</em> exit path every 20s —
+      a live Jupiter swap quote plus an RPC blockhash — and alarms by mode. The three alarm states
+      are shown on the right, since you can't see them while the network is healthy.</p>
+  </div>
+
+  <div class="stage">
+    <!-- ============ FULL DRAWER · live current state ============ -->
+    <div class="drawer" aria-label="System Health drawer">
+      <div class="dhead">
+        <div class="l">
+          <span class="dot good"></span>
+          <h2>System Health</h2>
+          <span class="sub">All systems live</span>
+        </div>
+        <div class="r"><button class="ibtn">↻</button><button class="ibtn">✕</button></div>
+      </div>
+      <div class="dbody">
+
+        <!-- Services -->
+        <section>
+          <h3 class="sec">Services</h3>
+          <div class="row"><div class="l"><span class="dot good"></span><span class="name">SCOUT</span><span class="det">5 maturing in queue</span></div><span class="age tab" style="color:var(--text-secondary)">0s ago</span></div>
+          <div class="row"><div class="l"><span class="dot good"></span><span class="name">RECORDER</span><span class="det">20 in window</span></div><span class="age tab" style="color:var(--text-secondary)">10s ago</span></div>
+          <div class="row"><div class="l"><span class="dot good"></span><span class="name">TRADER</span><span class="det">manage loop</span></div><span class="age tab" style="color:var(--text-secondary)">6s ago</span></div>
+        </section>
+
+        <!-- Sell route — the new section, up-state -->
+        <section>
+          <h3 class="sec"><span>Sell route · live exit path</span>
+            <span class="modechip" style="color:var(--text-muted);border:1px solid var(--gridline)">PAPER</span></h3>
+          <div class="banner" style="background:rgba(12,163,12,.10);border:1px solid var(--good);color:var(--good)">Exit path clear — quote + RPC both reachable</div>
+          <div class="row"><div class="l"><span class="dot good"></span><span class="name" style="font-size:12px">Jupiter swap (quote+build)</span></div><span class="age tab" style="color:var(--text-muted)">100ms · route ok</span></div>
+          <div class="row"><div class="l"><span class="dot good"></span><span class="name" style="font-size:12px">Solana RPC (send+confirm)</span></div><span class="age tab" style="color:var(--text-muted)">97ms · blockhash ok</span></div>
+        </section>
+
+        <!-- Feeds -->
+        <section>
+          <h3 class="sec">Feed reachability</h3>
+          <div class="grid2">
+            <div class="fcell"><div class="l" style="display:flex;align-items:center;gap:8px"><span class="dot good"></span><span class="name">DexScreener</span></div><span class="lat tab">34ms</span></div>
+            <div class="fcell"><div class="l" style="display:flex;align-items:center;gap:8px"><span class="dot good"></span><span class="name">RugCheck</span></div><span class="lat tab">120ms</span></div>
+            <div class="fcell"><div class="l" style="display:flex;align-items:center;gap:8px"><span class="dot good"></span><span class="name">PumpPortal</span></div><span class="lat tab">43ms</span></div>
+            <div class="fcell"><div class="l" style="display:flex;align-items:center;gap:8px"><span class="dot good"></span><span class="name">Jupiter</span></div><span class="lat tab">99ms</span></div>
+            <div class="fcell"><div class="l" style="display:flex;align-items:center;gap:8px"><span class="dot good"></span><span class="name">GeckoTerminal</span></div><span class="lat tab">29ms</span></div>
+          </div>
+        </section>
+
+        <!-- Pipeline -->
+        <section>
+          <h3 class="sec">Pipeline · last 24h</h3>
+          <div class="funnel">
+            <div class="step"><div class="v tab">3740</div><div class="k">scanned</div></div><span class="arrow">→</span>
+            <div class="step"><div class="v tab">2783</div><div class="k">signals</div></div><span class="arrow">→</span>
+            <div class="step"><div class="v tab">20</div><div class="k">watching</div></div><span class="arrow">→</span>
+            <div class="step"><div class="v tab">1</div><div class="k">armed</div></div><span class="arrow">→</span>
+            <div class="step"><div class="v tab">1</div><div class="k">open</div></div>
+          </div>
+          <div class="eqrow">
+            <span style="font-size:12px;color:var(--text-muted)">Equity <span class="tab" style="font-weight:600;color:var(--text-primary)">$1711.02</span></span>
+            <span class="pill" style="background:rgba(12,163,12,.12);color:var(--good)">● trading live</span>
+          </div>
+        </section>
+
+        <p class="foot">as of 7:28:00 PM · auto-refresh 20s</p>
+      </div>
+    </div>
+
+    <!-- ============ STATE COMPARISON ============ -->
+    <div class="states">
+      <p class="cap">The sell-route section, in every state the watchdog produces:</p>
+
+      <!-- A: up -->
+      <div class="panel">
+        <h3 class="sec" style="margin-bottom:8px"><span>Sell route · live exit path</span>
+          <span class="lbl" style="color:var(--good);border:1px solid var(--good)">Healthy</span></h3>
+        <div class="banner" style="background:rgba(12,163,12,.10);border:1px solid var(--good);color:var(--good)">Exit path clear — quote + RPC both reachable</div>
+        <div class="row"><div class="l"><span class="dot good"></span><span class="name" style="font-size:12px">Jupiter swap (quote+build)</span></div><span class="tab" style="font-size:11px;color:var(--text-muted)">100ms · route ok</span></div>
+        <div class="row"><div class="l"><span class="dot good"></span><span class="name" style="font-size:12px">Solana RPC (send+confirm)</span></div><span class="tab" style="font-size:11px;color:var(--text-muted)">97ms · blockhash ok</span></div>
+      </div>
+
+      <!-- B: paper down -->
+      <div class="panel">
+        <h3 class="sec" style="margin-bottom:8px"><span>Sell route · live exit path</span>
+          <span class="lbl" style="color:var(--text-muted);border:1px solid var(--gridline)">PAPER</span></h3>
+        <div class="banner" style="background:rgba(250,178,25,.12);border:1px solid var(--warn);color:var(--warn)">Sell route down — go-live blocked until it clears</div>
+        <div class="row"><div class="l"><span class="dot warn"></span><span class="name" style="font-size:12px">Jupiter swap (quote+build)</span></div><span class="tab" style="font-size:11px;color:var(--warn)">unreachable</span></div>
+        <div class="row"><div class="l"><span class="dot good"></span><span class="name" style="font-size:12px">Solana RPC (send+confirm)</span></div><span class="tab" style="font-size:11px;color:var(--text-muted)">102ms · blockhash ok</span></div>
+        <p style="font-size:11px;color:var(--text-muted);margin:8px 2px 0">Amber. No capital at risk — this only blocks go-live. Overall roll-up → <span style="color:var(--warn)">warn</span>.</p>
+      </div>
+
+      <!-- C: live down -->
+      <div class="panel" style="border-color:var(--crit);box-shadow:0 0 0 1px rgba(208,59,59,.25),0 16px 40px rgba(208,59,59,.10)">
+        <h3 class="sec" style="margin-bottom:8px"><span>Sell route · live exit path</span>
+          <span class="lbl" style="color:var(--crit);border:1px solid var(--crit)">LIVE</span></h3>
+        <div class="banner" style="background:rgba(208,59,59,.14);border:1px solid var(--crit);color:var(--crit)">⚠ SELL ROUTE DARK WHILE LIVE — open positions may be unsellable</div>
+        <div class="row"><div class="l"><span class="dot crit"></span><span class="name" style="font-size:12px">Jupiter swap (quote+build)</span></div><span class="tab" style="font-size:11px;color:var(--crit)">timeout</span></div>
+        <div class="row"><div class="l"><span class="dot crit"></span><span class="name" style="font-size:12px">Solana RPC (send+confirm)</span></div><span class="tab" style="font-size:11px;color:var(--crit)">unreachable</span></div>
+        <p style="font-size:11px;color:var(--text-muted);margin:8px 2px 0">Critical. The header pill goes <span style="color:var(--crit)">red even with the drawer closed</span>, and overall roll-up → <span style="color:var(--crit)">down</span>. This is the mid-session DPI-regression alarm — it fires before a position needs to exit.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body></html>

@@ -1,0 +1,429 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Trade Anatomy — Last 15 Paper Trades · Genesis Capital Engine OS</title>
+<style>
+  html, body { background:#0b0e11 !important; color-scheme: dark; }
+  body { font-family:"Segoe UI",system-ui,sans-serif; color:#e8edf2; margin:0; line-height:1.5; }
+  .wrap { max-width:900px; margin:0 auto; padding:36px 20px 80px; }
+  .eyebrow { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:#66737f; }
+  h1 { font-size:24px; margin:6px 0 4px; } .sub { color:#9fadb8; font-size:13.5px; margin:0 0 20px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:8px; }
+  .kpi { background:#12161b; border:1px solid #232b33; border-radius:9px; padding:10px 14px; }
+  .kpi i { font-style:normal; font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:#66737f; display:block; }
+  .kpi b { font-size:19px; font-family:Consolas,monospace; }
+  .verdictbox { border-left:3px solid #ffc44d; background:#12161b; padding:12px 16px; border-radius:0 9px 9px 0; margin:16px 0 26px; font-size:13.5px; color:#b9c3cc; }
+  .verdictbox b { color:#e8edf2; }
+  .trade { background:#12161b; border:1px solid #232b33; border-radius:11px; padding:14px 16px; margin:14px 0; }
+  .trade.good { border-left:3px solid #3ee68c; } .trade.bad { border-left:3px solid #ff5d5d; } .trade.warn { border-left:3px solid #ffc44d; }
+  .thead { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .thead b { font-size:16px; }
+  .lane { font-size:9.5px; font-weight:700; letter-spacing:.08em; border:1px solid #66737f; color:#9fadb8; border-radius:4px; padding:1px 7px; }
+  .lane.lv { color:#ff8c42; border-color:#ff8c42; background:#ff8c4218; }
+  .cls { font-size:11px; color:#66737f; }
+  .pnl { margin-left:auto; font-family:Consolas,monospace; font-size:16px; font-weight:600; }
+  .g { color:#3ee68c; } .r { color:#ff5d5d; }
+  .vrow { font-size:12.5px; margin:6px 0 10px; padding:5px 10px; border-radius:6px; background:#171c22; }
+  .vrow.good { color:#3ee68c; } .vrow.bad { color:#ff9b9b; } .vrow.warn { color:#ffc44d; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px 14px; margin:8px 0; }
+  .grid i { font-style:normal; display:block; font-size:9.5px; text-transform:uppercase; letter-spacing:.08em; color:#66737f; }
+  .grid b { font-size:13px; font-weight:600; font-family:Consolas,monospace; }
+  .sig { font-size:11.5px; color:#8b98a3; margin:8px 0; } .sig i { color:#66737f; font-style:normal; }
+  .chip { display:inline-block; font-size:10px; color:#5aa7e8; border:1px solid #5aa7e855; border-radius:4px; padding:0 6px; margin-left:6px; font-family:Consolas,monospace; }
+  table.fills { width:100%; border-collapse:collapse; font-size:11.5px; margin-top:6px; }
+  .fills th { text-align:left; font-size:9.5px; text-transform:uppercase; color:#66737f; padding:4px 8px; border-bottom:1px solid #232b33; }
+  .fills td { padding:4px 8px; border-bottom:1px solid #1a2027; color:#9fadb8; font-family:Consolas,monospace; }
+  .fills td.num { text-align:right; }
+  .foot { margin-top:36px; padding-top:14px; border-top:1px solid #232b33; font-size:11px; color:#66737f; }
+</style>
+<div class="wrap">
+  <div class="eyebrow">Genesis Capital Engine OS · Forensic Tech Spec</div>
+  <h1>Trade Anatomy — Last 15 Paper Trades</h1>
+  <p class="sub">The most recent 15 SIM closes, bones exposed: seat, band, crowd, tier, signal, fills, triggers, and an honest verdict on each. Generated 7/24/2026, 3:27:15 AM ET.</p>
+  <div class="kpis">
+    <div class="kpi"><i>Trades</i><b>15</b></div>
+    <div class="kpi"><i>SIM P&L</i><b class="g">+$53.24</b></div>
+    <div class="kpi"><i>◆ Live P&L</i><b class="g">+$0.00</b></div>
+    <div class="kpi"><i>Wins</i><b>12/15</b></div>
+    <div class="kpi"><i>In sweetspot band</i><b>8/15</b></div>
+    <div class="kpi"><i>Atomic deaths</i><b class="r">2</b></div>
+  </div>
+  <div class="verdictbox"><b>Formula v2 lens:</b> 5 of 15 entries were SENSOR-tier probes (crowd-fail, demoted to 0.3× — their small size <i>is</i> their tier label) and 10 traded at conviction size. Cohort result: 12/15 wins · net +$53.24 · 2 atomic deaths. Seat lamps are judged against the radar-locked canon band (1.45–1.65×) at generation time; every trade below traces the full lifecycle per Canon GCE-FORMULA-001.</div>
+
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>Catbus</b>
+      <span class="cls">SENSOR·probe · MOON_SLOW</span>
+      <span class="pnl g">+$0.21</span>
+    </div>
+    <div class="vrow good">WORKED (partial) — green but gave back a large share of the peak</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 03:11:08 ET</b></div>
+      <div><i>Capital</i><b>$2.00</b></div>
+      <div><i>Seat (trigger)</i><b class="g">1.47× IN band</b></div>
+      <div><i>Inflow</i><b>1.24× (sub)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>pump-amm · $13.4k</b></div>
+      <div><i>Peak → exit</i><b>1.23× → 1.10×</b></div>
+      <div><i>Held</i><b>2.3m</b></div>
+      <div><i>Rungs banked</i><b>0</b></div>
+      <div><i>Offered / capture</i><b>$0.47 · 45%</b></div>
+      <div><i>Exit mechanism</i><b>profit_trail</b></div>
+      <div><i>Pool now</i><b class="g">$1.6k</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.47x green, 0% off peak, 46% buys, pool 1.24×, vol-accel 1.00 at 2.1m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$1.98</td></tr><tr><td>▼ sell</td><td>profit_trail</td><td class="num">1.131×</td><td class="num">+140s</td><td class="num">$2.23</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>neitzshce</b>
+      <span class="cls">SENSOR·probe · BASE</span>
+      <span class="pnl g">+$0.58</span>
+    </div>
+    <div class="vrow good">WORKED (partial) — green but gave back a large share of the peak</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 02:43:44 ET</b></div>
+      <div><i>Capital</i><b>$5.00</b></div>
+      <div><i>Seat (trigger)</i><b class="g">1.60× IN band</b></div>
+      <div><i>Inflow</i><b>1.26× (sub)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $16.1k</b></div>
+      <div><i>Peak → exit</i><b>1.30× → 1.12×</b></div>
+      <div><i>Held</i><b>2.1m</b></div>
+      <div><i>Rungs banked</i><b>1</b></div>
+      <div><i>Offered / capture</i><b>$1.48 · 39%</b></div>
+      <div><i>Exit mechanism</i><b>profit_trail</b></div>
+      <div><i>Pool now</i><b class="g">$43.0k</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.60x green, 22% off peak, 71% buys, pool 1.26×, vol-accel 1.00 at 2.2m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$4.97</td></tr><tr><td>▼ sell</td><td>take_profit_0</td><td class="num">1.296×</td><td class="num">+125s</td><td class="num">$1.29</td></tr><tr><td>▼ sell</td><td>profit_trail</td><td class="num">1.093×</td><td class="num">+128s</td><td class="num">$4.34</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>neitzshce</b>
+      <span class="cls">SENSOR·probe · BASE</span>
+      <span class="pnl g">+$1.14</span>
+    </div>
+    <div class="vrow good">WORKED (partial) — green but gave back a large share of the peak</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 02:31:27 ET</b></div>
+      <div><i>Capital</i><b>$5.13</b></div>
+      <div><i>Seat (trigger)</i><b class="g">1.55× IN band</b></div>
+      <div><i>Inflow</i><b>1.24× (sub)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $13.6k</b></div>
+      <div><i>Peak → exit</i><b>1.73× → 1.22×</b></div>
+      <div><i>Held</i><b>1.2m</b></div>
+      <div><i>Rungs banked</i><b>1</b></div>
+      <div><i>Offered / capture</i><b>$3.74 · 30%</b></div>
+      <div><i>Exit mechanism</i><b>profit_trail</b></div>
+      <div><i>Pool now</i><b class="g">$21.9k</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.55x green, 23% off peak, 61% buys, pool 1.24×, vol-accel 1.00 at 2.5m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$5.10</td></tr><tr><td>▼ sell</td><td>take_profit_0</td><td class="num">1.236×</td><td class="num">+45s</td><td class="num">$1.26</td></tr><tr><td>▼ sell</td><td>profit_trail</td><td class="num">1.241×</td><td class="num">+70s</td><td class="num">$5.06</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>Orcpedo</b>
+      <span class="cls">SENSOR·probe · MOON_SLOW</span>
+      <span class="pnl g">+$0.37</span>
+    </div>
+    <div class="vrow good">WORKED — armed, banked on the way up, kept the ride's core</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 02:11:21 ET</b></div>
+      <div><i>Capital</i><b>$1.95</b></div>
+      <div><i>Seat (trigger)</i><b class="g">1.63× IN band</b></div>
+      <div><i>Inflow</i><b>1.28× (sub)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>pumpswap · $6.4k</b></div>
+      <div><i>Peak → exit</i><b>1.33× → 1.19×</b></div>
+      <div><i>Held</i><b>1.8m</b></div>
+      <div><i>Rungs banked</i><b>1</b></div>
+      <div><i>Offered / capture</i><b>$0.65 · 56%</b></div>
+      <div><i>Exit mechanism</i><b>profit_trail</b></div>
+      <div><i>Pool now</i><b class="r">$0.0k DEAD</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.63x green, 1% off peak, 50% buys, pool 1.28×, vol-accel 1.00 at 2.0m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$1.93</td></tr><tr><td>▼ sell</td><td>take_profit_0</td><td class="num">1.264×</td><td class="num">+72s</td><td class="num">$0.61</td></tr><tr><td>▼ sell</td><td>profit_trail</td><td class="num">1.214×</td><td class="num">+105s</td><td class="num">$1.75</td></tr></tbody></table>
+  </div>
+  <div class="trade bad">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>SEABULL</b>
+      <span class="cls">SENSOR·probe · RISER ★★</span>
+      <span class="pnl r">−$17.96</span>
+    </div>
+    <div class="vrow bad">ATOMIC DEATH — pool destroyed before any exit existed; entry-selection loss, unsavable by stops</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 01:39:18 ET</b></div>
+      <div><i>Capital</i><b>$18.03</b></div>
+      <div><i>Seat (trigger)</i><b class="g">1.47× IN band</b></div>
+      <div><i>Inflow</i><b>1.21× (sub)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $15.6k</b></div>
+      <div><i>Peak → exit</i><b>1.18× → 0.00×</b></div>
+      <div><i>Held</i><b>1.7m</b></div>
+      <div><i>Rungs banked</i><b>0</b></div>
+      <div><i>Offered / capture</i><b>$3.20 · -562%</b></div>
+      <div><i>Exit mechanism</i><b>dust_rug</b></div>
+      <div><i>Pool now</i><b class="r">$0.0k DEAD</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.47x green, 3% off peak, 64% buys, pool 1.21×, vol-accel 1.00 at 2.0m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$17.96</td></tr><tr><td>▼ sell</td><td></td><td class="num">0.000×</td><td class="num">+102s</td><td class="num">$0.00</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>CODE</b>
+      <span class="cls">RISER ★</span>
+      <span class="pnl g">+$31.80</span>
+    </div>
+    <div class="vrow good">WORKED — armed, banked on the way up, kept the ride's core</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 01:08:32 ET</b></div>
+      <div><i>Capital</i><b>$48.01</b></div>
+      <div><i>Seat (trigger)</i><b class="g">1.51× IN band</b></div>
+      <div><i>Inflow</i><b>1.23× (sub)</b></div>
+      <div><i>Crowd</i><b>3W/0R winner-rep</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $15.0k</b></div>
+      <div><i>Peak → exit</i><b>1.79× → 1.66×</b></div>
+      <div><i>Held</i><b>2.8m</b></div>
+      <div><i>Rungs banked</i><b>1</b></div>
+      <div><i>Offered / capture</i><b>$37.97 · 84%</b></div>
+      <div><i>Exit mechanism</i><b>basket_harvest</b></div>
+      <div><i>Pool now</i><b class="g">$34.5k</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.51x green, 0% off peak, 85% buys, pool 1.23×, vol-accel 0.88 at 2.0m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$47.87</td></tr><tr><td>▼ sell</td><td>take_profit_0</td><td class="num">1.255×</td><td class="num">+69s</td><td class="num">$12.02</td></tr><tr><td>▼ sell</td><td>basket_harvest</td><td class="num">1.777×</td><td class="num">+165s</td><td class="num">$68.03</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>King</b>
+      <span class="cls">BASE</span>
+      <span class="pnl g">+$3.31</span>
+    </div>
+    <div class="vrow good">WORKED — armed, banked on the way up, kept the ride's core</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 00:56:08 ET</b></div>
+      <div><i>Capital</i><b>$21.23</b></div>
+      <div><i>Seat (trigger)</i><b class="r">1.70× out of band</b></div>
+      <div><i>Inflow</i><b>1.30× (strong)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $20.2k</b></div>
+      <div><i>Peak → exit</i><b>1.25× → 1.16×</b></div>
+      <div><i>Held</i><b>0.9m</b></div>
+      <div><i>Rungs banked</i><b>1</b></div>
+      <div><i>Offered / capture</i><b>$5.28 · 63%</b></div>
+      <div><i>Exit mechanism</i><b>profit_trail</b></div>
+      <div><i>Pool now</i><b class="g">$28.5k</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.70x green, 0% off peak, 75% buys, pool 1.30× 💧INFLOW, vol-accel 1.00 at 2.2m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$21.16</td></tr><tr><td>▼ sell</td><td>take_profit_0</td><td class="num">1.248×</td><td class="num">+51s</td><td class="num">$5.28</td></tr><tr><td>▼ sell</td><td>profit_trail</td><td class="num">1.144×</td><td class="num">+56s</td><td class="num">$19.37</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>ZHI</b>
+      <span class="cls">BASE</span>
+      <span class="pnl g">+$2.39</span>
+    </div>
+    <div class="vrow good">WORKED (partial) — green but gave back a large share of the peak</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 00:52:56 ET</b></div>
+      <div><i>Capital</i><b>$21.21</b></div>
+      <div><i>Seat (trigger)</i><b class="r">1.70× out of band</b></div>
+      <div><i>Inflow</i><b>1.30× (strong)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $15.7k</b></div>
+      <div><i>Peak → exit</i><b>1.56× → 1.11×</b></div>
+      <div><i>Held</i><b>0.4m</b></div>
+      <div><i>Rungs banked</i><b>1</b></div>
+      <div><i>Offered / capture</i><b>$11.91 · 20%</b></div>
+      <div><i>Exit mechanism</i><b>profit_trail</b></div>
+      <div><i>Pool now</i><b class="r">$0.0k DEAD</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.70x green, 27% off peak, 76% buys, pool 1.30× 💧INFLOW, vol-accel 1.00 at 2.2m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$21.14</td></tr><tr><td>▼ sell</td><td>take_profit_0</td><td class="num">1.246×</td><td class="num">+4s</td><td class="num">$5.27</td></tr><tr><td>▼ sell</td><td>profit_trail</td><td class="num">1.090×</td><td class="num">+21s</td><td class="num">$18.43</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>Sheep</b>
+      <span class="cls">RISER ★</span>
+      <span class="pnl g">+$16.90</span>
+    </div>
+    <div class="vrow good">WORKED — armed, banked on the way up, kept the ride's core</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 00:41:16 ET</b></div>
+      <div><i>Capital</i><b>$45.97</b></div>
+      <div><i>Seat (trigger)</i><b class="r">1.82× out of band</b></div>
+      <div><i>Inflow</i><b>1.35× (strong)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $19.8k</b></div>
+      <div><i>Peak → exit</i><b>1.69× → 1.37×</b></div>
+      <div><i>Held</i><b>3.5m</b></div>
+      <div><i>Rungs banked</i><b>1</b></div>
+      <div><i>Offered / capture</i><b>$31.60 · 53%</b></div>
+      <div><i>Exit mechanism</i><b>profit_trail</b></div>
+      <div><i>Pool now</i><b class="g">$21.2k</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.82x green, 5% off peak, 91% buys, pool 1.35× 💧INFLOW, vol-accel 1.00 at 2.5m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$45.84</td></tr><tr><td>▼ sell</td><td>take_profit_0</td><td class="num">1.285×</td><td class="num">+146s</td><td class="num">$11.78</td></tr><tr><td>▼ sell</td><td>profit_trail</td><td class="num">1.399×</td><td class="num">+212s</td><td class="num">$51.29</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>CODE</b>
+      <span class="cls">RISER ★★</span>
+      <span class="pnl g">+$5.31</span>
+    </div>
+    <div class="vrow good">WORKED — armed, banked on the way up, kept the ride's core</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 00:40:42 ET</b></div>
+      <div><i>Capital</i><b>$45.97</b></div>
+      <div><i>Seat (trigger)</i><b class="g">1.48× IN band</b></div>
+      <div><i>Inflow</i><b>1.22× (sub)</b></div>
+      <div><i>Crowd</i><b>1W/0R winner-rep</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $14.2k</b></div>
+      <div><i>Peak → exit</i><b>1.25× → 1.12×</b></div>
+      <div><i>Held</i><b>0.9m</b></div>
+      <div><i>Rungs banked</i><b>1</b></div>
+      <div><i>Offered / capture</i><b>$11.53 · 46%</b></div>
+      <div><i>Exit mechanism</i><b>profit_trail</b></div>
+      <div><i>Pool now</i><b class="r">$0.0k DEAD</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.48x green, 1% off peak, 86% buys, pool 1.22×, vol-accel 1.00 at 2.0m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$45.84</td></tr><tr><td>▼ sell</td><td>take_profit_0</td><td class="num">1.249×</td><td class="num">+50s</td><td class="num">$11.45</td></tr><tr><td>▼ sell</td><td>profit_trail</td><td class="num">1.091×</td><td class="num">+57s</td><td class="num">$39.99</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>PP</b>
+      <span class="cls">RISER ★</span>
+      <span class="pnl g">+$15.59</span>
+    </div>
+    <div class="vrow good">WORKED — armed, banked on the way up, kept the ride's core</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 00:17:55 ET</b></div>
+      <div><i>Capital</i><b>$43.34</b></div>
+      <div><i>Seat (trigger)</i><b class="r">1.73× out of band</b></div>
+      <div><i>Inflow</i><b>1.33× (strong)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>pumpswap · $20.7k</b></div>
+      <div><i>Peak → exit</i><b>1.64× → 1.36×</b></div>
+      <div><i>Held</i><b>4.6m</b></div>
+      <div><i>Rungs banked</i><b>1</b></div>
+      <div><i>Offered / capture</i><b>$27.92 · 56%</b></div>
+      <div><i>Exit mechanism</i><b>profit_trail</b></div>
+      <div><i>Pool now</i><b class="r">$0.0k DEAD</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.73x green, 4% off peak, 73% buys, pool 1.33× 💧INFLOW, vol-accel 1.00 at 2.0m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$43.21</td></tr><tr><td>▼ sell</td><td>take_profit_0</td><td class="num">1.223×</td><td class="num">+166s</td><td class="num">$10.57</td></tr><tr><td>▼ sell</td><td>profit_trail</td><td class="num">1.405×</td><td class="num">+273s</td><td class="num">$48.55</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>PP</b>
+      <span class="cls">RISER ★★</span>
+      <span class="pnl g">+$4.63</span>
+    </div>
+    <div class="vrow good">WORKED — armed, banked on the way up, kept the ride's core</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 00:15:55 ET</b></div>
+      <div><i>Capital</i><b>$43.34</b></div>
+      <div><i>Seat (trigger)</i><b class="r">1.74× out of band</b></div>
+      <div><i>Inflow</i><b>1.32× (strong)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $17.0k</b></div>
+      <div><i>Peak → exit</i><b>1.22× → 1.11×</b></div>
+      <div><i>Held</i><b>4.1m</b></div>
+      <div><i>Rungs banked</i><b>0</b></div>
+      <div><i>Offered / capture</i><b>$9.36 · 49%</b></div>
+      <div><i>Exit mechanism</i><b>profit_trail</b></div>
+      <div><i>Pool now</i><b class="g">$27.2k</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.74x green, 0% off peak, 88% buys, pool 1.32× 💧INFLOW, vol-accel 1.00 at 2.4m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$43.21</td></tr><tr><td>▼ sell</td><td>profit_trail</td><td class="num">1.113×</td><td class="num">+248s</td><td class="num">$48.11</td></tr></tbody></table>
+  </div>
+  <div class="trade good">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>PP</b>
+      <span class="cls">RISER ★</span>
+      <span class="pnl g">+$34.09</span>
+    </div>
+    <div class="vrow good">WORKED — armed, banked on the way up, kept the ride's core</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 00:14:08 ET</b></div>
+      <div><i>Capital</i><b>$40.29</b></div>
+      <div><i>Seat (trigger)</i><b class="g">1.58× IN band</b></div>
+      <div><i>Inflow</i><b>1.30× (strong)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>pumpswap · $15.0k</b></div>
+      <div><i>Peak → exit</i><b>2.02× → 1.85×</b></div>
+      <div><i>Held</i><b>0.5m</b></div>
+      <div><i>Rungs banked</i><b>1</b></div>
+      <div><i>Offered / capture</i><b>$41.22 · 83%</b></div>
+      <div><i>Exit mechanism</i><b>basket_harvest</b></div>
+      <div><i>Pool now</i><b class="r">$0.0k DEAD</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.58x green, 17% off peak, 89% buys, pool 1.30× 💧INFLOW, vol-accel 1.00 at 2.1m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$40.17</td></tr><tr><td>▼ sell</td><td>take_profit_0</td><td class="num">1.264×</td><td class="num">+15s</td><td class="num">$10.15</td></tr><tr><td>▼ sell</td><td>basket_harvest</td><td class="num">2.006×</td><td class="num">+27s</td><td class="num">$64.46</td></tr></tbody></table>
+  </div>
+  <div class="trade bad">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>PP</b>
+      <span class="cls">MOON_STEADY ★</span>
+      <span class="pnl r">−$0.53</span>
+    </div>
+    <div class="vrow bad">FAST COLLAPSE INSIDE GRACE — died before the never-armed stop (8m) had jurisdiction; deep class stop paid</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 00:10:48 ET</b></div>
+      <div><i>Capital</i><b>$1.50</b></div>
+      <div><i>Seat (trigger)</i><b class="r">1.72× out of band</b></div>
+      <div><i>Inflow</i><b>1.31× (strong)</b></div>
+      <div><i>Crowd</i><b>0W/0R unknown</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $19.7k</b></div>
+      <div><i>Peak → exit</i><b>1.04× → 0.64×</b></div>
+      <div><i>Held</i><b>1.1m</b></div>
+      <div><i>Rungs banked</i><b>0</b></div>
+      <div><i>Offered / capture</i><b>$0.06 · -854%</b></div>
+      <div><i>Exit mechanism</i><b>hard_stop</b></div>
+      <div><i>Pool now</i><b class="r">$0.0k DEAD</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.72x green, 0% off peak, 61% buys, pool 1.31× 💧INFLOW, vol-accel 1.00 at 2.8m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$1.48</td></tr><tr><td>▼ sell</td><td>hard_stop</td><td class="num">0.670×</td><td class="num">+65s</td><td class="num">$0.99</td></tr></tbody></table>
+  </div>
+  <div class="trade bad">
+    <div class="thead">
+      <span class="lane ">SIM</span>
+      <b>CODE</b>
+      <span class="cls">RISER ★★</span>
+      <span class="pnl r">−$44.58</span>
+    </div>
+    <div class="vrow bad">ATOMIC DEATH — pool destroyed before any exit existed; entry-selection loss, unsavable by stops</div>
+    <div class="grid">
+      <div><i>Opened</i><b>Jul 24 00:10:00 ET</b></div>
+      <div><i>Capital</i><b>$44.71</b></div>
+      <div><i>Seat (trigger)</i><b class="r">1.72× out of band</b></div>
+      <div><i>Inflow</i><b>1.31× (strong)</b></div>
+      <div><i>Crowd</i><b>1W/0R winner-rep</b></div>
+      <div><i>Venue / pool @entry</i><b>meteora-damm-v2 · $15.2k</b></div>
+      <div><i>Peak → exit</i><b>1.12× → 0.00×</b></div>
+      <div><i>Held</i><b>0.9m</b></div>
+      <div><i>Rungs banked</i><b>0</b></div>
+      <div><i>Offered / capture</i><b>$5.21 · -855%</b></div>
+      <div><i>Exit mechanism</i><b>dust_rug</b></div>
+      <div><i>Pool now</i><b class="r">$0.0k DEAD</b></div>
+    </div>
+    <div class="sig"><i>Signal that opened it:</i> confirmed: 1.72x green, 0% off peak, 86% buys, pool 1.31× 💧INFLOW, vol-accel 1.00 at 2.0m </div>
+    <table class="fills"><thead><tr><th>Fill</th><th>Mechanism</th><th>Price vs entry</th><th>T+ from open</th><th>Value</th></tr></thead><tbody><tr><td>▲ buy</td><td>confirmed</td><td class="num">1.000×</td><td class="num">+0s</td><td class="num">$44.58</td></tr><tr><td>▼ sell</td><td></td><td class="num">0.000×</td><td class="num">+55s</td><td class="num">$0.00</td></tr></tbody></table>
+  </div>
+  <div class="foot">Genesis Capital Engine OS · SIM figures are the simulated sensor lane and never blend with live · band reference: radar-locked sweetspot 1.45–2.20× at generation time · fills are journal truth (Σ=0 ledger) · stage clocks appear on live entries opened after the instrumentation shipped.</div>
+</div>
+</body></html>

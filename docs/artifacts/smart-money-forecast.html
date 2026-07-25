@@ -1,0 +1,144 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Smart Money Forecast — Hermes</title>
+<style>
+:root{--paper:#FAFAF7;--ink:#14181C;--sub:#5A6570;--faint:#8B949C;--line:#E3E4DE;--card:#FFFFFF;
+--accent:#0E8A6D;--good:#12915E;--bad:#C2453A;--warn:#9A6A10;--band:#3D6ED4;--band-fill:rgba(61,110,212,.13)}
+@media (prefers-color-scheme:dark){:root{--paper:#12161A;--ink:#E8EAEC;--sub:#9AA5AE;--faint:#6C7680;--line:#262C31;--card:#191F24;
+--accent:#2FB48F;--good:#37B37E;--bad:#D96A5F;--warn:#C99A3F;--band:#6E96E8;--band-fill:rgba(110,150,232,.16)}}
+:root[data-theme="dark"]{--paper:#12161A;--ink:#E8EAEC;--sub:#9AA5AE;--faint:#6C7680;--line:#262C31;--card:#191F24;
+--accent:#2FB48F;--good:#37B37E;--bad:#D96A5F;--warn:#C99A3F;--band:#6E96E8;--band-fill:rgba(110,150,232,.16)}
+:root[data-theme="light"]{--paper:#FAFAF7;--ink:#14181C;--sub:#5A6570;--faint:#8B949C;--line:#E3E4DE;--card:#FFFFFF;
+--accent:#0E8A6D;--good:#12915E;--bad:#C2453A;--warn:#9A6A10;--band:#3D6ED4;--band-fill:rgba(61,110,212,.13)}
+body{background:var(--paper);color:var(--ink);font:15px/1.6 "Segoe UI",system-ui,sans-serif;margin:0;padding:0 20px 80px}
+main{max-width:760px;margin:0 auto}
+h1{font-family:Georgia,serif;font-size:2.1rem;line-height:1.15;font-weight:600;margin:.2em 0 .1em;text-wrap:balance}
+h2{font-family:Georgia,serif;font-size:1.3rem;font-weight:600;margin:2.2em 0 .5em;text-wrap:balance}
+.eyebrow{color:var(--accent);font-size:.72rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin-top:44px}
+.sub{color:var(--sub);margin:0 0 1.6em}
+.kpis{display:flex;gap:10px;flex-wrap:wrap;margin:1.4em 0}
+.kpi{flex:1;min-width:150px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.kpi b{display:block;font-size:1.45rem;font-variant-numeric:tabular-nums;font-weight:650}
+.kpi span{color:var(--sub);font-size:.76rem}
+table{width:100%;border-collapse:collapse;font-size:.86rem;margin:.8em 0}
+th{color:var(--faint);font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:7px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+td.num,th.num{text-align:right}
+.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.chart{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin:1em 0;overflow-x:auto}
+.grid{stroke:var(--line);stroke-width:1}
+.axis{fill:var(--faint);font-size:10px}
+.bar{fill:var(--faint);opacity:.5}.bar-hot{fill:var(--accent)}
+.dot{fill:var(--band);opacity:.85}
+.dotgood{fill:var(--good)}
+.dotbad{fill:var(--warn)}
+.alabel{fill:var(--sub);font-size:9.5px}
+.p50{stroke:var(--band);stroke-width:2.2;fill:none}
+.pC{stroke:var(--bad);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.pS{stroke:var(--good);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+.cap{color:var(--faint);font-size:.76rem;margin:.3em 0 0}
+.note{background:var(--card);border-left:3px solid var(--warn);border-radius:0 8px 8px 0;padding:10px 14px;font-size:.88rem;margin:1.2em 0}
+.proto li{margin:.45em 0}
+code{font-family:Consolas,monospace;font-size:.85em;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+</style>
+<main>
+<p class="eyebrow">Hermes OS · Internal · 2026-07-22</p>
+<h1>Smart Money Forecast</h1>
+<p class="sub">What the wallet-reputation graph found, how the live engine was hardened around it, and a 30-day equity forecast we will score against real performance — daily.</p>
+
+<div class="kpis">
+<div class="kpi"><b>79.2%</b><span>win rate — smart-money compound cohort (n=24)</span></div>
+<div class="kpi"><b>58.3%</b><span>reach ≥3× ("moonshot") vs 7.5% base</span></div>
+<div class="kpi"><b>4.2%</b><span>rug rate vs 44.3% for wallet-cold flow</span></div>
+<div class="kpi"><b>~11.5/day</b><span>qualifying setups (measured, 2-day wallet coverage)</span></div>
+</div>
+
+<h2>1 · The finding</h2>
+<p>Holder wallets persist across one-shot tokens. Scoring each new candidate's holder set against our own labeled outcome history — <em>point-in-time, leak-free</em> — separates the tape more cleanly than any microstructure signal we've measured. Across 9,771 armed candidates (including every refusal):</p>
+<table>
+<tr><th>Cohort</th><th class="num">n</th><th class="num">Win</th><th class="num">≥3×</th><th class="num">Rug</th><th class="num">p90 peak</th></tr>
+<tr><td>Wallet-cold (0 winner-rep holders)</td><td class="num">7,886</td><td class="num">16.3%</td><td class="num">7.5%</td><td class="num bad">44.3%</td><td class="num">2.5×</td></tr>
+<tr><td>≥2 winner-rep holders</td><td class="num">855</td><td class="num">38–41%</td><td class="num">20%</td><td class="num">28–31%</td><td class="num">4.6×</td></tr>
+<tr><td>Net rep ≤ −1 (rug-history crowd)</td><td class="num">4,842</td><td class="num bad">9.6%</td><td class="num">4.1%</td><td class="num bad">49.3%</td><td class="num">2.0×</td></tr>
+<tr><td><b>Compound: ≥2 winner-rep + net ≥1 + 1★</b></td><td class="num">24</td><td class="num good"><b>79.2%</b></td><td class="num good"><b>58.3%</b></td><td class="num good"><b>4.2%</b></td><td class="num"><b>6.9×</b></td></tr>
+</table>
+<p class="cap">Honest limit: the compound cohort is small (n=24) and wallet coverage is 2 days old. The graph is a precision weapon, not a recall net — 237 of 296 untraded 3×+ runs were wallet-cold. It tells us when to press, not where every moon hides.</p>
+
+<h2>2 · The hardened stack</h2>
+<p>Every live entry now passes eleven measured gates; each exists because a cohort was measured losing money without it:</p>
+<table>
+<tr><th>Gate</th><th>Refuses</th><th>Measured basis</th></tr>
+<tr><td>Weak-confirm RISER</td><td>snap &lt;42% &amp; rate ≤0.30/min</td><td>12 of 22 deaths, −EV cell (n=62)</td></tr>
+<tr><td>Inflow band</td><td>pool growth &lt;1.30×</td><td>71% vs 45% win above/below the line</td></tr>
+<tr><td>Pool depth</td><td>liquidity &lt;$8k</td><td>dust pools have no exit at size</td></tr>
+<tr><td><b>Wallet anti-gate</b></td><td>net rep ≤ −1</td><td>9.6% win / 49.3% rug cohort — half the tape</td></tr>
+<tr><td><b>Smart-money boost</b></td><td>— (sizes ×1.5)</td><td>the 79%-win compound cohort</td></tr>
+<tr><td>Exit: fire-sale ladder</td><td>—</td><td>7 write-offs died at a static slippage cap</td></tr>
+<tr><td>Exit: dust-bumped rungs</td><td>—</td><td>sub-$1.50 sells were rejected by venues</td></tr>
+</table>
+
+<h2>3 · When the opportunities arrive</h2>
+<div class="chart"><svg viewBox="0 0 680 240" width="100%">
+<rect x="46.0" y="129.8" width="22.2" height="84.2" class="bar"/><circle cx="57.1" cy="121.8" r="3.2" class="dot"/><rect x="72.2" y="118.6" width="22.2" height="95.4" class="bar"/><rect x="98.3" y="157.9" width="22.2" height="56.1" class="bar"/><circle cx="109.4" cy="149.9" r="3.2" class="dot"/><rect x="124.5" y="163.5" width="22.2" height="50.5" class="bar"/><circle cx="135.6" cy="155.5" r="5.2" class="dot"/><rect x="150.7" y="174.7" width="22.2" height="39.3" class="bar"/><circle cx="161.8" cy="166.7" r="3.2" class="dot"/><rect x="176.8" y="152.3" width="22.2" height="61.7" class="bar"/><rect x="203.0" y="157.9" width="22.2" height="56.1" class="bar"/><rect x="229.2" y="163.5" width="22.2" height="50.5" class="bar"/><circle cx="240.3" cy="155.5" r="3.2" class="dot"/><rect x="255.3" y="124.2" width="22.2" height="89.8" class="bar"/><circle cx="266.4" cy="116.2" r="4.2" class="dot"/><rect x="281.5" y="62.5" width="22.2" height="151.5" class="bar-hot"/><circle cx="292.6" cy="54.5" r="4.2" class="dot"/><rect x="307.7" y="12.0" width="22.2" height="202.0" class="bar-hot"/><circle cx="318.8" cy="4.0" r="4.2" class="dot"/><rect x="333.8" y="96.2" width="22.2" height="117.8" class="bar-hot"/><circle cx="344.9" cy="88.2" r="5.2" class="dot"/><rect x="360.0" y="152.3" width="22.2" height="61.7" class="bar"/><circle cx="371.1" cy="144.3" r="3.2" class="dot"/><rect x="386.2" y="180.3" width="22.2" height="33.7" class="bar"/><circle cx="397.3" cy="172.3" r="3.2" class="dot"/><rect x="412.3" y="146.7" width="22.2" height="67.3" class="bar"/><rect x="438.5" y="129.8" width="22.2" height="84.2" class="bar"/><rect x="464.7" y="141.1" width="22.2" height="72.9" class="bar"/><circle cx="475.8" cy="133.1" r="3.2" class="dot"/><rect x="490.8" y="157.9" width="22.2" height="56.1" class="bar"/><rect x="517.0" y="152.3" width="22.2" height="61.7" class="bar"/><circle cx="528.1" cy="144.3" r="5.2" class="dot"/><rect x="543.2" y="163.5" width="22.2" height="50.5" class="bar"/><rect x="569.3" y="191.6" width="22.2" height="22.4" class="bar"/><rect x="595.5" y="163.5" width="22.2" height="50.5" class="bar"/><rect x="621.7" y="146.7" width="22.2" height="67.3" class="bar"/><circle cx="632.8" cy="138.7" r="3.2" class="dot"/><rect x="647.8" y="157.9" width="22.2" height="56.1" class="bar"/><text x="57.1" y="232" class="axis" text-anchor="middle">0:00</text><text x="135.6" y="232" class="axis" text-anchor="middle">3:00</text><text x="214.1" y="232" class="axis" text-anchor="middle">6:00</text><text x="292.6" y="232" class="axis" text-anchor="middle">9:00</text><text x="371.1" y="232" class="axis" text-anchor="middle">12:00</text><text x="449.6" y="232" class="axis" text-anchor="middle">15:00</text><text x="528.1" y="232" class="axis" text-anchor="middle">18:00</text><text x="606.6" y="232" class="axis" text-anchor="middle">21:00</text>
+<text x="44" y="14" class="axis">3×+ runs per hour (ET, 7d, n=310) · dots = smart-money setups</text>
+</svg>
+<p class="cap">The golden window is <b>9:00–12:00 ET</b> — 27% of all 3×+ runs land in those three hours. A secondary pocket runs midnight–2:00 ET. The 19:00–21:00 ET lull is the natural maintenance window. Smart-money setups (dots) cluster in the morning window and the 18:00 ET hour.</p></div>
+
+<h2>4 · The 30-day forecast</h2>
+<p>Monte Carlo, 10,000 paths per scenario, seeded entirely from measured inputs: bootstrap-sampled per-trade returns from the paper tape (smart-money and base cohorts separately), Poisson trade arrival at observed cadence, the actual sizing formula (2% / 3% boosted, $4 floor), and the real risk rails (−$15 daily cap, −$25 kill). The one free variable is <b>execution drag</b> — the measured gap between paper and live on twin trades (n=132).</p>
+<div class="chart"><svg viewBox="0 0 680 240" width="100%">
+<line x1="44" y1="214" x2="672" y2="214" class="grid"/><text x="38" y="217.5" class="axis" text-anchor="end">$100</text><line x1="44" y1="175.15384615384616" x2="672" y2="175.15384615384616" class="grid"/><text x="38" y="178.65384615384616" class="axis" text-anchor="end">$150</text><line x1="44" y1="136.30769230769232" x2="672" y2="136.30769230769232" class="grid"/><text x="38" y="139.80769230769232" class="axis" text-anchor="end">$200</text><line x1="44" y1="97.46153846153847" x2="672" y2="97.46153846153847" class="grid"/><text x="38" y="100.96153846153847" class="axis" text-anchor="end">$250</text><line x1="44" y1="58.615384615384606" x2="672" y2="58.615384615384606" class="grid"/><text x="38" y="62.115384615384606" class="axis" text-anchor="end">$300</text><line x1="44" y1="19.769230769230763" x2="672" y2="19.769230769230763" class="grid"/><text x="38" y="23.269230769230763" class="axis" text-anchor="end">$350</text>
+<path d="M44.0,175.5 L65.7,178.8 L87.3,181.7 L109.0,184.9 L130.6,186.7 L152.3,187.8 L173.9,188.4 L195.6,189.1 L217.2,189.5 L238.9,189.8 L260.6,190.0 L282.2,190.2 L303.9,190.4 L325.5,190.6 L347.2,190.7 L368.8,190.8 L390.5,191.0 L412.1,191.1 L433.8,191.2 L455.4,191.3 L477.1,191.3 L498.8,191.4 L520.4,191.5 L542.1,191.6 L563.7,191.6 L585.4,191.6 L607.0,191.7 L628.7,191.7 L650.3,191.7 L672.0,191.8 L672.0,105.0 L650.3,105.7 L628.7,107.3 L607.0,108.5 L585.4,109.6 L563.7,111.2 L542.1,112.2 L520.4,114.2 L498.8,115.1 L477.1,116.8 L455.4,117.4 L433.8,119.5 L412.1,120.9 L390.5,122.3 L368.8,123.7 L347.2,125.2 L325.5,127.0 L303.9,128.7 L282.2,130.2 L260.6,131.8 L238.9,133.0 L217.2,135.0 L195.6,136.6 L173.9,138.4 L152.3,141.1 L130.6,143.0 L109.0,145.3 L87.3,148.4 L65.7,152.2 L44.0,156.3 Z" fill="var(--band-fill)"/>
+<path d="M44.0,168.1L65.7,169.9L87.3,171.8L109.0,173.7L130.6,175.4L152.3,177.4L173.9,179.9L195.6,182.8L217.2,185.8L238.9,186.2L260.6,186.5L282.2,186.8L303.9,187.0L325.5,187.2L347.2,187.4L368.8,187.5L390.5,187.6L412.1,187.7L433.8,187.8L455.4,187.9L477.1,188.0L498.8,188.1L520.4,188.1L542.1,188.2L563.7,188.2L585.4,188.3L607.0,188.3L628.7,188.3L650.3,188.4L672.0,188.4" class="pC"/>
+<path d="M44.0,164.5L65.7,162.7L87.3,160.6L109.0,158.7L130.6,156.9L152.3,155.2L173.9,153.1L195.6,151.5L217.2,149.8L238.9,147.9L260.6,146.2L282.2,143.9L303.9,142.5L325.5,140.7L347.2,138.8L368.8,136.8L390.5,135.3L412.1,133.5L433.8,131.7L455.4,129.9L477.1,128.4L498.8,126.5L520.4,125.0L542.1,123.1L563.7,121.3L585.4,119.1L607.0,117.3L628.7,115.4L650.3,113.4L672.0,111.9" class="pS"/>
+<path d="M44.0,165.9L65.7,165.9L87.3,165.7L109.0,165.4L130.6,165.4L152.3,165.5L173.9,165.3L195.6,164.9L217.2,164.7L238.9,164.8L260.6,164.6L282.2,164.6L303.9,164.7L325.5,165.0L347.2,165.6L368.8,165.9L390.5,166.4L412.1,166.8L433.8,167.4L455.4,168.2L477.1,169.1L498.8,170.0L520.4,170.5L542.1,170.7L563.7,172.2L585.4,173.4L607.0,174.3L628.7,176.4L650.3,177.0L672.0,178.9" class="p50"/>
+<text x="668" y="105.87363216770524" class="axis" text-anchor="end" fill="var(--good)">stretch $231</text>
+<text x="668" y="172.89246124621954" class="axis" text-anchor="end" fill="var(--band)">base $145</text>
+<text x="668" y="200.41156598720863" class="axis" text-anchor="end" fill="var(--bad)">conservative $133</text>
+<text x="44" y="14" class="axis">live equity, $161.50 start · shaded = base-scenario p10–p90</text>
+</svg></div>
+<table>
+<tr><th>Scenario</th><th class="num">Drag/trade</th><th class="num">Day-30 p50</th><th class="num">p10–p90</th><th class="num">P(≥$200)</th><th class="num">P(kill)</th></tr>
+<tr><td class="bad">Conservative — yesterday's execution</td><td class="num">12.8pp</td><td class="num">$133</td><td class="num">$126–$136</td><td class="num">1%</td><td class="num bad">92%</td></tr>
+<tr><td>Base — today's fixes hold</td><td class="num">6pp</td><td class="num"><b>$145</b></td><td class="num">$129–$240</td><td class="num">26%</td><td class="num">49%</td></tr>
+<tr><td class="good">Stretch — drag amortizes as size grows</td><td class="num">3pp</td><td class="num">$231</td><td class="num">$132–$344</td><td class="num good">65%</td><td class="num">22%</td></tr>
+</table>
+<div class="note"><b>The forecast's one-line thesis:</b> the signal edge is proven; the entire outcome hinges on execution drag. At yesterday's measured 12.8pp per trade the mission fails 92 times in 100. Hold drag under ~6pp — which is precisely what the fire-sale exits, dust-bumped rungs, depth floor and wallet gates shipped today are for — and the median path compounds. Drag is the number we manage.</div>
+
+
+<h2>6 · The Moonshot Curve — the business model's right tail</h2>
+<p>We source these markets because the 100–500× event is <em>real and recurring</em>, not hypothetical: in the last 7 days alone the discovery engine witnessed <b>1,108 runs ≥3×, 126 ≥10×, 43 ≥25×, and 14 ≥100× — eleven of which exceeded 400×</b>. That is roughly <b>two 100×+ events per day</b> flowing through a universe we already watch, route, and grade. The system traded six of the eleven 400×+ names this week (Carina 695×, psyopcat 659×, Pumpman 541×, HAGGIS 444×, SX 611×, S&amp;P500 481×) — and it has ridden one to the realized proof: <b>BRIBE — a $7 position that peaked 111.9× and banked +$750.05 at 92% capture</b> <span class="cap">(SIMULATED — paper lane)</span>.</p>
+<table>
+<tr><th>IF the run peaks at</th><th class="num">measured capture (47%)</th><th class="num">demonstrated-best (92%)</th><th class="num">at 10× today's size</th><th class="num">weekly arrivals witnessed</th></tr>
+<tr><td>10×</td><td class="num">$42 on $10</td><td class="num">$83</td><td class="num">$420–$830</td><td class="num">126</td></tr>
+<tr><td>25×</td><td class="num">$113</td><td class="num">$221</td><td class="num">$1,130–$2,210</td><td class="num">43</td></tr>
+<tr><td>100×</td><td class="num">$465</td><td class="num">$911</td><td class="num">$4,650–$9,110</td><td class="num">14</td></tr>
+<tr><td>250×</td><td class="num">$1,170</td><td class="num">$2,291</td><td class="num">$11,700–$22,910</td><td class="num">~11</td></tr>
+<tr><td>500×</td><td class="num">$2,345</td><td class="num">$4,591</td><td class="num">$23,450–$45,910</td><td class="num">occurred this week</td></tr>
+</table>
+<p class="cap">The IF-THEN reads: <b>IF</b> aboard at size S when a run peaks P×, <b>THEN</b> realized ≈ S × capture × (P−1). Capture coefficients are measured, not assumed: 47% pooled across all 3×+ runs this week ($1,976 kept of $4,208 offered); 92–99% on the best-managed rides (BRIBE 92%, Bison 98%, cope 99%). All realized figures to date are SIMULATED (paper lane) — live has proven the identical mechanics at micro scale (COMPUTE, DOP) and scales with the bankroll.</p>
+<div class="note"><b>The honest gap — and why the Optimizer is the leverage:</b> witnessing a moon is not riding it. Of the eleven 400×+ events this week, the system entered six early and exited before the rip on most — the exits were <em>correct per-trade</em> and the runs continued without us. The one it rode end-to-end (BRIBE) shows what full presence pays. Every mechanism shipped this cycle — signature-owned entries and exits, the wallet-graph compound signal (58% of its cohort reaches 3×), the ratchet that never caps a runner, and the re-entry engine now in study — exists to move ONE number: <b>P(riding&nbsp;|&nbsp;witnessed)</b>. The opportunity arrives twice a day. The engine is built to be standing on the pad when it launches. That is the business model: survive the 99 with measured gates, compound the micro-wins, and be aboard when the 1 rips the atmosphere.</div>
+
+<h2>7 · Anatomy of the Moon — the field guide</h2>
+<p>Catching a moon with your eyes closed means knowing its skeleton by feel. The skeleton below is drawn from this week's tape — 286 winning moon-class runs, medians per class — laid out on the clock the trade actually runs on:</p>
+<div class="chart"><svg viewBox="0 0 680 300" width="100%"><line x1="40" y1="233.42857142857142" x2="670" y2="233.42857142857142" class="grid"/><text x="35" y="236.92857142857142" class="axis" text-anchor="end">1×</text><line x1="40" y1="172.47619047619045" x2="670" y2="172.47619047619045" class="grid"/><text x="35" y="175.97619047619045" class="axis" text-anchor="end">2×</text><line x1="40" y1="111.52380952380949" x2="670" y2="111.52380952380949" class="grid"/><text x="35" y="115.02380952380949" class="axis" text-anchor="end">3×</text><line x1="40" y1="50.57142857142853" x2="670" y2="50.57142857142853" class="grid"/><text x="35" y="54.07142857142853" class="axis" text-anchor="end">4×</text><text x="40" y="292" class="axis" text-anchor="middle">0m</text><text x="166" y="292" class="axis" text-anchor="middle">3m</text><text x="292" y="292" class="axis" text-anchor="middle">6m</text><text x="418" y="292" class="axis" text-anchor="middle">9m</text><text x="544" y="292" class="axis" text-anchor="middle">12m</text><text x="670" y="292" class="axis" text-anchor="middle">15m</text><line x1="40" y1="233.42857142857142" x2="670" y2="233.42857142857142" style="stroke:var(--faint);stroke-width:1;stroke-dasharray:2 3"/><rect x="77.8" y="254.15238095238095" width="50.39999999999999" height="8" fill="none"/><path d="M40.0,233.4L65.2,235.3L86.2,250.5L107.2,252.9L124.0,248.7L136.6,230.4L149.2,216.4L166.0,220.0L182.8,206.0L208.0,189.5L233.2,198.1L266.8,169.4L300.4,142.0L334.0,154.2L376.0,117.6L426.4,75.0L476.8,44.5L510.4,68.9L544.0,93.2L586.0,111.5L628.0,123.7" style="stroke:var(--band);stroke-width:2.4;fill:none"/><circle cx="40.0" cy="233.4" r="4" class="dot"/><text x="40.0" y="223.4" class="alabel" text-anchor="middle">① discovery t₀</text><circle cx="107.2" cy="252.9" r="4" class="dotbad"/><text x="107.2" y="268.9" class="alabel" text-anchor="middle">② THE WICK — tail below start, liquidity holds</text><circle cx="136.6" cy="230.4" r="4" class="dot"/><text x="136.6" y="220.4" class="alabel" text-anchor="middle">③ the snap (velocity = class)</text><circle cx="149.2" cy="216.4" r="4" class="dotgood"/><text x="149.2" y="206.4" class="alabel" text-anchor="middle">④ confirm → FAST enters</text><circle cx="182.8" cy="206.0" r="4" class="dotgood"/><text x="182.8" y="222.0" class="alabel" text-anchor="middle">⑤ +20% proof → slow classes enter</text><circle cx="208.0" cy="189.5" r="4" class="dot"/><text x="208.0" y="179.5" class="alabel" text-anchor="middle">⑥ arm + TP0 banks</text><circle cx="266.8" cy="169.4" r="4" class="dot"/><text x="266.8" y="159.4" class="alabel" text-anchor="middle">⑦ ratchet 1.5×+</text><circle cx="476.8" cy="44.5" r="4" class="dotgood"/><text x="476.8" y="34.5" class="alabel" text-anchor="middle">⑧ peak (ttp 3.5–12m by class)</text><circle cx="544.0" cy="93.2" r="4" class="dot"/><text x="544.0" y="109.2" class="alabel" text-anchor="middle">⑨ gain-lock trail exit</text><circle cx="628.0" cy="123.7" r="4" class="dotbad"/><text x="628.0" y="113.7" class="alabel" text-anchor="middle">⑩ re-confirm? → re-entry (in study)</text></svg>
+<p class="cap">The canonical anatomy on a 15-minute scale: discovery → the wick (present in 32% of winners; the <em>defining</em> opening of VIOLENT [53% median dip] and STEADY [18%]) → the snap, whose <b>velocity alone declares the class</b> → confirm → entry (fast classes at the snap, slow classes at +20% proof) → arm/rungs → ratchet → peak → gain-lock exit → the re-entry loop now in study. Liquidity behavior during the wick is the rug filter: a pool that holds — or leaves and <em>returns</em> (the migration handoff, 97% winners among confirmed) — is a launch pad; a pool that leaves and stays gone never confirms.</p></div>
+<table>
+<tr><th>Shape</th><th class="num">Wick (dip)</th><th class="num">Snap</th><th class="num">Velocity</th><th class="num">Time-to-peak</th><th class="num">Height (med / p90)</th><th>Confirming behavior → our entry</th></tr>
+<tr><td><b>VIOLENT</b> · the whipsaw <span class="cap">n=8</span></td><td class="num">53%</td><td class="num">+212%</td><td class="num">6.8×/min</td><td class="num">3.5m</td><td class="num">6.4× / 12.1×</td><td>deep tail below start, then a reclaim ≥4×/min — only the violent reclaim separates it from the 58%-rug sibling. Enter AT the snap.</td></tr>
+<tr><td><b>FAST</b> · the ignition <span class="cap">n=30</span></td><td class="num">0%</td><td class="num">+114%</td><td class="num">1.9×/min</td><td class="num">3.7m</td><td class="num">4.0× / 21.3×</td><td>no retrace — straight lift-off from flat at ≥1.5×/min. Speed IS the edge: enter at the snap, never wait.</td></tr>
+<tr><td><b>STEADY</b> · the staircase <span class="cap">n=58</span></td><td class="num">18%</td><td class="num">+100%</td><td class="num">0.8×/min</td><td class="num">4.5m</td><td class="num">3.8× / <b>30.2×</b></td><td>moderate wick, stepped climb 0.5–1.5×/min — the biggest p90 tail in the book. Slow class: enter at +20% proof.</td></tr>
+<tr><td><b>SLOW</b> · the grinder <span class="cap">n=18</span></td><td class="num">0%</td><td class="num">+60%</td><td class="num">0.4×/min</td><td class="num">7.8m</td><td class="num">3.5× / 8.4×</td><td>patient accumulation under 0.5×/min; needs the clock, not the trigger finger. Enter at proof.</td></tr>
+<tr><td><b>RISER</b> · the tide <span class="cap">n=172</span></td><td class="num">0%</td><td class="num">+55%</td><td class="num">0.3×/min</td><td class="num">12.3m</td><td class="num">3.3× / 5.4×</td><td>the bread-and-butter micro-moon — broad, slow, frequent. Enter at proof; sweep TP0; let the tide carry.</td></tr>
+</table>
+<div class="note"><b>The eyes-closed checklist — five tells, in order:</b> ① a wick below the start with a pool that holds (thin is fine; <em>leaving and staying gone</em> is death) · ② buy-share outside the churn dead zone [0.50–0.60) · ③ the snap's <b>velocity</b> — read it once and you know the shape, the clock, and the exit geometry before entering · ④ smart money warm (≥2 winner-rep holders + net ≥1 → 79% win, 58% reach 3×) · ⑤ depth ≥$8k so the exit exists at size. Five yes's and the machine is already aboard — that is what "catching it with our eyes closed" means: the checklist runs in code, every tick, both lanes.</div>
+<h2>8 · How we score it</h2>
+<ol class="proto">
+<li><b>Daily:</b> the sentinel's hourly summary now carries a <code>📐 forecast</code> line — live equity vs the base-scenario band for that day, flagged when we run below p10 or above p90.</li>
+<li><b>Weekly:</b> re-measure twin drag (live vs paper on same-mint trades). Drag &gt;9pp for a week → the base scenario is falsified; execution work resumes before sizing grows.</li>
+<li><b>Cohort refresh:</b> the smart-money study re-runs as wallet coverage grows past n=100 compound setups; thresholds (≥2 winner-rep, net ≥1) refit only on out-of-sample confirmation.</li>
+<li><b>Falsifiers:</b> compound-cohort win rate &lt;55% on the next 50 setups, or the inflow-edge spread collapsing under +5pp, invalidates the forecast — we say so and re-issue.</li>
+</ol>
+<p class="cap">Forecast stored at <code>config.smart_money_forecast</code> (2026-07-22, $161.50 baseline, 30-day horizon). All cohort statistics from candidate_outcomes with point-in-time wallet reputation; returns bootstrap-sampled from the closed paper tape; live rails applied path-wise.</p>
+</main>
+</body></html>

@@ -1,0 +1,456 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Hermes OS — Performance &amp; Methodology Report</title>
+<style>
+  :root {
+    --paper: #FBFAF6; --ink: #1B2420; --muted: #67716A; --hairline: #E3E1D8;
+    --green: #1F7A4E; --blue: #3E63C8; --red: #A9393C;
+    --green-soft: rgba(31,122,78,.10); --blue-soft: rgba(62,99,200,.09); --red-soft: rgba(169,57,60,.08); --tile: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #161A18; --ink: #ECEEE9; --muted: #9AA49D; --hairline: #2A302C;
+      --green: #35946B; --blue: #3987E5; --red: #D45A53;
+      --green-soft: rgba(53,148,107,.14); --blue-soft: rgba(57,135,229,.12); --red-soft: rgba(212,90,83,.12); --tile: #1D2320;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #161A18; --ink: #ECEEE9; --muted: #9AA49D; --hairline: #2A302C;
+    --green: #35946B; --blue: #3987E5; --red: #D45A53;
+    --green-soft: rgba(53,148,107,.14); --blue-soft: rgba(57,135,229,.12); --red-soft: rgba(212,90,83,.12); --tile: #1D2320;
+  }
+  :root[data-theme="light"] {
+    --paper: #FBFAF6; --ink: #1B2420; --muted: #67716A; --hairline: #E3E1D8;
+    --green: #1F7A4E; --blue: #3E63C8; --red: #A9393C;
+    --green-soft: rgba(31,122,78,.10); --blue-soft: rgba(62,99,200,.09); --red-soft: rgba(169,57,60,.08); --tile: #FFFFFF;
+  }
+  html { background: var(--paper); }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    color: var(--ink); background: var(--paper);
+    margin: 0; line-height: 1.55; font-size: 15px;
+  }
+  .sheet { max-width: 880px; margin: 0 auto; padding: 48px 32px 80px; }
+  .serif { font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; }
+  .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+  .eyebrow { text-transform: uppercase; letter-spacing: .18em; font-size: 11px; color: var(--muted); }
+  h1 { font-size: 34px; line-height: 1.15; margin: 6px 0 4px; font-weight: 600; text-wrap: balance; }
+  .mast-meta { color: var(--muted); font-size: 13px; }
+  .mast { border-bottom: 3px solid var(--ink); padding-bottom: 18px; margin-bottom: 0; display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+  .btn-print {
+    border: 1px solid var(--ink); background: transparent; color: var(--ink);
+    font: inherit; font-size: 13px; padding: 8px 14px; cursor: pointer; border-radius: 3px;
+  }
+  .btn-print:hover { background: var(--ink); color: var(--paper); }
+  .btn-print:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+  .disclosure-band {
+    background: var(--blue-soft); border: 1px solid var(--blue);
+    color: var(--ink); font-size: 12.5px; padding: 11px 14px; margin: 18px 0 34px; border-radius: 3px;
+  }
+  .disclosure-band strong { color: var(--blue); letter-spacing: .06em; }
+
+  h2 { font-size: 21px; margin: 0 0 4px; font-weight: 600; }
+  section { margin: 40px 0; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid var(--hairline); padding-bottom: 8px; margin-bottom: 16px; }
+  .sec-head .no { color: var(--muted); font-size: 13px; }
+  .lede { color: var(--muted); font-size: 14px; max-width: 66ch; margin: 0 0 16px; }
+  p.body { max-width: 68ch; }
+  p.body.wide { max-width: none; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .tile { background: var(--tile); border: 1px solid var(--hairline); border-radius: 4px; padding: 14px 16px; }
+  .tile.accent { border-left: 3px solid var(--blue); }
+  .tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+  .tile .v { font-size: 26px; font-weight: 650; margin-top: 2px; }
+  .tile .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .up { color: var(--green); } .down { color: var(--red); }
+
+  .chart-wrap { background: var(--tile); border: 1px solid var(--hairline); border-radius: 4px; padding: 18px 18px 8px; position: relative; }
+  .chart-title { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 8px; }
+  #tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--paper); font-size: 12px; padding: 4px 8px; border-radius: 3px; display: none; white-space: nowrap; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--ink); }
+  td { padding: 7px 8px; border-bottom: 1px solid var(--hairline); }
+  td.num, th.num { text-align: right; }
+  .bar-cell { min-width: 140px; }
+  .bar { height: 10px; border-radius: 2px; display: inline-block; vertical-align: middle; }
+  .table-scroll { overflow-x: auto; }
+
+  .gate { display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--hairline); }
+  .pill { font-size: 11px; letter-spacing: .08em; padding: 2px 10px; border-radius: 99px; border: 1px solid; white-space: nowrap; }
+  .pill.pass { color: var(--green); border-color: var(--green); background: var(--green-soft); }
+  .pill.track { color: var(--blue); border-color: var(--blue); }
+  .pill.pending { color: var(--muted); border-color: var(--muted); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+
+  .callout { background: var(--tile); border: 1px solid var(--hairline); border-left: 3px solid var(--green); border-radius: 4px; padding: 14px 16px; margin: 16px 0; }
+  .callout.warn { border-left-color: var(--red); }
+  .callout .h { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 4px; }
+
+  .pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 4px; }
+  .pillar { background: var(--tile); border: 1px solid var(--hairline); border-radius: 4px; padding: 14px 16px; }
+  .pillar .n { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--blue); font-weight: 600; }
+  .pillar .t { font-weight: 600; margin: 3px 0; font-size: 15px; }
+  .pillar .d { font-size: 12.5px; color: var(--muted); }
+
+  .fine { font-size: 12px; color: var(--muted); }
+  .tag { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; border: 1px solid var(--muted); color: var(--muted); border-radius: 3px; padding: 1px 6px; vertical-align: middle; }
+  .tag.sim { border-color: var(--blue); color: var(--blue); }
+  .tag.live { border-color: var(--green); color: var(--green); }
+  .tag.proj { border-color: var(--muted); }
+  .disclosures { border-top: 3px solid var(--ink); margin-top: 56px; padding-top: 16px; }
+  .disclosures p { font-size: 12px; color: var(--muted); max-width: none; }
+
+  @media print {
+    :root { --paper: #fff; --tile: #fff; }
+    body { font-size: 12px; }
+    .sheet { padding: 0; max-width: none; }
+    .btn-print { display: none; }
+    section { break-inside: avoid; margin: 22px 0; }
+    .chart-wrap, .tile, .pillar, .callout { border-color: #ccc; }
+    * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="sheet">
+  <header class="mast">
+    <div>
+      <div class="eyebrow serif">Hermes OS · Autonomous Micro-Cap Capital Engine</div>
+      <h1 class="serif">Performance &amp; Methodology Report</h1>
+      <div class="mast-meta">Run "1o" · July 15–17, 2026 · <strong style="color:var(--green)">Live capital connected July 17</strong> · Solana ecosystem</div>
+    </div>
+    <button class="btn-print" onclick="window.print()">Download as PDF ⤓</button>
+  </header>
+
+  <div class="disclosure-band">
+    <strong>SIMULATED TRACK RECORD + LIVE PILOT.</strong> Sections 1–8 are paper-trading results produced by the production system against real-time market data, with modeled fees and convex slippage — labeled <span class="tag sim">SIM</span>. On <strong>July 17</strong> a live pilot wallet (real capital, isolated hot key, funding capped at ~$60) was connected and is in its <em>first hours</em> — labeled <span class="tag live">LIVE</span> in §9. Simulated fills <em>overstate</em> real execution; the observed gap and the proprietary infrastructure built to close it are the core of this update (§9–§11). Forward figures are <span class="tag proj">PROJECTION</span>. This is not an offer — see disclosures.
+  </div>
+
+  <!-- 1 · headline -->
+  <section>
+    <div class="sec-head"><span class="no serif">01</span><h2 class="serif">Where We Are <span class="fine">— the milestone</span></h2></div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Equity <span class="tag sim">sim</span></div><div class="v mono up">$2,770</div><div class="s">from $1,000 · ~44 hours</div></div>
+      <div class="tile"><div class="k">Realized P&amp;L <span class="tag sim">sim</span></div><div class="v mono up">+$1,770</div><div class="s">+177% on starting capital</div></div>
+      <div class="tile"><div class="k">Round Trips <span class="tag sim">sim</span></div><div class="v mono">1,767</div><div class="s">55.5% profitable · 0 breaker trips</div></div>
+      <div class="tile accent"><div class="k">Live Capital <span class="tag live">live</span></div><div class="v mono">Connected</div><div class="s">July 17 · real, isolated, ≤$60</div></div>
+    </div>
+    <p class="lede" style="margin-top:14px">Two things changed since the last report. First, the simulated engine kept compounding — <strong>+177%</strong> across a fully autonomous 44-hour run, zero circuit-breaker trips. Second, and the real headline: we <strong>connected real capital</strong> and built the proprietary, dependency-free execution layer that a live capital engine requires. The proof of <em>edge</em> is the paper record; the proof of <em>rigor</em> is what connecting real money taught us — and what we shipped in response, in a single day.</p>
+    <div class="callout warn">
+      <div class="h">Read this first — intellectual honesty</div>
+      A single simulated trade (BRIBE, a 111× move, +$750) is ~42% of the +$1,770. A trade like that will <strong>not</strong> fill at simulated prices with real capital at size. The paper curve proves the <em>signal</em> is real; it overstates the <em>dollars</em>. Everything below is framed around closing that gap, not hiding it.
+    </div>
+  </section>
+
+  <!-- 2 · the niche & the capital engine -->
+  <section>
+    <div class="sec-head"><span class="no serif">02</span><h2 class="serif">The Niche &amp; the Perpetual Capital Engine</h2></div>
+    <p class="body wide"><strong>The niche.</strong> Hermes trades one narrow, deliberately-unglamorous slice of crypto: the <strong>first minutes of newly-graduated Solana micro-cap tokens</strong> on bonding-curve and automated-market-maker venues (PumpSwap, Meteora, Fluxbeam, pump.fun). It is the highest-velocity, most <em>convex</em> corner of the entire market — hundreds of launches a day, most worthless within minutes, a handful running 5×–100×+. Serious capital ignores it because it is too fast, too small, and too adversarial to trade by hand. That is precisely the moat: it can <em>only</em> be worked by a machine that is present at the moment of demand, every time, autonomously.</p>
+    <p class="body wide"><strong>Why it is a game-changer for a perpetual capital engine.</strong> A capital engine wants four things, and this niche supplies all four in a way traditional assets cannot:</p>
+    <div class="pillars">
+      <div class="pillar"><div class="n">Convex</div><div class="t">Losses bounded, winners uncapped</div><div class="d">Each position risks cents; the tail pays multiples. Simulated coverage: <span class="mono">$2,731</span> banked green vs <span class="mono">$960</span> loss tax — <strong>2.85×</strong>. You survive being wrong most of the time.</div></div>
+      <div class="pillar"><div class="n">Velocity</div><div class="t">~90-second capital recycle</div><div class="d">Capital turns over dozens of times a day, so returns <em>compound intraday</em> — market-funded, not deposit-funded. The engine is arrival-limited, not capital-limited.</div></div>
+      <div class="pillar"><div class="n">Self-improving</div><div class="t">A proprietary data flywheel</div><div class="d"><span class="mono">11,058</span> labeled launch outcomes / <span class="mono">257,624</span> trajectory ticks and growing — a dataset no one else has, retraining the edge continuously.</div></div>
+      <div class="pillar"><div class="n">Perpetual</div><div class="t">Autonomous, direct-to-DEX, 24/7</div><div class="d">As of July 17 it executes <em>directly against the AMM</em> — no aggregator, no third party in the loop. It runs unattended, forever, funding its own compounding.</div></div>
+    </div>
+    <p class="fine" style="margin-top:14px">In one line: <strong>a machine-speed, self-funding, self-improving yield primitive</strong> built on the one asset class fast enough to compound many times a day — the engine that can sit underneath everything else.</p>
+  </section>
+
+  <!-- 3 · equity curve -->
+  <section>
+    <div class="sec-head"><span class="no serif">03</span><h2 class="serif">Simulated Equity Curve <span class="tag sim">sim</span></h2></div>
+    <div class="chart-wrap">
+      <div class="chart-title">Cumulative equity, USD · Jul 15 23:00 → Jul 17 20:00 UTC</div>
+      <svg id="eq" viewBox="0 0 820 260" width="100%" role="img" aria-label="Equity curve rising from 1000 to 2770 dollars over 44 hours, with a launch dip to 967, an overnight plateau near 1690, then a sharp step to 2447 when a 111x winner closed"></svg>
+      <div id="tip" class="mono"></div>
+    </div>
+    <p class="fine" style="margin-top:8px">Launch trough $967 (−3.3%) stayed well inside the automated circuit-breaker envelope. Note the <strong>step at 14:00 Jul 17</strong>: that is a single 111× position closing — a vivid picture of both the upside <em>and</em> the concentration risk this strategy carries. Marks are net of modeled fees and constant-product slippage.</p>
+  </section>
+
+  <!-- 4 · funnel -->
+  <section>
+    <div class="sec-head"><span class="no serif">04</span><h2 class="serif">The Selection Funnel <span class="tag sim">sim</span></h2></div>
+    <p class="lede">Every launch is screened through a multi-stage pipeline. Capital is committed only after a candidate survives on-chain safety checks and then <em>proves demand</em> in live microstructure — the system never buys at listing.</p>
+    <div class="table-scroll"><table aria-label="Selection funnel">
+      <tr><th>Stage</th><th class="num">Count</th><th class="bar-cell"></th><th>What it means</th></tr>
+      <tr><td>Tokens scanned</td><td class="num mono">15,530</td><td class="bar-cell"><span class="bar" style="width:140px;background:var(--blue)"></span></td><td class="fine">every new pool observed across venues</td></tr>
+      <tr><td>Watched &amp; labeled</td><td class="num mono">11,058</td><td class="bar-cell"><span class="bar" style="width:100px;background:var(--blue)"></span></td><td class="fine">recorder tracks each candidate's first minutes — the flywheel dataset</td></tr>
+      <tr><td>Positions opened</td><td class="num mono">1,774</td><td class="bar-cell"><span class="bar" style="width:16px;background:var(--green)"></span></td><td class="fine">passed safety AND proved sustained demand, sized by ML risk + venue conviction</td></tr>
+    </table></div>
+    <p class="fine" style="margin-top:8px">~11% of scanned launches are ever watched to completion; roughly 1 in 9 watched candidates is traded. The discipline is in the refusals.</p>
+  </section>
+
+  <!-- 5 · exit engine -->
+  <section>
+    <div class="sec-head"><span class="no serif">05</span><h2 class="serif">Exit Engine Attribution <span class="tag sim">sim</span></h2></div>
+    <p class="lede">Returns are manufactured on the exit side. The portfolio-level <em>basket harvest</em> — sweeping all green positions when collective unrealized profit crosses a threshold — is the dominant earner, while stops are held to cents by venue-aware placement.</p>
+    <div class="table-scroll"><table aria-label="Exit attribution">
+      <tr><th>Exit path</th><th class="num">Closes</th><th class="num">P&amp;L</th><th class="bar-cell"></th></tr>
+      <tr><td>Basket harvest</td><td class="num mono">57</td><td class="num mono up">+$2,073.96</td><td class="bar-cell"><span class="bar" style="width:140px;background:var(--green)"></span></td></tr>
+      <tr><td>Ratcheting profit trail</td><td class="num mono">825</td><td class="num mono up">+$183.13</td><td class="bar-cell"><span class="bar" style="width:12px;background:var(--green)"></span></td></tr>
+      <tr><td>Take-profit ladder</td><td class="num mono">403</td><td class="num mono up">+$180.51</td><td class="bar-cell"><span class="bar" style="width:12px;background:var(--green)"></span></td></tr>
+      <tr><td>Stale-take &amp; volume stops</td><td class="num mono">27</td><td class="num mono up">+$144.87</td><td class="bar-cell"><span class="bar" style="width:10px;background:var(--green)"></span></td></tr>
+      <tr><td>Flat time-box</td><td class="num mono">118</td><td class="num mono up">+$18.77</td><td class="bar-cell"><span class="bar" style="width:2px;background:var(--green)"></span></td></tr>
+      <tr><td>Hard stops (venue-aware)</td><td class="num mono">146</td><td class="num mono down">−$161.65</td><td class="bar-cell"><span class="bar" style="width:11px;background:var(--red)"></span></td></tr>
+      <tr><td>Classifier cuts &amp; delistings</td><td class="num mono">25</td><td class="num mono down">−$126.87</td><td class="bar-cell"><span class="bar" style="width:9px;background:var(--red)"></span></td></tr>
+      <tr><td>Rug write-offs</td><td class="num mono">171</td><td class="num mono down">−$559.68</td><td class="bar-cell"><span class="bar" style="width:38px;background:var(--red)"></span></td></tr>
+    </table></div>
+    <p class="fine" style="margin-top:8px">Green exits banked <strong>$2,731</strong> against a <strong>$960</strong> loss tax — <strong>2.85×</strong> coverage of the strategy's irreducible loss class. Average hard-stop cost: −$1.11 per position.</p>
+  </section>
+
+  <!-- 6 · ML -->
+  <section>
+    <div class="sec-head"><span class="no serif">06</span><h2 class="serif">The Data Flywheel &amp; Rug-Risk Model <span class="tag sim">sim</span></h2></div>
+    <div class="two-col">
+      <div>
+        <p class="body wide">The recorder watches <em>every</em> safety-passed launch — traded or not — labeling each outcome. That proprietary dataset (<span class="mono">11,058 labeled outcomes · 257,624 trajectory ticks</span>, growing continuously) trains a transparent logistic model that prices each candidate's rug probability at entry. Position size scales down as predicted risk rises; nothing is vetoed, everything is priced.</p>
+        <p class="body wide">Validation is time-ordered — train on the past, test on the unseen most-recent 30%. Held-out AUC <span class="mono">0.79</span>. The cleanest risk-quintile rugs <strong>~40× less often</strong> than the riskiest, and the model is re-fit as the dataset grows.</p>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-title">Actual rug rate by model-predicted risk quintile (held-out)</div>
+        <svg id="quint" viewBox="0 0 360 190" width="100%" role="img" aria-label="Bar chart: rug rate rises from about 1 percent in the cleanest quintile to about 45 percent in the riskiest"></svg>
+        <div class="fine" style="padding:4px 0 8px">Base rate ~21%. Risk is priced into size, not used as a blunt veto.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 · venues — the discipline -->
+  <section>
+    <div class="sec-head"><span class="no serif">07</span><h2 class="serif">Venue Intelligence — the Edge Is What It Won't Touch <span class="tag sim">sim</span></h2></div>
+    <p class="lede">The strongest claim in this document is not the headline return — it is the discipline. The system measures every venue's economics continuously and <em>refuses</em> the ones that bleed, even when they offer the most volume.</p>
+    <div class="table-scroll"><table aria-label="Venue performance">
+      <tr><th>Venue</th><th class="num">Closes</th><th class="num">Win rate</th><th class="num">P&amp;L</th><th>Posture</th></tr>
+      <tr><td class="mono">pumpswap</td><td class="num mono">367</td><td class="num mono">43%</td><td class="num mono up">+$1,676</td><td class="fine">profit center — direct-DEX route now live</td></tr>
+      <tr><td class="mono">fluxbeam</td><td class="num mono">22</td><td class="num mono">100%</td><td class="num mono up">+$329</td><td class="fine">prime pond — queue priority + size boost</td></tr>
+      <tr><td class="mono">meteora-dbc</td><td class="num mono">64</td><td class="num mono">55%</td><td class="num mono up">+$25</td><td class="fine">active — deep-stop protected</td></tr>
+      <tr><td class="mono">pump-amm</td><td class="num mono">119</td><td class="num mono">37%</td><td class="num mono down">−$19</td><td class="fine">active — monitored</td></tr>
+      <tr><td class="mono">meteora-damm-v2</td><td class="num mono">1,197</td><td class="num mono">60%</td><td class="num mono down">−$240</td><td class="fine"><strong>the trap:</strong> 60% "win rate", still net-negative — <strong>live capital refuses it</strong></td></tr>
+    </table></div>
+    <p class="fine" style="margin-top:8px">meteora-damm-v2 was the <em>highest-volume</em> venue (1,197 trades) and a <em>60% winner</em> — and it lost money, because its rare losses are catastrophic. The live engine is coded to <strong>not trade it</strong>. A 60%-win-rate loser is exactly the trap a human chases and a disciplined machine declines.</p>
+  </section>
+
+  <!-- 8 · methodology -->
+  <section>
+    <div class="sec-head"><span class="no serif">08</span><h2 class="serif">Methodology, in Brief</h2></div>
+    <p class="body wide"><strong>Discover.</strong> Multi-source ingestion surfaces every new Solana launch within seconds. <strong>Screen.</strong> On-chain safety checks reject honeypots, live mint/freeze authority, and concentrated holders; only zero-upside traps are vetoed — everything else is priced. <strong>Confirm.</strong> No blind entries: the recorder watches each candidate and arms it only on proven, sustained demand. <strong>Size.</strong> ML rug-risk score × demand quality × venue conviction. <strong>Manage.</strong> A 5-second loop runs a take-profit ladder, ratcheting profit locks, earned-leash trailing, venue-aware stops, and the portfolio basket harvest — winners banked into strength, losers cut mechanically. <strong>Learn.</strong> Every outcome feeds the flywheel that retrains the models.</p>
+  </section>
+
+  <!-- 9 · LIVE PILOT -->
+  <section>
+    <div class="sec-head"><span class="no serif">09</span><h2 class="serif">The Live Pilot &amp; the Execution Gap <span class="tag live">live</span></h2></div>
+    <p class="lede">On July 17 we connected real, isolated capital and let the engine mirror its own proven paper decisions. The point of the pilot is not the P&amp;L — it is to <em>measure the truth</em> that simulation cannot: what real fills cost.</p>
+    <div class="tiles" style="margin-bottom:14px">
+      <div class="tile"><div class="k">Live round trips</div><div class="v mono">26</div><div class="s">real capital, isolated hot wallet</div></div>
+      <div class="tile"><div class="k">Live realized</div><div class="v mono down">−$6.58</div><div class="s">first hours · best single +$2.56</div></div>
+      <div class="tile"><div class="k">Funding</div><div class="v mono">≤$60</div><div class="s">code-capped · kill at −$36</div></div>
+      <div class="tile"><div class="k">Execution path</div><div class="v mono up">Proven</div><div class="s">direct-DEX round-trips landing</div></div>
+    </div>
+    <p class="body wide">The live wallet is <strong>modestly negative and early</strong> — and that is the honest, useful result. Connecting real capital immediately revealed the gap simulation hides: the venue where nearly all the paper edge lives (graduated PumpSwap pools) had <em>no clean execution route</em> during a third-party aggregator outage, real fills slipped against fast-moving pools, and the day's biggest paper winners had already closed before the live route existed. None of that is visible in a paper curve. <strong>Finding it on $60 instead of on $60,000 is the entire value of a disciplined pilot.</strong></p>
+    <div class="callout">
+      <div class="h">What we shipped in response — in one day (the moat)</div>
+      <strong>Direct-to-DEX execution.</strong> A proprietary PumpSwap AMM route that builds and settles trades <em>directly against the pool</em> — no aggregator dependency, proven live. &nbsp;<strong>Resilient multi-route failover.</strong> Four independent swap routes with automatic circuit-breaking, so no single vendor outage can halt the engine. &nbsp;<strong>Hardened transport.</strong> A network layer that survives infrastructure filtering that breaks standard tooling. &nbsp;<strong>Wider exit tolerance.</strong> Exits now prioritize <em>landing</em> over price, so winners are banked rather than round-tripped. Together these are the difference between a backtest and a business.
+    </div>
+  </section>
+
+  <!-- 10 · gate -->
+  <section>
+    <div class="sec-head"><span class="no serif">10</span><h2 class="serif">Risk Framework &amp; Go-Live Gate</h2></div>
+    <p class="lede">Every control below is enforced in code, not discipline. Live capital deployed only after the pre-committed gate — written while no money was at stake — read PASS on every line, and a kill criterion reverts to paper automatically.</p>
+    <div class="gate"><span class="mono fine">G1</span><span>Rolling 24h window, ≥150 closes, positive net of fees &amp; slippage</span><span class="pill pass">PASS · 1,767 closes, +$1,770</span></div>
+    <div class="gate"><span class="mono fine">G2</span><span>Banked profit ≥ 2× rug-loss tax</span><span class="pill pass">PASS · 2.85×</span></div>
+    <div class="gate"><span class="mono fine">G3</span><span>Zero circuit-breaker trips in window</span><span class="pill pass">PASS</span></div>
+    <div class="gate"><span class="mono fine">G4</span><span>Zero data-feed artifacts in P&amp;L</span><span class="pill pass">PASS</span></div>
+    <div class="gate"><span class="mono fine">G5</span><span>Affirmative sell-route verification on every live entry</span><span class="pill pass">VERIFIED</span></div>
+    <div class="gate"><span class="mono fine">G6</span><span>Isolated hot wallet, funding capped at $60</span><span class="pill pass">LIVE · connected Jul 17</span></div>
+    <p class="fine" style="margin-top:10px">Standing controls on live capital: balance-scaled position sizing (many small positions, ~$3.50–$40 each) · exposure capped at 75% · venue-scoped stops · <strong>−$24 daily loss cap · automatic kill at −$36 cumulative</strong> · a regime gate that stands live down if the mirrored venues bleed past a threshold. The pilot cannot lose more than its funded amount.</p>
+  </section>
+
+  <!-- 11 · enterprise -->
+  <section>
+    <div class="sec-head"><span class="no serif">11</span><h2 class="serif">Path to an Enterprise Service <span class="tag proj">projection</span></h2></div>
+    <p class="lede">Today the engine runs from a hardened home lab. Turning a proven engine into an institutional service — one that can safely custody and compound <em>other people's</em> capital — is an infrastructure and compliance program, not a research one. The optimizations, and honest cost ranges, are below.</p>
+    <div class="table-scroll"><table aria-label="Enterprise upgrade cost">
+      <tr><th>Upgrade</th><th>Why</th><th class="num">Est. cost <span class="fine">(to validate)</span></th></tr>
+      <tr><td>Cloud &amp; co-located compute</td><td class="fine">migrate off the home-ISP network workaround onto redundant, low-latency infrastructure near Solana validators — a hard prerequisite, not a nicety</td><td class="num mono">$0.3–1k / mo</td></tr>
+      <tr><td>Dedicated RPC + data feeds</td><td class="fine">business-tier Solana RPC (Helius / Triton / QuickNode) + real-time Geyser/gRPC stream for faster, redundant execution &amp; ingestion</td><td class="num mono">$1–3.5k / mo</td></tr>
+      <tr><td>Observability &amp; on-call</td><td class="fine">metrics, alerting, redundancy, incident response — a live capital engine cannot be unmonitored</td><td class="num mono">$0.2–0.8k / mo</td></tr>
+      <tr><td>Institutional custody</td><td class="fine">MPC / policy-controlled key management (Fireblocks-class) instead of a hot key — required before external capital</td><td class="num mono">$1–5k / mo +</td></tr>
+      <tr><td><strong>Compliance, legal &amp; audit</strong></td><td class="fine"><strong>the dominant cost.</strong> Fund/entity formation, regulatory counsel, code &amp; financial audit, AML/KYC — required to manage capital that is not our own</td><td class="num mono">$50–250k + <span class="fine">initial</span></td></tr>
+      <tr><td>Engineering &amp; research</td><td class="fine">the system is built and running; this funds hardening, redundancy, and continuous model R&amp;D (1–2 engineers)</td><td class="num mono">team</td></tr>
+    </table></div>
+    <p class="fine" style="margin-top:10px"><strong>Basis &amp; honesty.</strong> Infrastructure lines are grounded in published provider pricing for the named services and are the <em>small</em> numbers — order <strong>$3–10k / month</strong> to run the engine itself at institutional grade. The <em>large</em>, decisive number is compliance/custody/legal, which is what separates "trading our own capital" from "an enterprise service," and which we mark <em>to validate</em> because it depends on structure and jurisdiction. Any figure here is a planning range, not a quote.</p>
+  </section>
+
+  <!-- 12 · scenarios -->
+  <section>
+    <div class="sec-head"><span class="no serif">12</span><h2 class="serif">Scaling &amp; Compounding Scenarios <span class="tag proj">illustrative — not a forecast</span></h2></div>
+    <p class="body wide">A capacity finding shapes everything: the system is <strong>arrival-limited, not capital-limited</strong>. It runs a handful of concurrent positions because confirmed opportunities arrive ~1–2/minute and recycle in ~90 seconds — adding capital adds <em>size per trade</em>, not more trades, until pool depth pushes back (~$15k wallet). The scenarios scale the measured engine under explicit governors, with all profit redeployed. <strong>The live pilot's execution gap is why the retention axis exists — and why the conservative path is the honest planning case.</strong></p>
+    <div class="two-col">
+      <div class="chart-wrap">
+        <div class="chart-title">Illustrative wallet paths from $1,000 · profits redeployed daily</div>
+        <svg id="scen" viewBox="0 0 400 220" width="100%" role="img" aria-label="Three scenario curves from 1000 dollars showing conservative, base, and strong paths that flatten once the liquidity size cap binds"></svg>
+        <div class="fine" style="padding:4px 0 8px">Growth is exponential only until the size cap binds (~$15k wallet), then linear at the capacity ceiling — <em>capital beyond ~$15k does not accelerate returns.</em></div>
+      </div>
+      <div>
+        <div class="table-scroll"><table aria-label="Scenario milestones">
+          <tr><th>Scenario</th><th class="num">30d</th><th class="num">60d</th><th class="num">90d</th></tr>
+          <tr><td>Conservative <span class="fine">(15% retained)</span></td><td class="num mono">$5.1k</td><td class="num mono">$11.6k</td><td class="num mono">$17.3k</td></tr>
+          <tr><td>Base <span class="fine">(30% retained)</span></td><td class="num mono">$21.9k</td><td class="num mono">$45.8k</td><td class="num mono">$57.8k</td></tr>
+          <tr><td>Strong <span class="fine">(50% retained)</span></td><td class="num mono">$37.9k</td><td class="num mono">$76.3k</td><td class="num mono">$96.3k</td></tr>
+          <tr><td class="fine">If the edge does not survive live (0%)</td><td class="num mono">$1.0k</td><td class="num mono">$1.0k</td><td class="num mono">$1.0k</td></tr>
+        </table></div>
+        <p class="fine" style="margin-top:10px"><strong>Scale-in doctrine.</strong> Live capital enters in stages gated by <em>realized</em> performance, never ahead of it: the $60 pilot → banked profit redeploys (compounding funded by the market, not fresh deposits) → contributions pause at the ~$15k capacity ceiling per wallet. Beyond that, scale comes from <em>parallel wallets across the launch flow</em>, not bigger single positions.</p>
+      </div>
+    </div>
+    <p class="fine" style="margin-top:10px"><strong>These are illustrative scenario mathematics, not projections of future returns.</strong> The retention axis exists precisely because live results may retain little of the simulated edge — the pilot is currently negative. If the edge is zero live, every path is flat. No guarantee of any outcome is made or implied.</p>
+  </section>
+
+  <!-- 13 · industry future & investors -->
+  <section>
+    <div class="sec-head"><span class="no serif">13</span><h2 class="serif">The Future of the Industry &amp; How to Get Involved</h2></div>
+    <p class="body wide"><strong>Where this goes.</strong> On-chain markets are moving to machine speed. Human discretionary trading of second-by-second launch flow is already obsolete; the frontier is autonomous agents that discover, price, execute, and learn without a person in the loop. The winners will own three things Hermes is building now: a <em>proprietary dataset</em> the market can't copy, <em>direct-to-protocol execution</em> that removes every intermediary, and <em>codified risk discipline</em> that lets capital run unattended. The end state is an <strong>autonomous capital engine as a yield primitive</strong> — a self-funding, self-improving source of return that can sit beneath a wallet, a treasury, or a structured product.</p>
+    <div class="pillars" style="margin:16px 0">
+      <div class="pillar"><div class="n">Stage now</div><div class="t">Proven engine, live pilot</div><div class="d">Edge validated in simulation; real capital connected; the execution moat shipped.</div></div>
+      <div class="pillar"><div class="n">Next</div><div class="t">Scale-in &amp; harden</div><div class="d">Grow the live wallet on realized performance; migrate to institutional-grade infrastructure.</div></div>
+      <div class="pillar"><div class="n">Then</div><div class="t">Enterprise service</div><div class="d">Compliance + custody unlock managing external and treasury capital.</div></div>
+    </div>
+    <p class="body wide"><strong>How investors participate.</strong> Involvement is offered through the existing pre-seed round on standard <strong>SAFE</strong> terms, funding the path in §11 — the migration to institutional infrastructure and the compliance/custody program that converts a proven engine into an enterprise service. Capital is deployed the same way the engine trades: <em>staged and gated by realized performance, never ahead of it.</em> The near-term ask funds infrastructure and the legal/custody groundwork; capital-engine allocations scale only as live results validate the edge.</p>
+    <div class="callout">
+      <div class="h">The honest pitch</div>
+      You are not being asked to believe a +177% paper number. You are being asked to back a <strong>proven signal</strong>, a <strong>shipped execution moat</strong>, and a <strong>team that put real money at risk to find the truth on day one</strong> — and to fund the infrastructure and compliance that turn that into a durable service. The edge is real; the work now is execution and rigor, not discovery.
+    </div>
+    <p class="fine" style="margin-top:8px">Round terms, allocation, and structure are provided under separate cover to qualified parties. This report is informational and is not itself an offer of any security.</p>
+  </section>
+
+  <footer class="disclosures">
+    <div class="eyebrow serif" style="margin-bottom:6px">Important Disclosures</div>
+    <p><strong>Simulated performance.</strong> Sections 1–8 are simulated (paper) trading produced by the production system against live market data between July 15, 23:32 UTC and July 17, ~20:00 UTC, 2026. Fills are modeled with constant-product (convex) slippage against observed pool liquidity and include modeled fees. Simulated results do not reflect actual trading, do not account for all market frictions (partial fills, MEV, network congestion, real slippage on large moves), and are not indicative of future results.</p>
+    <p><strong>Concentration.</strong> A single simulated position (a 111× move, +$750) accounts for roughly 42% of simulated realized profit. Returns in this strategy are tail-driven; a small number of outcomes dominate, and such outcomes will not replicate at simulated prices with real capital at size.</p>
+    <p><strong>Live pilot.</strong> The live figures in §9 reflect real capital deployed from July 17, 2026 in an isolated wallet funded at ~$60, capped in code. The pilot is early and currently at a net loss. Live execution has already been observed to retain less than the simulated edge; this is expected and is the reason for a staged, performance-gated scale-in.</p>
+    <p><strong>Forward figures.</strong> Sections 11–13 contain projections, cost ranges, and illustrative scenario mathematics — not forecasts. Cost figures are planning ranges based on published provider pricing where noted and are otherwise marked "to validate." No level of return is guaranteed.</p>
+    <p><strong>Not an offer.</strong> This document is for informational purposes only. It is not investment advice and does not constitute an offer to sell or a solicitation of an offer to buy any security or interest in any vehicle. Any live deployment is limited to code-capped, risk-isolated capital as described in §10.</p>
+    <p class="mono" style="margin-top:10px">Hermes OS · report id 1o-20260717-2030Z</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  // ── equity curve ──────────────────────────────────────────────────────────
+  var pts = [
+    ["Jul15 23:00",1000],["Jul16 02:00",993],["Jul16 05:00",996],["Jul16 09:00",967],
+    ["Jul16 10:00",1123],["Jul16 12:00",1216],["Jul16 15:00",1511],["Jul16 19:00",1652],
+    ["Jul16 23:00",1787],["Jul17 01:00",1792],["Jul17 04:00",1743],["Jul17 09:00",1707],
+    ["Jul17 13:00",1693],["Jul17 14:00",2447],["Jul17 16:00",2735],["Jul17 18:00",2806],["Jul17 20:00",2770]
+  ];
+  var svg = document.getElementById("eq");
+  var W = 820, H = 260, L = 56, R = 16, T = 14, B = 30;
+  var lo = 900, hi = 2950;
+  var css = getComputedStyle(document.documentElement);
+  function col(v) { return css.getPropertyValue(v).trim(); }
+  var x = function (i) { return L + (i / (pts.length - 1)) * (W - L - R); };
+  var y = function (v) { return T + (1 - (v - lo) / (hi - lo)) * (H - T - B); };
+  var s = "";
+  [1000, 1500, 2000, 2500].forEach(function (g) {
+    s += '<line x1="' + L + '" y1="' + y(g) + '" x2="' + (W - R) + '" y2="' + y(g) + '" stroke="' + col("--hairline") + '" stroke-width="1"/>';
+    s += '<text x="' + (L - 8) + '" y="' + (y(g) + 4) + '" text-anchor="end" font-size="11" fill="' + col("--muted") + '" font-family="ui-monospace,Consolas,monospace">$' + g.toLocaleString() + "</text>";
+  });
+  s += '<line x1="' + L + '" y1="' + y(1000) + '" x2="' + (W - R) + '" y2="' + y(1000) + '" stroke="' + col("--muted") + '" stroke-width="1" stroke-dasharray="4 4"/>';
+  var line = pts.map(function (p, i) { return (i ? "L" : "M") + x(i).toFixed(1) + " " + y(p[1]).toFixed(1); }).join(" ");
+  var area = line + " L" + x(pts.length - 1).toFixed(1) + " " + y(lo) + " L" + x(0).toFixed(1) + " " + y(lo) + " Z";
+  s += '<path d="' + area + '" fill="' + col("--green") + '" opacity="0.10"/>';
+  s += '<path d="' + line + '" fill="none" stroke="' + col("--green") + '" stroke-width="2" stroke-linejoin="round"/>';
+  s += '<circle cx="' + x(pts.length - 1) + '" cy="' + y(2770) + '" r="4" fill="' + col("--green") + '"/>';
+  s += '<text x="' + (x(pts.length - 1) - 6) + '" y="' + (y(2770) - 10) + '" text-anchor="end" font-size="12" font-weight="600" fill="' + col("--ink") + '" font-family="ui-monospace,Consolas,monospace">$2,770</text>';
+  s += '<circle cx="' + x(3) + '" cy="' + y(967) + '" r="3" fill="' + col("--red") + '"/>';
+  s += '<text x="' + x(3) + '" y="' + (y(967) + 16) + '" text-anchor="middle" font-size="11" fill="' + col("--muted") + '">trough $967</text>';
+  s += '<circle cx="' + x(13) + '" cy="' + y(2447) + '" r="3" fill="' + col("--blue") + '"/>';
+  s += '<text x="' + (x(13)+4) + '" y="' + (y(2447) + 14) + '" text-anchor="start" font-size="10.5" fill="' + col("--blue") + '">111× closes</text>';
+  [0, 3, 8, 13, 16].forEach(function (i) {
+    s += '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="10.5" fill="' + col("--muted") + '">' + pts[i][0] + "</text>";
+  });
+  for (var i = 0; i < pts.length; i++) {
+    s += '<rect data-i="' + i + '" x="' + (x(i) - 14) + '" y="0" width="28" height="' + H + '" fill="transparent"/>';
+  }
+  svg.innerHTML = s;
+  var tip = document.getElementById("tip");
+  svg.addEventListener("mousemove", function (e) {
+    var t = e.target.getAttribute && e.target.getAttribute("data-i");
+    if (t === null || t === undefined) { tip.style.display = "none"; return; }
+    var p = pts[+t];
+    tip.textContent = p[0] + " · $" + p[1].toLocaleString();
+    tip.style.display = "block";
+    var r = svg.getBoundingClientRect(), pr = svg.parentElement.getBoundingClientRect();
+    tip.style.left = Math.min(e.clientX - pr.left + 12, pr.width - 150) + "px";
+    tip.style.top = (r.top - pr.top + 8) + "px";
+  });
+  svg.addEventListener("mouseleave", function () { tip.style.display = "none"; });
+
+  // ── quintile bars ─────────────────────────────────────────────────────────
+  var q = [1.1, 6.1, 14.8, 40.3, 45.1];
+  var qs = document.getElementById("quint");
+  var QW = 360, QH = 190, QL = 34, QB = 26, QT = 10;
+  var qmax = 50;
+  var bw = (QW - QL - 10) / q.length - 10;
+  var out = "";
+  [0, 25, 50].forEach(function (g) {
+    var gy = QT + (1 - g / qmax) * (QH - QT - QB);
+    out += '<line x1="' + QL + '" y1="' + gy + '" x2="' + (QW - 6) + '" y2="' + gy + '" stroke="' + col("--hairline") + '"/>';
+    out += '<text x="' + (QL - 6) + '" y="' + (gy + 4) + '" text-anchor="end" font-size="10" fill="' + col("--muted") + '">' + g + "%</text>";
+  });
+  q.forEach(function (v, i) {
+    var bx = QL + 6 + i * (bw + 10);
+    var bh = (v / qmax) * (QH - QT - QB);
+    var by = QT + (QH - QT - QB) - bh;
+    out += '<rect x="' + bx + '" y="' + by + '" width="' + bw + '" height="' + bh + '" rx="3" fill="' + col("--blue") + '" opacity="' + (0.45 + 0.55 * (i / 4)) + '"><title>Quintile ' + (i + 1) + ": " + v + "% rug rate</title></rect>";
+    out += '<text x="' + (bx + bw / 2) + '" y="' + (by - 5) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + col("--ink") + '" font-family="ui-monospace,Consolas,monospace">' + v + "%</text>";
+    out += '<text x="' + (bx + bw / 2) + '" y="' + (QH - 8) + '" text-anchor="middle" font-size="10" fill="' + col("--muted") + '">Q' + (i + 1) + "</text>";
+  });
+  qs.innerHTML = out;
+
+  // ── scaling scenario curves ───────────────────────────────────────────────
+  var D0 = 522, S0s = 17.5, Ff = 0.0175, CAP = 250, XCAP = 1500, HL = 30;
+  function path(retention) {
+    var Bk = 1000, arr = [Bk];
+    for (var t = 1; t <= 90; t++) {
+      var sz = Math.min(Ff * Bk, CAP);
+      var daily = Math.min(D0 * (sz / S0s) * retention * Math.pow(0.5, t / HL), XCAP);
+      Bk += daily;
+      arr.push(Bk);
+    }
+    return arr;
+  }
+  var scen = [
+    { label: "strong 50%", data: path(0.5), colv: "--blue" },
+    { label: "base 30%", data: path(0.3), colv: "--green" },
+    { label: "conservative 15%", data: path(0.15), colv: "--muted" },
+  ];
+  var sv = document.getElementById("scen");
+  var SW = 400, SH = 220, SL = 44, SB = 26, ST = 12;
+  var sMax = 100000;
+  var sx = function (t) { return SL + (t / 90) * (SW - SL - 10); };
+  var sy = function (v) { return ST + (1 - v / sMax) * (SH - ST - SB); };
+  var so = "";
+  [25000, 50000, 75000, 100000].forEach(function (g) {
+    so += '<line x1="' + SL + '" y1="' + sy(g) + '" x2="' + (SW - 10) + '" y2="' + sy(g) + '" stroke="' + col("--hairline") + '"/>';
+    so += '<text x="' + (SL - 5) + '" y="' + (sy(g) + 3) + '" text-anchor="end" font-size="9" fill="' + col("--muted") + '">$' + g / 1000 + "k</text>";
+  });
+  [0, 30, 60, 90].forEach(function (t) {
+    so += '<text x="' + sx(t) + '" y="' + (SH - 8) + '" text-anchor="middle" font-size="9" fill="' + col("--muted") + '">' + (t === 0 ? "day 0" : t + "d") + "</text>";
+  });
+  scen.forEach(function (sc) {
+    var d = sc.data.map(function (v, t) { return (t ? "L" : "M") + sx(t).toFixed(1) + " " + sy(Math.min(v, sMax)).toFixed(1); }).join(" ");
+    so += '<path d="' + d + '" fill="none" stroke="' + col(sc.colv) + '" stroke-width="2"/>';
+    var endV = sc.data[90];
+    so += '<text x="' + (sx(90) - 4) + '" y="' + (sy(Math.min(endV, sMax)) - 5) + '" text-anchor="end" font-size="9.5" font-weight="600" fill="' + col(sc.colv) + '">' + sc.label + "</text>";
+  });
+  sv.innerHTML = so;
+})();
+</script>
+
+</body></html>

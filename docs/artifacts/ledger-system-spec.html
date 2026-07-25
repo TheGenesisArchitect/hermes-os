@@ -1,0 +1,203 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Hermes Ledger System — Technical Specification</title>
+<style>
+  :root{
+    --paper:#F4F6F8; --card:#FFFFFF; --rule:#C9D0DA; --rule2:#E2E7EE;
+    --ink:#16202E; --dim:#5B6675; --acc:#0E5A4A; --acc-soft:rgba(14,90,74,.08);
+    --warn:#8A5A00; --bad:#A8323A; --good:#0E5A4A;
+    --mono:ui-monospace,"Cascadia Code","SF Mono",Consolas,monospace;
+    --body:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --paper:#10151C; --card:#161D27; --rule:#313B49; --rule2:#232B37;
+      --ink:#E4E9EF; --dim:#8B95A3; --acc:#4FB39A; --acc-soft:rgba(79,179,154,.10);
+      --warn:#D9A54A; --bad:#E06C75; --good:#4FB39A; }
+  }
+  :root[data-theme="light"]{ --paper:#F4F6F8; --card:#FFFFFF; --rule:#C9D0DA; --rule2:#E2E7EE;
+    --ink:#16202E; --dim:#5B6675; --acc:#0E5A4A; --acc-soft:rgba(14,90,74,.08);
+    --warn:#8A5A00; --bad:#A8323A; --good:#0E5A4A; }
+  :root[data-theme="dark"]{ --paper:#10151C; --card:#161D27; --rule:#313B49; --rule2:#232B37;
+    --ink:#E4E9EF; --dim:#8B95A3; --acc:#4FB39A; --acc-soft:rgba(79,179,154,.10);
+    --warn:#D9A54A; --bad:#E06C75; --good:#4FB39A; }
+
+  html{background:var(--paper)}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);line-height:1.6}
+  .wrap{max-width:860px;margin:0 auto;padding:44px 22px 80px}
+  .kick{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--acc)}
+  h1{font-size:clamp(26px,4.5vw,38px);margin:8px 0 4px;letter-spacing:-.015em;line-height:1.12;text-wrap:balance}
+  .meta{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  h2{font-size:19px;margin:44px 0 8px;letter-spacing:-.01em;border-bottom:2px solid var(--rule);padding-bottom:6px}
+  h2 .no{font-family:var(--mono);color:var(--acc);margin-right:10px;font-size:15px}
+  h3{font-size:15px;margin:24px 0 6px}
+  p,li{max-width:70ch}
+  .mono,code{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  code{background:var(--acc-soft);border-radius:3px;padding:1px 5px;font-size:.9em}
+  pre{background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.5}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin:12px 0}
+  th{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:left;border-bottom:2px solid var(--rule);padding:6px 10px}
+  td{border-bottom:1px solid var(--rule2);padding:7px 10px;vertical-align:top}
+  .tscroll{overflow-x:auto}
+  .callout{background:var(--card);border:1px solid var(--rule);border-left:4px solid var(--acc);border-radius:5px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .callout.warn{border-left-color:var(--warn)}
+  .callout.bad{border-left-color:var(--bad)}
+  .b{font-weight:650}
+  ul{padding-left:22px} li{margin:5px 0}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:14px 0}
+  .col{background:var(--card);border:1px solid var(--rule);border-radius:6px;padding:12px 14px;font-size:13.5px}
+  .col .h{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--acc);margin-bottom:6px}
+  .foot{margin-top:52px;border-top:2px solid var(--rule);padding-top:14px;font-size:12px;color:var(--dim)}
+</style>
+
+<div class="wrap">
+  <div class="kick">HERMES OS · TECHNICAL SPECIFICATION · DRAFT 1</div>
+  <h1>The Ledger System: one journal, every report derived</h1>
+  <div class="meta">GR-HERMES-LEDGER-SPEC-001 · 2026-07-22 · status: for review · author: Hermes engineering</div>
+
+  <h2><span class="no">1</span>Problem — three ledgers, four shadows, no single truth</h2>
+  <p>Today the "ledger" is three partial surfaces plus four shadow sources, each computing money its own way:</p>
+  <div class="tscroll"><table>
+    <tr><th>Surface</th><th>Scope</th><th>What it misses</th></tr>
+    <tr><td class="b">Accounting Ledger</td><td>paper closed positions, running total, recon, forecast</td><td>live lane entirely; fees; partial fills</td></tr>
+    <tr><td class="b">Trade Ledger</td><td>round trips, both lanes, tx hashes, SIM marks</td><td>fees; adjustments; write-offs as first-class entries</td></tr>
+    <tr><td class="b">Fills Table</td><td>raw fill events</td><td>position context; cost basis; no balance semantics</td></tr>
+    <tr><td colspan="3" style="color:var(--dim)">Shadows: <span class="mono">pnl_snapshots</span> (equity curves) · <span class="mono">audit_log</span> (events, JSON) · the on-chain wallet (the only real truth for live) · the Trade Performance Analyzer (management scoring)</td></tr>
+  </table></div>
+  <p>Every accounting defect found on 07-21 traced to this fragmentation — and each cost real money or real trust:</p>
+  <ul>
+    <li><span class="b">Phantom labels.</span> A trail exit was overwritten to <code>live_desync_empty</code> by a concurrent sweep. P&amp;L right, story wrong — and the Analyzer scores by story.</li>
+    <li><span class="b">Wallet–ledger drift.</span> The live wallet's on-chain balance and the ledger's sum disagree by an unreconciled residue of fees, dust, and write-offs. Nothing continuously proves they match.</li>
+    <li><span class="b">Double-books.</span> Duplicate daemons opened the same signal twice; the books recorded both as legitimate. The fix was process-level; the ledger itself would have accepted infinite copies.</li>
+    <li><span class="b">Invisible fees.</span> Network fees, priority fees, and DEX fees are scattered across <code>fee_usd</code> columns and audit JSON. Nobody can answer "what did execution cost this week?"</li>
+  </ul>
+  <div class="callout bad"><span class="b">The root defect:</span> money facts are stored as <em>mutable rows</em> (a position's <code>exit_reason</code>, <code>realized_pnl_usd</code>) that any code path can overwrite, instead of as <em>immutable events</em> that can only be appended and corrected.</div>
+
+  <h2><span class="no">2</span>Design — an event-sourced, double-entry journal</h2>
+  <p>One append-only journal. Every dollar movement is an <span class="b">event</span> carrying balanced <span class="b">double-entry legs</span>. Every report — positions, P&amp;L, equity, fees, statements — is a <span class="b">derived projection</span> that can be rebuilt from the journal at any time. Nothing downstream is ever hand-edited.</p>
+
+  <h3>2.1 Chart of accounts</h3>
+  <div class="tscroll"><table>
+    <tr><th>Account</th><th>Type</th><th>Meaning</th></tr>
+    <tr><td class="mono">cash:sol</td><td>asset</td><td>SOL in the wallet (live) / simulated bankroll (paper)</td></tr>
+    <tr><td class="mono">inventory:&lt;mint&gt;</td><td>asset</td><td>token position at cost basis (lot-tracked)</td></tr>
+    <tr><td class="mono">pnl:realized</td><td>income</td><td>closed-trip gains and losses</td></tr>
+    <tr><td class="mono">expense:fee:network</td><td>expense</td><td>base tx fees</td></tr>
+    <tr><td class="mono">expense:fee:priority</td><td>expense</td><td>compute-budget tips</td></tr>
+    <tr><td class="mono">expense:fee:dex</td><td>expense</td><td>pool/curve trading fees (measurable per venue)</td></tr>
+    <tr><td class="mono">expense:writeoff</td><td>expense</td><td>strands, rugs booked to zero — always with evidence</td></tr>
+    <tr><td class="mono">equity:adjustment</td><td>equity</td><td>reconciliation entries — never silent, always reasoned</td></tr>
+    <tr><td class="mono">transfer:external</td><td>equity</td><td>deposits/withdrawals to the wallet</td></tr>
+  </table></div>
+  <p>Paper and live are <span class="b">separate books</span> sharing this chart. A book is a hard partition — no query may sum across books without an explicit label, which makes the lane-separation rule a schema property instead of a code-review checklist. Every derived statement carries its book's provenance permanently: <span class="b">SIM</span> or <span class="b">LIVE</span>, non-removable.</p>
+
+  <h3>2.2 The journal</h3>
+<pre><code>CREATE TABLE ledger_events (
+  id            bigserial PRIMARY KEY,
+  book          text NOT NULL,              -- 'paper' | 'live'
+  event_type    text NOT NULL,              -- see §2.3
+  occurred_at   timestamptz NOT NULL,
+  -- IDEMPOTENCY: the natural key of the real-world fact. A tx signature,
+  -- a fill id, a decision id. UNIQUE — the double-book class dies here.
+  idempotency_key text NOT NULL UNIQUE,
+  position_ref  bigint,                     -- optional link to the trade
+  tx_signature  text,                       -- on-chain evidence (live)
+  memo          text NOT NULL,              -- human story, e.g. 'TP0 banked 20%'
+  evidence      jsonb NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE ledger_legs (
+  event_id  bigint NOT NULL REFERENCES ledger_events(id),
+  account   text   NOT NULL,
+  -- signed; every event's legs MUST sum to zero (enforced by trigger)
+  amount_usd numeric NOT NULL,
+  amount_native numeric,                    -- SOL lamports / token qty
+  mint      text
+);</code></pre>
+  <ul>
+    <li><span class="b">Append-only.</span> No UPDATE, no DELETE — a Postgres rule revokes both. A mistake is corrected by a <em>reversal event</em> that references the original. The desync-overwrite class becomes structurally impossible.</li>
+    <li><span class="b">Balanced.</span> A trigger rejects any event whose legs don't sum to zero. A buy is <code>cash:sol −$2.00 / inventory +$1.99 / fee:network +$0.01</code> — by construction, money never appears or vanishes.</li>
+    <li><span class="b">Idempotent.</span> The unique key means replaying a webhook, retrying a handler, or running two daemons produces one entry. The BSTRAT double-buy would have been one journal event and one loud constraint violation.</li>
+  </ul>
+
+  <h3>2.3 Event types</h3>
+  <div class="tscroll"><table>
+    <tr><th>Event</th><th>Legs</th><th>Source</th></tr>
+    <tr><td class="mono">fill.buy / fill.sell</td><td>cash ↔ inventory ± fees</td><td>trader (paper sim / live confirmed tx)</td></tr>
+    <tr><td class="mono">trip.close</td><td>inventory → pnl:realized</td><td>position close (lot-matched, FIFO)</td></tr>
+    <tr><td class="mono">writeoff.strand / writeoff.rug</td><td>inventory → expense:writeoff</td><td>guard, with the failed-exit evidence attached</td></tr>
+    <tr><td class="mono">fee.priority / fee.network / fee.dex</td><td>cash → expense:*</td><td>parsed from the confirmed tx, not estimated</td></tr>
+    <tr><td class="mono">recon.adjust</td><td>any ↔ equity:adjustment</td><td>reconciler only (§3) — never trading code</td></tr>
+    <tr><td class="mono">transfer.in / transfer.out</td><td>external ↔ cash</td><td>operator deposits/withdrawals</td></tr>
+    <tr><td class="mono">reversal</td><td>mirror of the referenced event</td><td>correction path — the ONLY correction path</td></tr>
+  </table></div>
+  <p><span class="b">Marks are not money.</span> Unrealized P&amp;L, peaks, and floats never enter the journal — they live in projections computed against it. The ledger records what <em>happened</em>; the dashboard estimates what <em>might</em>.</p>
+
+  <h2><span class="no">3</span>Reconciliation — the chain is the auditor</h2>
+  <p>For the live book, the blockchain is the only truth. A <span class="b">reconciler job</span> (every 5 minutes) proves the journal against it:</p>
+  <ul>
+    <li>Read the wallet's SOL balance and every token account on-chain.</li>
+    <li>Compute the journal's expected balances from account sums.</li>
+    <li><span class="b">Drift under $0.05</span> → green heartbeat on the dashboard.</li>
+    <li><span class="b">Drift over threshold</span> → a <code>recon.adjust</code> event with the measured delta and a mandatory reason, plus a phone alert. Drift is never silently absorbed and never silently ignored.</li>
+  </ul>
+  <div class="callout"><span class="b">Definition of done for any trading-code change:</span> the reconciler stays green for 24 hours after it ships. Wallet-vs-ledger divergence stops being a discovery and becomes an alarm.</div>
+  <p>The paper book reconciles trivially (bankroll + realized = equity) but runs through the same machinery, so a simulation bug surfaces the same way an accounting bug does.</p>
+
+  <h2><span class="no">4</span>The reporting layer — statements, not tables</h2>
+  <p>Every report is a projection over the journal. Because the journal is complete and balanced, each one is exact, reproducible, and traceable to evidence rows:</p>
+  <div class="cols">
+    <div class="col"><div class="h">Daily P&amp;L statement</div>Per book: gross realized, fees by type, write-offs, net — with per-signature and per-venue cuts. The number the PULSE and SUMMARY reports quote, so the phone and the books can never disagree.</div>
+    <div class="col"><div class="h">Equity statement</div>Opening balance → trading result → fees → transfers → closing balance, per book per day. Ties to the chain via the reconciler's green check.</div>
+    <div class="col"><div class="h">Execution cost report</div>The invisible made visible: network + priority + DEX fees, slippage vs decision mark per venue. Answers "what does a $2 position really cost?" with data instead of the 14%-fee-drag estimate.</div>
+    <div class="col"><div class="h">Trade dossier</div>One trip end-to-end: every journal event, every tx hash, the Analyzer's management grade, the signature evidence. The drill-down for any number on any statement.</div>
+    <div class="col"><div class="h">Tax-lot export</div>FIFO lots with acquisition/disposal timestamps and proceeds — CSV. Exists from day one so year-end is a download, not a project.</div>
+    <div class="col"><div class="h">Period statement (investor-grade)</div>Monthly: performance, fees, drawdown, reconciliation attestation. LIVE and SIM books rendered separately, provenance labels baked into the layout — simulated results can never be dressed as real capital.</div>
+  </div>
+
+  <h2><span class="no">5</span>Dashboard — one Ledger workspace</h2>
+  <p>The three current panels collapse into one <span class="b">Ledger</span> workspace on the house Panel standard (core + drawer, KPI tiles, charts — exec-shareable):</p>
+  <ul>
+    <li><span class="b">Header:</span> per-book equity, day's net, fee total, and the reconciler heartbeat (green tick with minutes-since-proof).</li>
+    <li><span class="b">Statement view</span> (default): the daily P&amp;L statement with expandable per-signature / per-venue rows.</li>
+    <li><span class="b">Journal view:</span> the raw event stream, filterable, each row opening its trade dossier. ◆ LIVE / SIM marks on every row.</li>
+    <li><span class="b">Drift view:</span> reconciliation history — every adjustment ever made, with reasons. An empty page is the goal state.</li>
+  </ul>
+
+  <h2><span class="no">6</span>Migration — four phases, zero downtime</h2>
+  <div class="tscroll"><table>
+    <tr><th>Phase</th><th>Work</th><th>Exit test</th></tr>
+    <tr><td class="b">1 · Backfill</td><td>Derive journal events from existing <code>fills</code>, <code>positions</code>, and audit rows; tag <code>backfill=true</code> in evidence. Known-unknowables (old fee detail) enter as documented estimates.</td><td>Backfilled journal reproduces today's realized totals per lane to the cent.</td></tr>
+    <tr><td class="b">2 · Dual-write</td><td>Trader and guard emit journal events alongside existing writes. Old tables remain the read path.</td><td>7 days with zero divergence between journal projections and legacy tables; reconciler green.</td></tr>
+    <tr><td class="b">3 · Swap reads</td><td>Dashboard, sentinel, and Analyzer read projections. Legacy panels replaced by the Ledger workspace.</td><td>Every number on every surface traceable to journal events.</td></tr>
+    <tr><td class="b">4 · Retire</td><td>Freeze legacy money columns (kept for archaeology, revoked for writes).</td><td>No code path can mutate a money fact outside the journal.</td></tr>
+  </table></div>
+
+  <h2><span class="no">7</span>Invariants — the tests that keep it honest</h2>
+  <ul>
+    <li>Σ legs = 0 for every event <span class="mono">(trigger-enforced)</span></li>
+    <li><span class="mono">cash:sol</span> never negative in either book</li>
+    <li>Live drift ≤ $0.05 or an alert exists <span class="mono">(reconciler)</span></li>
+    <li>Every <span class="mono">writeoff.*</span> carries failure evidence; every <span class="mono">recon.adjust</span> carries a reason</li>
+    <li>Idempotency-key collisions are logged loudly — each one is a bug caught before it became money</li>
+    <li>Projections rebuilt from scratch match incremental state <span class="mono">(nightly job)</span></li>
+  </ul>
+
+  <div class="callout warn"><span class="b">Scope guard.</span> This spec deliberately excludes: multi-wallet support (schema-ready via <code>book</code>, not built), cross-chain, and real-time streaming projections. Each is an additive phase later, not a reason to delay phase 1.</div>
+
+  <h2><span class="no">8</span>Estimate</h2>
+  <div class="tscroll"><table>
+    <tr><th>Phase</th><th>Effort</th><th>Value unlocked</th></tr>
+    <tr><td>1 · Schema + backfill</td><td>1 session</td><td>fee visibility, historical statements</td></tr>
+    <tr><td>2 · Dual-write + reconciler</td><td>1–2 sessions</td><td>chain-proven live book, drift alarms</td></tr>
+    <tr><td>3 · Workspace + statements</td><td>1–2 sessions</td><td>the clean P&amp;L workspace; investor-grade reporting</td></tr>
+    <tr><td>4 · Retire legacy</td><td>&lt;1 session</td><td>the mutable-money-fact class extinct</td></tr>
+  </table></div>
+
+  <div class="foot">
+    Hermes OS · GR-HERMES-LEDGER-SPEC-001 · draft for operator review — phase order and thresholds adjustable before build.
+    Grounded in the 2026-07-21 session's measured defects; every "problem" row above corresponds to a real incident in the audit log.
+  </div>
+</div>
+
+</body></html>

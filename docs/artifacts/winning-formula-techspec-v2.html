@@ -1,0 +1,121 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+<title>Winning Formula Tech Spec v2 + Radar 2.0 · Genesis Capital Engine OS</title>
+<style>
+  html, body { background:#0b0e11 !important; color-scheme: dark; }
+  body { font-family:"Segoe UI",system-ui,sans-serif; color:#e8edf2; margin:0; line-height:1.55; }
+  .wrap { max-width:940px; margin:0 auto; padding:40px 22px 90px; }
+  .mono, td.num, code, pre { font-family:"Cascadia Code",Consolas,monospace; font-variant-numeric:tabular-nums; }
+  code { font-size:12px; color:#5aa7e8; background:#12161b; border:1px solid #232b33; border-radius:4px; padding:0 5px; }
+  pre { font-size:11.5px; color:#9fadb8; background:#0e1216; border:1px solid #232b33; border-radius:8px; padding:12px 14px; overflow-x:auto; }
+  header { border-bottom:1px solid #232b33; padding-bottom:22px; margin-bottom:28px; }
+  .eyebrow { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:#66737f; }
+  h1 { font-size:25px; margin:6px 0 4px; color:#f2f6fa; }
+  .sub { color:#9fadb8; font-size:13.5px; margin:0; }
+  h2 { font-size:15px; letter-spacing:.08em; text-transform:uppercase; color:#9fadb8; margin:38px 0 12px; border-bottom:1px solid #232b33; padding-bottom:6px; }
+  h2 .n { color:#3ee68c; margin-right:8px; font-family:Consolas,monospace; }
+  h3 { font-size:14px; color:#e8edf2; margin:16px 0 6px; }
+  p, li { font-size:13.5px; color:#9fadb8; } b { color:#e8edf2; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; background:#12161b; border:1px solid #232b33; border-radius:10px; overflow:hidden; }
+  .tblwrap { overflow-x:auto; border-radius:10px; margin:10px 0; }
+  th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.08em; color:#66737f; padding:8px 11px; border-bottom:1px solid #232b33; background:#171c22; white-space:nowrap; }
+  td { padding:7px 11px; border-bottom:1px solid #1a2027; color:#9fadb8; vertical-align:top; }
+  tr:last-child td { border-bottom:none; } td.num { text-align:right; white-space:nowrap; }
+  .g { color:#3ee68c; } .r { color:#ff5d5d; } .a { color:#ffc44d; } .blue { color:#5aa7e8; } .dim { color:#66737f; }
+  .canon { border-left:3px solid #3ee68c; background:#0e1a14; border-radius:0 10px 10px 0; padding:13px 17px; margin:14px 0; }
+  .canon p { color:#c9d6cf; }
+  .phase { background:#12161b; border:1px solid #232b33; border-radius:10px; padding:14px 17px; margin:10px 0; }
+  .tier { display:inline-block; font-size:9.5px; font-weight:700; letter-spacing:.08em; border-radius:4px; padding:1px 7px; margin-right:6px; }
+  .t1 { color:#3ee68c; border:1px solid #3ee68c; } .t2 { color:#5aa7e8; border:1px solid #5aa7e8; } .t3 { color:#66737f; border:1px solid #66737f; }
+  .foot { margin-top:44px; padding-top:16px; border-top:1px solid #232b33; font-size:11.5px; color:#66737f; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Genesis Capital Engine OS · Engineering · GCE-SPEC-002 · presented 2026-07-24</div>
+    <h1>Winning Formula Tech Spec v2 — Signatures in the Cohort + Radar 2.0</h1>
+    <p class="sub">Companion to Canon GCE-FORMULA-001. Evidence base: the full census — <b>4,114 SIMULATED paper trades (2,144 winners) and 204 live trades</b> — plus the 9-day harness and the in-trade liquidity-behavior study. Everything here is data-proven before it is code.</p>
+  </header>
+
+  <h2><span class="n">01</span>The census headline engineers should build around</h2>
+  <div class="canon"><p><b>588 trades — 14% of the scorable census — produced 99% of all scorable profit (+$898 of +$903), at 3% death rate.</b> Their one shared feature: a verified-winner crowd (<code>wallet_winner_hits ≥ 1 AND wallet_winner_hits &gt; wallet_rug_hits</code>). The 1,363-trade cohort with neither crowd nor seat netted $0. The system's job is to find, size, and ride the 14% — and to keep feeding the wallet graph that grows that 14% over time.</p></div>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Census tier (scorable paper era)</th><th>n</th><th>win</th><th>dead</th><th>$/trade</th><th>capture</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tier t2">STANDARD</span> crowd pass</td><td class="num">588</td><td class="num">47%</td><td class="num g">3%</td><td class="num g">$1.53</td><td class="num g">42%</td></tr>
+      <tr><td><span class="tier t1">PRECISION</span> crowd + seat</td><td class="num">284</td><td class="num">50%</td><td class="num">5%</td><td class="num">$0.70</td><td class="num">17%</td></tr>
+      <tr><td>seat without crowd</td><td class="num">584</td><td class="num">52%</td><td class="num r">8%</td><td class="num r">−$0.28</td><td class="num r">−13%</td></tr>
+      <tr><td><span class="tier t3">SENSOR</span> neither</td><td class="num">1,363</td><td class="num">53%</td><td class="num">5%</td><td class="num dim">−$0.02</td><td class="num dim">−1%</td></tr>
+    </tbody>
+  </table></div>
+  <p><b>Regime note (census vs 9-day):</b> the seat (1.20–1.65× @ 2–2.5m) is a <i>capture concentrator in hot regimes</i> (42% capture this week; refused 4 of 5 of the 07-23 atomic deaths) but dilutes crowd-alone across all regimes. Spec treatment: <b>crowd is the constant; seat is regime-conditional</b> — its binding condition is an explicit model-run deliverable, not an assumption.</p>
+
+  <h2><span class="n">02</span>The Signatures join the cohort — the formula's third axis</h2>
+  <p>Same census, split by routed genome. The formula does not spread evenly across classes — <b>it concentrates in RISER</b>:</p>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Genome × crowd (census, n≥5)</th><th>n</th><th>win</th><th>dead</th><th>$/trade</th><th>capture</th><th>Read</th></tr></thead>
+    <tbody>
+      <tr><td class="g"><b>RISER × crowd</b></td><td class="num">57</td><td class="num g">84%</td><td class="num g">5%</td><td class="num g">$2.45</td><td class="num g">36%</td><td><b>The apex cell.</b> With seat: $2.92/trade, 49% capture, 84% win (n=37)</td></tr>
+      <tr><td>RISER × no-crowd</td><td class="num">224</td><td class="num">72%</td><td class="num">14%</td><td class="num">$0.16</td><td class="num">4%</td><td>Same genome, no transponder: 15× less per trade</td></tr>
+      <tr><td>MOON_FAST × crowd</td><td class="num">6</td><td class="num">50%</td><td class="num">0%</td><td class="num g">$5.17</td><td class="num g">40%</td><td>Hottest $/trade in the book — thin n, priority cohort to grow</td></tr>
+      <tr><td>MOON_SLOW × no-crowd</td><td class="num">24</td><td class="num">54%</td><td class="num r">33%</td><td class="num r">−$0.64</td><td class="num r">−99%</td><td>The extractor's favorite costume — worst cell on the board</td></tr>
+      <tr><td>BASE × crowd</td><td class="num">22</td><td class="num">68%</td><td class="num">9%</td><td class="num r">−$0.72</td><td class="num r">−47%</td><td>Crowd doesn't rescue BASE — residual bucket stays residual</td></tr>
+      <tr><td>MOON_STEADY × precision</td><td class="num">8</td><td class="num">75%</td><td class="num">0%</td><td class="num">$0.67</td><td class="num">22%</td><td>Viable only inside full precision</td></tr>
+    </tbody>
+  </table></div>
+  <div class="canon"><p><b>Formula v2, complete:</b> <code>(CROWD: wh≥1 ∧ wh&gt;rh)</code> as the constant qualifier · <code>(SEAT: 1.20–1.65× @ 2.0–2.5m, ≤5% off peak)</code> regime-conditional concentrator · <code>(GENOME ∈ {RISER, MOON_FAST})</code> full-conviction classes, others probe-tier inside the formula · inflow envelope 1.20–2.05 advisory · texture tilt on flawless charts · <b>in-trade</b>: pool depth-continuation governs ride-vs-bank (winners ≥1.15× entry depth at price peak; stall at crest ≤1.05× = bank hard).</p></div>
+
+  <h2><span class="n">03</span>Radar 2.0 — the formula as an IFF scope</h2>
+  <p>The current radar draws one component (the seat annulus). Radar 2.0 renders the whole formula as <b>identification-friend-or-foe</b>: every contact classified by transponder (crowd), position (seat), genome, texture, and — while riding — the pool's live behavior.</p>
+  <h3>Visual contract</h3>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Layer</th><th>Encodes</th><th>Rendering</th></tr></thead>
+    <tbody>
+      <tr><td><b>Scope geometry</b></td><td>rings = trigger multiple (1× center → 2.4× rim) · bearing = recency (12 o'clock now, one turn = 60m) · clockwise sweep (8s, reduced-motion aware)</td><td>as shipped (phosphor face, d672798)</td></tr>
+      <tr><td><b>Canon ring vs live band</b></td><td>F2 canon seat (1.30–1.65) drawn as a fixed reference ring; the finder's live band as the glowing annulus. <b>Divergence between them is drift made visible.</b></td><td>dashed canon ring + tinted annulus</td></tr>
+      <tr><td><b>IFF transponder (F1)</b></td><td>verified-winner crowd = bright solid contact · unknown 0W/0R = faint hollow · rug-history = hostile mark</td><td>fill/stroke intensity + glyph</td></tr>
+      <tr><td><b>Genome</b></td><td>RISER/MOON_FAST (full-conviction classes) get the larger contact form; probe-tier classes small</td><td>radius + shape</td></tr>
+      <tr><td><b>Texture (F4)</b></td><td>flawless straight-ascent contact carries ⚠</td><td>glyph overlay</td></tr>
+      <tr><td><b>Depth continuation (F5)</b></td><td>riding trades: pool filling with the climb = green pulse ("breathe") · pool stalled at crest = red fade ("bank hard")</td><td>CSS pulse animation keyed to live tick data</td></tr>
+      <tr><td><b>Tier KPIs</b></td><td>PRECISION / STANDARD / SENSOR contacts today · formula-cohort capture vs fail · in-band fill % · chases refused</td><td>tile row, canon vocabulary</td></tr>
+      <tr><td><b>Traceability</b></td><td>hover = the trade's full stage trace (seat → crowd → snap → rungs → banked → exit) matching the lifecycle drawer</td><td>tooltip / click-through to token page</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Data contract per contact</h3>
+  <pre>RadarContact {
+  mint, symbol, lane            // ◆ LIVE ring as shipped
+  trigMult, atMin, offPeakPct   // seat placement + F2 lamp + F4 texture
+  walletWinnerHits, walletRugHits // F1 transponder class
+  signature, stars              // genome form
+  inflow                        // F3 envelope legality (strike-through &gt; 2.05)
+  status, pnl, peakX            // outcome coloring (as shipped)
+  liqEntry, liqNow, liqAtPeak   // F5 pulse: filling | stalled | n/a
+  minutesAgo                    // bearing
+}</pre>
+  <p>Source: one query joining <code>positions × candidate_outcomes × candidate_ticks(last)</code> + <code>config.sweetspot_band</code> — read-only, no admission logic touched. Refresh rides the existing 10s page cycle.</p>
+
+  <h2><span class="n">04</span>Implementation plan (for the engineering session)</h2>
+  <div class="phase"><h3>Phase D — Display (no ratification needed; read-only)</h3>
+    <ul>
+      <li><b>D1 Radar 2.0</b> per §03: IFF layers, canon-vs-live band overlay, depth-continuation pulse, tier KPIs. Acceptance: every contact hover shows its stage trace; canon ring visibly distinct from live band; verified by <i>rendering</i>, not typecheck.</li>
+      <li><b>D2 Formula scorer, report-only:</b> every entry audited with its formula vector (<code>formula_score</code> audit: C1/C2/C4/B1 booleans + genome + tier). Zero behavior change; makes the formula's live hit-rate measurable per day before any gate ships. Acceptance: stage-by-stage drawer shows tier chip per trade.</li>
+    </ul></div>
+  <div class="phase"><h3>Phase M — Model run (tonight's replay + follow-ups)</h3>
+    <ul>
+      <li>Price each drift-register row on the full dataset: crowd-everywhere · seat ceiling 1.65 + regime condition · aperture ≤2.5m · inflow 2.05 ceiling · texture tilt · depth-continuation management rule · never-armed stop geometry.</li>
+      <li>Deliverable: ship/no-ship matrix with per-rule P&amp;L deltas, volume cost, and counterfactual definitions.</li>
+    </ul></div>
+  <div class="phase"><h3>Phase R — Ratified rollout (only after M + operator sign-off)</h3>
+    <ul>
+      <li>Two-tier admission (PRECISION full size / STANDARD standard / SENSOR probe-paper, refused-live), genome-weighted inside tiers (RISER/MOON_FAST full conviction).</li>
+      <li>Depth-continuation wired into ride-vs-cut + rung schedule; re-confirm arbiter.</li>
+      <li>Each change lands with its named audit action + band-watch counterfactual from day one. <b>Order, every time: harness → model → ratify → ship → counterfactual watch.</b></li>
+    </ul></div>
+
+  <h2><span class="n">05</span>Standing references</h2>
+  <p>Canon: <b>GCE-FORMULA-001</b> (The Winning Formula &amp; Trading Lifecycle — the document that outranks code, incl. the 13-stage traceability map and the drift register). Harness: <code>packages/db/replays/formula-harness.ts</code> — rerunnable over any window; census mode drops per-tick stability (measured zero contribution). Live inverse proof: 168 formula-fail live trades −$128.82 at 21% dead vs crowd-pass −$6.87 — the live wallet's history <i>is</i> the fail cohort, and the forward test begins when Phase R lands.</p>
+
+  <div class="foot">Genesis Capital Engine OS · GCE-SPEC-002 · SIMULATED paper figures never blend with live · risk rails (−$35/day, −$32 kill, exposure ≤40%) sit above everything here · No Drift: anything shipped that isn't in Canon or this spec is a defect by definition.</div>
+</div>
+
+</body></html>
