@@ -11,6 +11,7 @@ import { IntelTerminal } from "@/components/IntelTerminal";
 import { KillSwitch } from "@/components/KillSwitch";
 import { LaneFilter } from "@/components/LaneFilter";
 import { ManagementBoard } from "@/components/ManagementBoard";
+import { VitalsStrip } from "@/components/VitalsStrip";
 import { RecorderBoard } from "@/components/RecorderBoard";
 import { PondRadar } from "@/components/PondRadar";
 import { TickerRadar } from "@/components/TickerRadar";
@@ -49,6 +50,7 @@ import {
   getInflowEdge,
   getSweetspotRadar,
   getTradeManager,
+  getVitals,
   getAnticipation,
   getWinningFormula,
   getHourlyWindows,
@@ -109,6 +111,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     inflowEdge,
     sweetspotRadar,
     tradeManager,
+    vitals,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -145,6 +148,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     getInflowEdge(),
     getSweetspotRadar(),
     getTradeManager(),
+    getVitals(),
   ]);
 
   const gridView = laneFilter
@@ -359,6 +363,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
             <HarvestButton greenCount={sellableGreens.length} greenUsd={sellableGreenUsd} suspendedCount={suspendedGreens} />
           </div>
         </div>
+        <VitalsStrip v={vitals} />
         <ManagementBoard positions={managedView} />
       </section>
 

@@ -4560,6 +4560,120 @@ export interface TradeManagerView {
   rows: TradePipelineRow[];
 }
 
+// ── C1: DNA VITALS STRIP (Command Center phase C1, ratified 2026-07-25) ──────
+// The benchmark contract as six tiles on Position Command: every number here
+// is a standing promise with a bar, not a stat. Lanes never blended — the
+// compound tile carries paper and live side by side, labeled.
+export interface VitalsView {
+  /** paper 24h: banked ÷ offered on positions whose peak crossed the 1.2× arm. Bar ≥40%. */
+  armedCapturePct: number | null;
+  /** both lanes 24h: gross win $ ÷ gross loss $. Bar ≥1.5. */
+  grossWL: number | null;
+  /** 24h: losses that died rungless after peaking ≥1.2× ÷ gross wins. Bar ≤25%. */
+  runglessTaxPct: number | null;
+  /** live vs same-mint paper twin, avg pp. Bar ≥ −5pp. */
+  liveDragPp: number | null;
+  /** live fills ÷ qualified hand-offs, 24h. Bar 100% of qualified. */
+  boardRatePct: number | null;
+  liveKilled: boolean;
+  /** equity move per lane, 24h — the 40%/day mandate. Never blended. */
+  compoundPaperPct: number | null;
+  compoundLivePct: number | null;
+  /** P0 chain anchor: live fills whose signature is chain-ingested ÷ all signed fills. */
+  chainMatchedPct: number | null;
+  chainTxs: number;
+  /** Phase 2 diagnosis Pareto, 24h, both lanes (loudest loss first). */
+  pareto: DiagnosisSlice[];
+}
+
+export async function getVitals(): Promise<VitalsView> {
+  try {
+    const [row] = (await db.execute(sql`
+      WITH closed AS (
+        SELECT p.lane, p.realized_pnl_usd::float AS pnl, p.size_usd::float AS size,
+               CASE WHEN p.entry_price_usd::float > 0 THEN p.peak_price_usd::float / p.entry_price_usd::float ELSE 1 END AS peakx,
+               CASE WHEN p.entry_price_usd::float > 0 AND p.peak_price_usd::float / p.entry_price_usd::float > 1
+                    THEN (p.peak_price_usd::float / p.entry_price_usd::float - 1) * p.size_usd::float ELSE 0 END AS offer,
+               EXISTS (SELECT 1 FROM fills f WHERE f.position_id = p.id AND f.side = 'sell' AND f.reason LIKE 'take_profit%') AS rung
+        FROM positions p WHERE p.status = 'closed' AND p.closed_at > now() - interval '24 hours')
+      SELECT
+        (SELECT CASE WHEN sum(offer) FILTER (WHERE lane = 'paper' AND peakx >= 1.2) > 1
+                THEN 100 * sum(pnl) FILTER (WHERE lane = 'paper' AND peakx >= 1.2)
+                     / sum(offer) FILTER (WHERE lane = 'paper' AND peakx >= 1.2) END FROM closed) AS armed_capture,
+        (SELECT sum(pnl) FILTER (WHERE pnl > 0) FROM closed) AS gross_win,
+        (SELECT abs(sum(pnl) FILTER (WHERE pnl < 0)) FROM closed) AS gross_loss,
+        (SELECT abs(sum(pnl) FILTER (WHERE pnl < 0 AND NOT rung AND peakx >= 1.2)) FROM closed) AS rungless_loss,
+        (SELECT count(*)::int FROM positions WHERE lane = 'live' AND opened_at > now() - interval '24 hours') AS live_opens,
+        (SELECT count(DISTINCT details->>'mint')::int FROM audit_log
+          WHERE action = 'live_buy_skipped' AND created_at > now() - interval '24 hours') AS live_skips,
+        (SELECT count(*)::int FROM chain_txs) AS chain_txs,
+        (SELECT count(*)::int FROM fills f JOIN positions p ON p.id = f.position_id
+          WHERE p.lane = 'live' AND f.tx_signature IS NOT NULL) AS signed_fills,
+        (SELECT count(*)::int FROM fills f JOIN positions p ON p.id = f.position_id
+          WHERE p.lane = 'live' AND f.tx_signature IS NOT NULL
+            AND EXISTS (SELECT 1 FROM chain_txs c WHERE c.signature = f.tx_signature)) AS chain_matched`)) as unknown as {
+      armed_capture: number | null; gross_win: number | null; gross_loss: number | null;
+      rungless_loss: number | null; live_opens: number; live_skips: number;
+      chain_txs: number; signed_fills: number; chain_matched: number;
+    }[];
+    const compound = async (lane: string): Promise<number | null> => {
+      const [eq] = (await db.execute(sql`
+        SELECT (SELECT equity_usd::float FROM pnl_snapshots WHERE lane = ${lane} ORDER BY snapped_at DESC LIMIT 1) AS now,
+               (SELECT equity_usd::float FROM pnl_snapshots WHERE lane = ${lane} AND snapped_at < now() - interval '24 hours'
+                ORDER BY snapped_at DESC LIMIT 1) AS ago`)) as unknown as { now: number | null; ago: number | null }[];
+      return eq?.now != null && eq?.ago != null && eq.ago > 0 ? (100 * (eq.now - eq.ago)) / eq.ago : null;
+    };
+    // Live drag: avg live-vs-twin pp over recent closed live trades (same
+    // definition as the Trade Manager, computed in SQL).
+    const [drag] = (await db.execute(sql`
+      SELECT avg(100 * p.realized_pnl_usd::float / nullif(p.size_usd::float, 0)
+               - 100 * tw.pnl / nullif(tw.size, 0)) AS pp
+      FROM positions p
+      JOIN LATERAL (
+        SELECT q.realized_pnl_usd::float AS pnl, q.size_usd::float AS size
+        FROM positions q
+        WHERE q.mint = p.mint AND q.lane = 'paper' AND q.status = 'closed'
+          AND q.opened_at BETWEEN p.opened_at - interval '45 minutes' AND p.opened_at + interval '45 minutes'
+        ORDER BY abs(extract(epoch from (q.opened_at - p.opened_at))) LIMIT 1
+      ) tw ON true
+      WHERE p.lane = 'live' AND p.status = 'closed' AND p.closed_at > now() - interval '24 hours'`)) as unknown as {
+      pp: number | null;
+    }[];
+    const [kill] = (await db.execute(
+      sql`SELECT (value->>'enabled')::boolean AS killed FROM config WHERE key = 'live_kill'`,
+    )) as unknown as { killed: boolean | null }[];
+    const pareto = ((await db.execute(sql`
+      SELECT details->>'verdict' AS verdict, count(*)::int AS n,
+             round(sum((details->>'pnl')::float)::numeric, 2) AS pnl
+      FROM audit_log WHERE action = 'trade_diagnosis' AND created_at > now() - interval '24 hours'
+      GROUP BY 1 ORDER BY sum((details->>'pnl')::float) ASC`)) as unknown as {
+      verdict: string | null; n: number; pnl: number | null;
+    }[]).map((r) => ({ verdict: r.verdict ?? "?", n: r.n, pnl: Number(r.pnl ?? 0) }));
+    const r = row!;
+    return {
+      armedCapturePct: r.armed_capture == null ? null : Number(r.armed_capture),
+      grossWL: r.gross_loss && Number(r.gross_loss) > 0 ? Number(r.gross_win ?? 0) / Number(r.gross_loss) : null,
+      runglessTaxPct:
+        r.gross_win && Number(r.gross_win) > 0 ? (100 * Number(r.rungless_loss ?? 0)) / Number(r.gross_win) : null,
+      liveDragPp: drag?.pp == null ? null : Number(drag.pp),
+      boardRatePct:
+        r.live_opens + r.live_skips > 0 ? (100 * r.live_opens) / (r.live_opens + r.live_skips) : null,
+      liveKilled: kill?.killed === true,
+      compoundPaperPct: await compound("paper"),
+      compoundLivePct: await compound("live"),
+      chainMatchedPct: r.signed_fills > 0 ? (100 * r.chain_matched) / r.signed_fills : null,
+      chainTxs: r.chain_txs,
+      pareto,
+    };
+  } catch {
+    return {
+      armedCapturePct: null, grossWL: null, runglessTaxPct: null, liveDragPp: null,
+      boardRatePct: null, liveKilled: false, compoundPaperPct: null, compoundLivePct: null,
+      chainMatchedPct: null, chainTxs: 0, pareto: [],
+    };
+  }
+}
+
 export async function getTradeManager(limit = 14): Promise<TradeManagerView> {
   try {
     const rows = (await db.execute(sql`

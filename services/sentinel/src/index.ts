@@ -59,6 +59,10 @@ interface SentinelState {
   lastChainSig: string | null;
   /** epoch ms of the last chain ingestion pass */
   lastChainMs: number;
+  /** oldest chain signature already ingested — the history backfill cursor */
+  backChainSig: string | null;
+  /** true once the backward walk has exhausted the wallet's history */
+  chainBackfillDone: boolean;
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -80,6 +84,8 @@ async function loadState(): Promise<SentinelState> {
     lastDiagnosedPosId: v.lastDiagnosedPosId ?? -1,
     lastChainSig: v.lastChainSig ?? null,
     lastChainMs: v.lastChainMs ?? 0,
+    backChainSig: v.backChainSig ?? null,
+    chainBackfillDone: v.chainBackfillDone ?? false,
   };
 }
 
@@ -99,56 +105,98 @@ async function rpcCall(method: string, params: unknown[]): Promise<any> {
   const j = (await res.json()) as { result?: unknown };
   return j?.result ?? null;
 }
+type ChainSigRow = { signature: string; slot: number; blockTime: number | null; err: unknown };
+/** Parse + insert one signature. "skip" = failed tx (fees only), "retry" = RPC miss. */
+async function ingestChainTx(sg: ChainSigRow): Promise<"ok" | "skip" | "retry"> {
+  if (sg.err) return "skip"; // failed txs cost only fees; skip parse, still advance
+  const tx = (await rpcCall("getTransaction", [
+    sg.signature,
+    { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
+  ])) as any;
+  if (!tx?.meta) return "retry"; // transient RPC miss — retry next pass
+  const keys: string[] = (tx.transaction?.message?.accountKeys ?? []).map((k: any) =>
+    typeof k === "string" ? k : k.pubkey,
+  );
+  const wi = keys.indexOf(LIVE_WALLET_ADDR);
+  const solDelta = wi >= 0 ? ((tx.meta.postBalances?.[wi] ?? 0) - (tx.meta.preBalances?.[wi] ?? 0)) / 1e9 : 0;
+  const feeSol = wi === 0 ? (tx.meta.fee ?? 0) / 1e9 : 0;
+  const tokAgg = new Map<string, number>();
+  const addTok = (rows: any[], sign: number) => {
+    for (const b of rows ?? [])
+      if (b.owner === LIVE_WALLET_ADDR)
+        tokAgg.set(b.mint, (tokAgg.get(b.mint) ?? 0) + sign * Number(b.uiTokenAmount?.uiAmount ?? 0));
+  };
+  addTok(tx.meta.postTokenBalances, 1);
+  addTok(tx.meta.preTokenBalances, -1);
+  let tokenMint: string | null = null;
+  let tokenDelta = 0;
+  for (const [m, d] of tokAgg) if (Math.abs(d) > Math.abs(tokenDelta)) { tokenMint = m; tokenDelta = d; }
+  const cls =
+    tokenMint && tokenDelta > 0 && solDelta < 0 ? "buy"
+    : tokenMint && tokenDelta < 0 && solDelta > 0 ? "sell"
+    : !tokenMint && solDelta > 0 && solDelta < 0.01 ? "rent"
+    : !tokenMint ? "transfer"
+    : "unknown";
+  await db.execute(sql`
+    INSERT INTO chain_txs (signature, slot, block_time, sol_delta, fee_sol, token_mint, token_delta, class, matched_fill_id)
+    VALUES (${sg.signature}, ${sg.slot}, ${sg.blockTime ? new Date(sg.blockTime * 1000).toISOString() : null},
+            ${solDelta}, ${feeSol}, ${tokenMint}, ${tokenDelta}, ${cls},
+            (SELECT f.id FROM fills f WHERE f.tx_signature = ${sg.signature} LIMIT 1))
+    ON CONFLICT (signature) DO NOTHING`);
+  return "ok";
+}
 async function checkChainTruth(s: SentinelState): Promise<void> {
   if (Date.now() - s.lastChainMs < CHAIN_INGEST_MS) return;
   s.lastChainMs = Date.now();
   try {
+    // ── FORWARD: new wallet activity since the newest ingested signature ──
     const sigs = (await rpcCall("getSignaturesForAddress", [
       LIVE_WALLET_ADDR,
       { limit: 25, ...(s.lastChainSig ? { until: s.lastChainSig } : {}) },
-    ])) as { signature: string; slot: number; blockTime: number | null; err: unknown }[] | null;
-    if (!sigs?.length) return;
+    ])) as ChainSigRow[] | null;
     // newest-first; ingest oldest-first so lastChainSig advances safely
-    for (const sg of [...sigs].reverse()) {
-      if (sg.err) {
-        s.lastChainSig = sg.signature;
-        continue; // failed txs cost only fees; skip parse, still advance
-      }
-      const tx = (await rpcCall("getTransaction", [
-        sg.signature,
-        { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
-      ])) as any;
-      if (!tx?.meta) continue; // transient RPC miss — retry next pass (do not advance)
-      const keys: string[] = (tx.transaction?.message?.accountKeys ?? []).map((k: any) =>
-        typeof k === "string" ? k : k.pubkey,
-      );
-      const wi = keys.indexOf(LIVE_WALLET_ADDR);
-      const solDelta = wi >= 0 ? ((tx.meta.postBalances?.[wi] ?? 0) - (tx.meta.preBalances?.[wi] ?? 0)) / 1e9 : 0;
-      const feeSol = wi === 0 ? (tx.meta.fee ?? 0) / 1e9 : 0;
-      const tokAgg = new Map<string, number>();
-      const addTok = (rows: any[], sign: number) => {
-        for (const b of rows ?? [])
-          if (b.owner === LIVE_WALLET_ADDR)
-            tokAgg.set(b.mint, (tokAgg.get(b.mint) ?? 0) + sign * Number(b.uiTokenAmount?.uiAmount ?? 0));
-      };
-      addTok(tx.meta.postTokenBalances, 1);
-      addTok(tx.meta.preTokenBalances, -1);
-      let tokenMint: string | null = null;
-      let tokenDelta = 0;
-      for (const [m, d] of tokAgg) if (Math.abs(d) > Math.abs(tokenDelta)) { tokenMint = m; tokenDelta = d; }
-      const cls =
-        tokenMint && tokenDelta > 0 && solDelta < 0 ? "buy"
-        : tokenMint && tokenDelta < 0 && solDelta > 0 ? "sell"
-        : !tokenMint && solDelta > 0 && solDelta < 0.01 ? "rent"
-        : !tokenMint ? "transfer"
-        : "unknown";
-      await db.execute(sql`
-        INSERT INTO chain_txs (signature, slot, block_time, sol_delta, fee_sol, token_mint, token_delta, class, matched_fill_id)
-        VALUES (${sg.signature}, ${sg.slot}, ${sg.blockTime ? new Date(sg.blockTime * 1000).toISOString() : null},
-                ${solDelta}, ${feeSol}, ${tokenMint}, ${tokenDelta}, ${cls},
-                (SELECT f.id FROM fills f WHERE f.tx_signature = ${sg.signature} LIMIT 1))
-        ON CONFLICT (signature) DO NOTHING`);
+    for (const sg of [...(sigs ?? [])].reverse()) {
+      const r = await ingestChainTx(sg);
+      if (r === "retry") break;
       s.lastChainSig = sg.signature;
+      // first-ever pass also seeds the backfill cursor with the oldest sig seen
+      if (!s.backChainSig) s.backChainSig = sg.signature;
+    }
+    // ── BACKWARD: drain history one page per pass until exhausted ─────────
+    // The forward cursor (`until`) can never reach transactions OLDER than
+    // the first ingested signature — with the wallet idle it parks forever
+    // and the pre-P0 fill history (600+ signatures) stays unanchored. The
+    // `before` cursor walks that history at 25 sigs/min; ON CONFLICT DO
+    // NOTHING makes overlap idempotent, and a "retry" halts the page so the
+    // cursor never skips a transaction.
+    if (!s.chainBackfillDone) {
+      if (!s.backChainSig) {
+        const [oldest] = (await db.execute(
+          sql`SELECT signature FROM chain_txs ORDER BY block_time ASC NULLS LAST LIMIT 1`,
+        )) as unknown as { signature: string }[];
+        s.backChainSig = oldest?.signature ?? null;
+      }
+      if (s.backChainSig) {
+        const hist = (await rpcCall("getSignaturesForAddress", [
+          LIVE_WALLET_ADDR,
+          { limit: 25, before: s.backChainSig },
+        ])) as ChainSigRow[] | null;
+        if (!hist?.length) {
+          s.chainBackfillDone = true;
+          console.log("⛓️  chain-truth backfill COMPLETE — wallet history fully ingested");
+        } else {
+          let halted = false;
+          for (const sg of hist) { // newest-first: each step moves the cursor older
+            const r = await ingestChainTx(sg);
+            if (r === "retry") { halted = true; break; }
+            s.backChainSig = sg.signature;
+          }
+          if (!halted && hist.length < 25) {
+            s.chainBackfillDone = true;
+            console.log("⛓️  chain-truth backfill COMPLETE — wallet history fully ingested");
+          }
+        }
+      }
     }
   } catch (err) {
     console.error(`chain-truth ingest failed (retries next pass): ${err instanceof Error ? err.message : err}`);
