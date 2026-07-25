@@ -121,7 +121,30 @@ export function TradeManager({ view }: { view: TradeManagerView }) {
           sub="live equity vs 24h ago · target 10-30%"
           tone={view.compound24hPct != null && view.compound24hPct > 0 ? "var(--status-good)" : "var(--status-critical)"}
         />
+        <Kpi
+          label="Managed-trade return · 24h"
+          value={fmtPct(view.managedReturnPct, 1)}
+          sub={`${view.managedN} trades that banked a rung — the model stat`}
+          tone={view.managedReturnPct != null && view.managedReturnPct > 0 ? "var(--status-good)" : "var(--text-secondary)"}
+        />
       </div>
+      {view.pareto.length > 0 ? (
+        <div className="mb-4 flex flex-wrap gap-2">
+          {view.pareto.map((d) => (
+            <span
+              key={d.verdict}
+              className="rounded px-2 py-1 text-xs"
+              style={{
+                border: "1px solid var(--border-subtle)",
+                color: d.pnl < -1 ? "var(--status-critical)" : d.pnl > 1 ? "var(--status-good)" : "var(--text-secondary)",
+              }}
+              title="Phase 2 diagnosis agent — trailing 24h, both lanes"
+            >
+              {d.verdict} ×{d.n} · {d.pnl >= 0 ? "+" : "−"}${Math.abs(d.pnl).toFixed(0)}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <div style={{ overflowX: "auto" }}>
         <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
           <thead>

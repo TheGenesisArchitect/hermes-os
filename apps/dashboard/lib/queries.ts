@@ -4536,11 +4536,21 @@ export interface TradePipelineRow {
   twinPnl: number | null;
   dragPp: number | null;
 }
+export interface DiagnosisSlice {
+  verdict: string;
+  n: number;
+  pnl: number;
+}
 export interface TradeManagerView {
   connectPct: number | null;
   dragPp: number | null;
   capturePct: number | null;
   compound24hPct: number | null;
+  /** THE operator stat: avg return on positions that banked ≥1 rung (24h, paper). */
+  managedReturnPct: number | null;
+  managedN: number;
+  /** Phase 2 agent verdicts, trailing 24h, both lanes — the process-break Pareto. */
+  pareto: DiagnosisSlice[];
   rows: TradePipelineRow[];
 }
 
@@ -4642,8 +4652,34 @@ export async function getTradeManager(limit = 14): Promise<TradeManagerView> {
               ORDER BY snapped_at DESC LIMIT 1) AS ago`)) as unknown as { now: number | null; ago: number | null }[];
     const compound24hPct = eq?.now != null && eq?.ago != null && eq.ago > 0 ? (100 * (eq.now - eq.ago)) / eq.ago : null;
 
-    return { connectPct, dragPp, capturePct, compound24hPct, rows: out };
+    // THE UNDER-HIGHLIGHTED STAT (operator, 2026-07-25): the return on trades
+    // managed properly — banked ≥1 rung and rode the ladder.
+    const [mg] = (await db.execute(sql`
+      SELECT count(*)::int AS n,
+             (sum(p.realized_pnl_usd::float) / nullif(sum(p.size_usd::float), 0) * 100)::float AS ret
+      FROM positions p
+      WHERE p.lane = 'paper' AND p.status = 'closed' AND p.closed_at > now() - interval '24 hours'
+        AND EXISTS (SELECT 1 FROM fills f WHERE f.position_id = p.id AND f.side = 'sell' AND f.reason LIKE 'take_profit%')`)) as unknown as {
+      n: number; ret: number | null;
+    }[];
+
+    // Phase 2 agent Pareto — verdict counts + P&L, trailing 24h, both lanes.
+    const pareto = ((await db.execute(sql`
+      SELECT details->>'verdict' AS verdict, count(*)::int AS n,
+             round(sum((details->>'pnl')::float)::numeric, 2) AS pnl
+      FROM audit_log WHERE action = 'trade_diagnosis' AND created_at > now() - interval '24 hours'
+      GROUP BY 1 ORDER BY sum((details->>'pnl')::float) ASC`)) as unknown as {
+      verdict: string | null; n: number; pnl: number | null;
+    }[]).map((r) => ({ verdict: r.verdict ?? "?", n: r.n, pnl: Number(r.pnl ?? 0) }));
+
+    return {
+      connectPct, dragPp, capturePct, compound24hPct,
+      managedReturnPct: mg?.ret == null ? null : Number(mg.ret),
+      managedN: mg?.n ?? 0,
+      pareto,
+      rows: out,
+    };
   } catch {
-    return { connectPct: null, dragPp: null, capturePct: null, compound24hPct: null, rows: [] };
+    return { connectPct: null, dragPp: null, capturePct: null, compound24hPct: null, managedReturnPct: null, managedN: 0, pareto: [], rows: [] };
   }
 }

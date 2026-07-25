@@ -1526,8 +1526,18 @@ export function decideExit(
       const MILESTONES = [1.5, 2, 3, 5, 8, 13, 21, 34, 55];
       let msFloor = 0;
       for (const ms of MILESTONES) if (peakMult >= ms) msFloor = ms * cfg.MOON_RUNNER_RATCHET;
-      const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, entry * msFloor);
-      if (price <= stop) return { reason: msFloor > 0 ? "moon_ratchet" : "profit_trail", fraction: 1 };
+      // MOON FLOOR REMOVAL (ratified 2026-07-25): for MOON-class banked
+      // runners the 1.02 profit-lock floor was the capture killer — moons
+      // breathe 35% mid-flight and every breath tripped it at breakeven,
+      // forfeiting the bounce. Same-universe replay on 49 routed moons:
+      // booked $2.84 WITH the floor vs $89.96 riding the pure milestone
+      // leash. The rung already banked the insurance; below the first
+      // milestone the moon runner now has NO price floor — the ride ends at
+      // the ratchet, stale-take (dead tape), the depth rail, or the clock.
+      // Non-MOON classes keep the 1.02 floor; RISER keeps its trail.
+      const isMoonClass = typeof position.signature === "string" && position.signature.startsWith("MOON");
+      const stop = isMoonClass ? entry * msFloor : Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, entry * msFloor);
+      if (stop > 0 && price <= stop) return { reason: msFloor > 0 ? "moon_ratchet" : "profit_trail", fraction: 1 };
     } else {
       const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, gainLock, trailFloor);
       if (price <= stop) return { reason: "profit_trail", fraction: 1 };

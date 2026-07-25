@@ -53,6 +53,8 @@ interface SentinelState {
   lastOpenPosId: number;
   /** announced moonshots awaiting their outcome debrief (🌕/🌗/🌑) */
   moonshotPending: { mint: string; at: number }[];
+  /** last position id given a trade_diagnosis verdict (Phase 2 agent) */
+  lastDiagnosedPosId: number;
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -71,7 +73,62 @@ async function loadState(): Promise<SentinelState> {
     moonshotSeen: v.moonshotSeen ?? [],
     lastOpenPosId: v.lastOpenPosId ?? -1,
     moonshotPending: v.moonshotPending ?? [],
+    lastDiagnosedPosId: v.lastDiagnosedPosId ?? -1,
   };
+}
+
+// ── TRADE DIAGNOSIS AGENT (Phase 2, operator 2026-07-25: "an agent that can
+// close our engineering triggers and Moon Protocol") ─────────────────────────
+// Every closed position, both lanes, gets exactly one verdict row in the
+// audit log naming the dominant driver of its outcome. The verdicts feed the
+// Trade Manager Pareto: the loudest class is always the next crank. Rule-
+// based deliberately — auditable, deterministic, and the labeled dataset any
+// smarter layer trains on later. The agent diagnoses; the desk ratifies.
+async function checkTradeDiagnosis(s: SentinelState): Promise<void> {
+  const rows = (await db.execute(sql`
+    SELECT p.id, p.lane, p.mint, tk.symbol, p.size_usd::float AS size,
+           p.realized_pnl_usd::float AS pnl, p.exit_reason,
+           CASE WHEN p.entry_price_usd::float > 0 THEN p.peak_price_usd::float / p.entry_price_usd::float END AS peakx,
+           (SELECT count(*)::int FROM fills f WHERE f.position_id = p.id AND f.side = 'sell' AND f.reason LIKE 'take_profit%') AS rungs
+    FROM positions p LEFT JOIN tokens tk ON tk.mint = p.mint
+    WHERE p.status = 'closed' AND p.id > ${s.lastDiagnosedPosId}
+    ORDER BY p.id ASC LIMIT 50`)) as unknown as {
+    id: number; lane: string; mint: string; symbol: string | null; size: number;
+    pnl: number | null; exit_reason: string | null; peakx: number | null; rungs: number;
+  }[];
+  for (const p of rows) {
+    const pnl = p.pnl ?? 0;
+    const offer = p.peakx != null && p.peakx > 1 ? (p.peakx - 1) * p.size : 0;
+    const capture = offer > 0.01 ? pnl / offer : null;
+    // The verdict ladder — first match wins. no_rung_death is the loudest
+    // class by operator directive ("No Rung Hit, No Bank").
+    const verdict =
+      p.exit_reason === "depth_collapse_cut"
+        ? "depth_rail_save"
+        : p.rungs === 0 && pnl < -0.3 * p.size
+          ? "no_rung_death"
+          : ["dust_rug", "delisted", "live_unsellable"].includes(p.exit_reason ?? "")
+            ? "liquidity_withdrawal_after_bank"
+            : p.rungs >= 1 && pnl < 0
+              ? "giveback_after_bank"
+              : p.rungs >= 1 && capture != null && capture >= 0.4
+                ? "clean_capture"
+                : pnl >= 0
+                  ? "partial_capture"
+                  : "scratch";
+    await db.insert(auditLog).values({
+      actor: "sentinel",
+      action: "trade_diagnosis",
+      details: {
+        positionId: p.id, lane: p.lane, mint: p.mint, symbol: p.symbol,
+        verdict, pnl: Number(pnl.toFixed(2)), sizeUsd: Number(p.size.toFixed(2)),
+        rungs: p.rungs, exitReason: p.exit_reason,
+        capturePct: capture != null ? Math.round(capture * 100) : null,
+        peakX: p.peakx != null ? Number(p.peakx.toFixed(2)) : null,
+      },
+    });
+    s.lastDiagnosedPosId = p.id;
+  }
 }
 
 // ── MOONSHOT OUTCOME DEBRIEF — closing the loop the 🌙 call opens (operator,
@@ -851,6 +908,7 @@ while (true) {
     await checkMoonshots(state);
     await checkLiveOpens(state);
     await checkMoonshotOutcomes(state);
+    await checkTradeDiagnosis(state);
     await checkFills(state);
     await checkHeartbeat(state);
     await checkDigests(state);
