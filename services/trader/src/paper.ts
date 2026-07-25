@@ -734,13 +734,21 @@ async function openFromSignal(
   // probes stay probes; live inherits through the mirror fraction.
   if (cfg.MANDATE_SIZING_ENABLED && sig) {
     // Ceiling scales with the session too (same seam as the band).
-    const slotCap = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC * sessionMult).toFixed(2));
+    // DEMOTED = HALF CEILING (ladder audit, 2026-07-25 late): every demotion
+    // tier is a RELATIVE multiplier (0.5×, 0.3×) off the conviction base, so
+    // on a grown bankroll a "half-clip" reached $5.54 (Tiana, second-launch
+    // 0.5× of an $11 base) — above the ratified half-clip meaning of slot/2.
+    // A demoted entry now caps at HALF the universal ceiling, any path.
+    const fullCap = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC * sessionMult).toFixed(2));
+    const slotCap = tierDemoted ? Number((fullCap * 0.5).toFixed(2)) : fullCap;
     if (sizedUsd > slotCap) {
       await audit("entry_slot_cap", {
         mint: signal.mint,
         from: sizedUsd,
         to: slotCap,
-        reason: "universal slot ceiling — uniform slots, winners pay through volume (per-slot mandate, all tiers)",
+        reason: tierDemoted
+          ? "demoted tier — half the universal ceiling (half-clip means slot/2, any path)"
+          : "universal slot ceiling — uniform slots, winners pay through volume (per-slot mandate, all tiers)",
       });
       sizedUsd = slotCap;
     }
