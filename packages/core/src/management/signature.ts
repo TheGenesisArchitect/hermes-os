@@ -455,8 +455,14 @@ export function withLearned(s: Signature, learned: LearnedProfile | null | undef
     // The loop's grid fits two rungs; its r1/r2 map onto the middle and upper
     // rungs, and the compiled p50 sweep rung is preserved underneath so a
     // promotion can never remove the early bank.
-    tp1: [learned.r1, learned.f1],
-    tp2: [learned.r2, learned.f2],
+    // BANK FLOOR (operator 2026-07-25, "most important fix before the live
+    // wallet returns"): a promotion may move rung PRICES but may never bank
+    // LESS than the compiled genome. Ferret (RISER, 5.26× peak) sold only
+    // 45% cumulative under a learned 10%/15% ladder vs the genome's 70% —
+    // 55% of tokens rode into the dust rug for a $0.34 result on a $13
+    // offer. Learned fractions are floored at the genome's own.
+    tp1: [learned.r1, Math.max(learned.f1, base.tp1[1])],
+    tp2: [learned.r2, Math.max(learned.f2, base.tp2[1])],
     trail: learned.trail,
     floor: learned.floor,
     // The loop's grid has no "never" option — a horizon is always named — so a
