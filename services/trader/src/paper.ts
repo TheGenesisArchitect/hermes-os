@@ -602,8 +602,13 @@ async function openFromSignal(
     // crowd + measured envelope + seat is the full-slot qualification.
     void mStrict;
     if ((mCrowd && mEnvelope && mSeat) || mMoonShot) {
-      const lo = Number((bankrollNow * cfg.MANDATE_SIZE_MIN_FRAC).toFixed(2));
-      const hi = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC).toFixed(2));
+      // SESSION SEAM FIX (2026-07-25): the mandate band scales WITH the
+      // session — the clamp was lifting off-hours entries back to full slots,
+      // erasing the ratified ×0.5 survive-the-farm-window discount (FSR,
+      // Trump, worm all died as full $6.70 slots at 06-07Z). The band is the
+      // slot spec × the session's risk posture, never more.
+      const lo = Number((bankrollNow * cfg.MANDATE_SIZE_MIN_FRAC * sessionMult).toFixed(2));
+      const hi = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC * sessionMult).toFixed(2));
       const clamped = Math.min(hi, Math.max(lo, sizedUsd));
       if (clamped !== sizedUsd) {
         await audit("entry_mandate_size", {
@@ -677,7 +682,8 @@ async function openFromSignal(
   // on the book exceeds the slot cap, any tier, any path. Floors untouched —
   // probes stay probes; live inherits through the mirror fraction.
   if (cfg.MANDATE_SIZING_ENABLED && sig) {
-    const slotCap = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC).toFixed(2));
+    // Ceiling scales with the session too (same seam as the band).
+    const slotCap = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC * sessionMult).toFixed(2));
     if (sizedUsd > slotCap) {
       await audit("entry_slot_cap", {
         mint: signal.mint,
