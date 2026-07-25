@@ -1483,9 +1483,16 @@ export function decideExit(
     // Harness (992 positions, liquidity-aware): +$39.72/10d vs the pure
     // ratchet with rug give-back IDENTICAL — banks the flight on the way up
     // without amputating the tail. RISER keeps its own trail programme.
-    if (position.signature !== "RISER" && mark >= 2.5) {
+    // SPEED FIX (2026-07-25, operator: "did we increase our speed to capture
+    // Micro TPs?"): milestones are now crossed by the PEAK — the mechanism the
+    // harness actually priced — so a spike through 2.5× between polls still
+    // banks on the next tick. The fill guard is the ratchet's own tolerance:
+    // a crossed milestone only banks while price holds ≥0.7× of it (below
+    // that, the milestone ratchet exit owns the position anyway). Coverage
+    // was 3 of 9 eligible under the old current-mark gate.
+    if (position.signature !== "RISER" && peakMult >= 2.5) {
       const MICRO_MS = [2.5, 3, 5, 8, 13, 21, 34, 55];
-      const crossed = MICRO_MS.filter((m) => mark >= m).length;
+      const crossed = MICRO_MS.filter((m) => peakMult >= m && mark >= m * cfg.MOON_RUNNER_RATCHET).length;
       const microTarget = Math.min(0.95, tp2Cum + 0.05 * crossed);
       if (microTarget > targetSold) {
         targetSold = microTarget;
