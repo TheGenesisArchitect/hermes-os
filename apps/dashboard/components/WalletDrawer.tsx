@@ -182,7 +182,7 @@ export function WalletDrawer({ wallet, dnaByMint }: { wallet: WalletStatus; dnaB
                           {t.pnlUsd >= 0 ? "+" : ""}{usd(t.pnlUsd, 2)}
                         </span>
                       )}
-                      <span className="tabular text-[9px]" style={{ color: "var(--text-muted)" }}>{fmtAgo(t.openedAt)}</span>
+                      <span suppressHydrationWarning className="tabular text-[9px]" style={{ color: "var(--text-muted)" }}>{fmtAgo(t.openedAt)}</span>
                     </div>
                   </div>
                 ))}

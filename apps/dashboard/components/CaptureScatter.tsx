@@ -106,7 +106,7 @@ export function CaptureScatter({ points }: { points: CapturePoint[] }) {
             {s}h
           </button>
         ))}
-        <span className="ml-2 tabular">{windowLabel}</span>
+        <span suppressHydrationWarning className="ml-2 tabular">{windowLabel}</span>
         <span className="tabular" style={{ marginLeft: "auto" }}>
           {visible.length} trades
         </span>

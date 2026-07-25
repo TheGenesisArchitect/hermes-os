@@ -300,7 +300,10 @@ function Card({ p }: { p: ManagedPositionView }) {
               title={`opened ${fmtTsFull(p.openedAt)}`}
             >
               {p.dex} · {p.mint.slice(0, 4)}…{p.mint.slice(-4)} · opened{" "}
-              <span className="tabular">{fmtTs(p.openedAt)}</span> ({ageLabel(p.openedAt)})
+              <span className="tabular">{fmtTs(p.openedAt)}</span>{" "}
+              {/* age is Date.now()-derived: server HTML and hydration differ by
+                  the render gap, so React must not diff this text (#418) */}
+              <span suppressHydrationWarning>({ageLabel(p.openedAt)})</span>
             </span>
           </div>
           <div className="mt-1 flex items-baseline gap-2">
