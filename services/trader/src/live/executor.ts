@@ -1033,6 +1033,21 @@ export async function maybeLiveBuy(
           reason: "net-positive crowd, no strict winner — RECOVERED tier engagement (58% win / 28% rug leak-free cohort, half clip via mirror fraction)",
         });
       }
+      // Sub-floor MOON SHOT (operator 2026-07-25): the shot still fires, but a
+      // MEASURED inflow below the floor pays ticket money, not slot money —
+      // paper's mild band ran −$44/24h at slot scale vs +$16 at probe scale,
+      // and this door was lifting sub-floor 2★ moons to full slots unchecked.
+      if (moonShot && sig.liqGrowth != null && sig.liqGrowth < cfg.INFLOW_FLOOR) {
+        subFloorTicket = true;
+        await audit("live_subfloor_ticket", {
+          mint,
+          door: "MOONSHOT",
+          walletWinnerHits: sig.walletWinnerHits ?? null,
+          walletRugHits: sig.walletRugHits ?? null,
+          inflow: sig.liqGrowth,
+          reason: `2★ moon with inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — shot fires at ticket size (mild slot-scale bleed)`,
+        });
+      }
       if (!moonShot && sig.liqGrowth != null && (sig.liqGrowth > cfg.INFLOW_CEILING || sig.liqGrowth < cfg.INFLOW_FLOOR)) {
         // SUB-FLOOR TICKET, door 1 (ratified 2026-07-25): below the floor
         // with a deep clean crowd aboard, live takes a ticket instead of

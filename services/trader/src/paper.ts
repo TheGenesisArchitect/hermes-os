@@ -488,7 +488,14 @@ async function openFromSignal(
     // MOON SHOT (ratified 2026-07-24): 2★ MOON-class fingerprint overrides the
     // crowd/envelope demotion — the shot is taken at slot size. Seat discipline
     // (upperSlice) still demotes; the alert cohort triggers inside the seat.
-    const moonShot = isMoonShot && !upperSlice;
+    // SUB-FLOOR CARVE-OUT (operator 2026-07-25, "stop throwing money at the
+    // mild loser"): the override no longer covers a MEASURED inflow below the
+    // floor — mild-band moons at slot size ran net negative (MOON_STEADY
+    // −$8.44, MOON_SLOW −$7.47 / 72h) while the band's probe-scale cohort
+    // stayed green. A sub-floor moon falls through to the deep-crowd nursery
+    // or the sensor probe; the tail stays measured at tuition prices.
+    const subFloorLg = lgNum != null && lgNum < cfg.INFLOW_FLOOR;
+    const moonShot = isMoonShot && !upperSlice && !subFloorLg;
     if (moonShot && (!crowdPass || spike)) {
       await audit("entry_moonshot_tier", {
         mint: signal.mint,
@@ -594,10 +601,13 @@ async function openFromSignal(
     const mTm = sig.triggerMultiple != null ? Number(sig.triggerMultiple) : null;
     const mSeat = mTm != null && Number.isFinite(mTm) && mTm <= cfg.CONVICTION_SEAT_MAX;
     // MOON SHOT rides the same uniform slot band — sizing consistency is what
-    // makes the winners pay for the basket (operator, 2026-07-24).
+    // makes the winners pay for the basket (operator, 2026-07-24). A MEASURED
+    // sub-floor inflow no longer qualifies for the lift (2026-07-25): the
+    // clamp was raising mild-band moons to full slots through this door.
     const mMoonShot =
       cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
-      typeof sig.signature === "string" && sig.signature.startsWith("MOON") && mSeat;
+      typeof sig.signature === "string" && sig.signature.startsWith("MOON") && mSeat &&
+      !(mLg != null && mLg < cfg.INFLOW_FLOOR);
     // ENVELOPE PROMOTION (ratified 2026-07-25): strict no longer required —
     // crowd + measured envelope + seat is the full-slot qualification.
     void mStrict;
@@ -622,6 +632,36 @@ async function openFromSignal(
         });
         sizedUsd = clamped;
       }
+    }
+  }
+  // ── SUB-FLOOR ABSOLUTE PROBE CAP (operator, 2026-07-25: "stop throwing
+  // money at the Mild Loser all together — play the statistics") ────────────
+  // The demotion tiers are RELATIVE multipliers off the conviction base, so
+  // as the bankroll compounded a "probe" quietly became $5-6.70 of slot
+  // money. Measured 24h, mild band (1.05-1.20×): probe scale +$16.42/155
+  // trades, slot scale −$44.39/43 — same band, same tape, size was the whole
+  // difference. Below the measured floor the book pays probe money only.
+  // The ratified deep-crowd nursery (wh≥5/0R) keeps its half-clip, and an
+  // unmeasured inflow stays neutral (absence is not evidence). Existing
+  // probe/ticket sizes (≤$2) pass untouched.
+  if (sig && sizedUsd > 2) {
+    const pLgRaw = sig.liqGrowth != null ? Number(sig.liqGrowth) : null;
+    const pLg = pLgRaw != null && Number.isFinite(pLgRaw) ? pLgRaw : null;
+    const deepCrowdNursery =
+      cfg.DEEPCROWD_FLOOR_ENABLED &&
+      (sig.walletWinnerHits ?? 0) >= cfg.DEEPCROWD_MIN_WH &&
+      (sig.walletRugHits ?? 0) === 0;
+    if (pLg != null && pLg < cfg.INFLOW_FLOOR && !deepCrowdNursery) {
+      const prior = sizedUsd;
+      sizedUsd = 1.5;
+      tierDemoted = true;
+      await audit("entry_subfloor_probe_cap", {
+        mint: signal.mint,
+        inflow: pLg,
+        from: prior,
+        to: sizedUsd,
+        reason: `inflow ${pLg.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — absolute probe cap (mild at slot scale −$44/24h vs +$16 at probe scale)`,
+      });
     }
   }
   // ── CLONE-WAVE MIRROR (ratified 2026-07-25, improvement ledger) ───────────
