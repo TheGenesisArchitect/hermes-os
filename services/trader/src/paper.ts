@@ -601,6 +601,26 @@ async function openFromSignal(
       }
     }
   }
+  // ── EXIT-VIABILITY DEPTH SCALING (2026-07-25, collapse anatomy) ───────────
+  // Every meteora-dbc drain death in 24h (−$47: all/in, Pumuckel, corncat…)
+  // entered a ~$2k pool at slot size — a clip the pool could never pay back.
+  // Live's depth floor refuses these; paper had no check, violating the
+  // paper-mirrors-live-gates doctrine ("not hallucinating what's available").
+  // The clip now scales to what the pool can exit: sized ≤ pool/25, floored
+  // at probe scale so the sensor keeps measuring thin venues.
+  if (sig && market.liquidityUsd != null && Number.isFinite(market.liquidityUsd) && sizedUsd > 1.5) {
+    const depthCap = Math.max(1.5, Number((market.liquidityUsd / 25).toFixed(2)));
+    if (sizedUsd > depthCap) {
+      await audit("entry_depth_scaled", {
+        mint: signal.mint,
+        from: sizedUsd,
+        to: depthCap,
+        poolUsd: Math.round(market.liquidityUsd),
+        reason: `pool $${Math.round(market.liquidityUsd)} cannot exit a $${sizedUsd.toFixed(2)} clip — sized to pool/25 (collapse-anatomy: dbc $2k-pool cell −$47/24h)`,
+      });
+      sizedUsd = depthCap;
+    }
+  }
   // ── UNIVERSAL SLOT CEILING (operator, 2026-07-24: "why does capital keep
   // getting misapplied") ────────────────────────────────────────────────────
   // The per-slot mandate clamped the tiers named in its ratification and left
