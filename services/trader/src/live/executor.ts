@@ -755,6 +755,10 @@ export async function maybeLiveBuy(
     // to finish before the other two have even started.
     const solP = solPriceUsd(cfg).catch(() => null);
     const balP = liveBalance(cfg).catch(() => null);
+    // SUB-FLOOR TICKET (ratified 2026-07-25): when a sub-floor candidate
+    // carries a deep clean crowd, live enters at ticket size instead of
+    // refusing — set by either door below, applied at sizing.
+    let subFloorTicket = false;
     // REFUSED CLASSES. Paper will not open RUG_RISK at all — 36.1% rug, and it
     // reaches 5× exactly 0% of the time — but the live path never consulted the
     // profile, so live was trading the single class paper refuses. A 1:1 lane
@@ -770,6 +774,9 @@ export async function maybeLiveBuy(
         sig.walletWinnerHits >= 1 && sig.walletWinnerHits - sig.walletRugHits >= 1;
       const rrLg = sig.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null;
       const rrInEnvelope = rrLg != null && rrLg >= cfg.INFLOW_FLOOR && rrLg <= cfg.INFLOW_CEILING;
+      const rrSubfloorCrowd =
+        cfg.SUBFLOOR_TICKET_ENABLED && rrCrowd && rrLg != null && rrLg < cfg.INFLOW_FLOOR &&
+        (sig.walletWinnerHits ?? 0) >= cfg.SUBFLOOR_TICKET_MIN_WH && (sig.walletRugHits ?? 0) === 0;
       if (cfg.RUGRISK_FORMULA_ROUTE && sig.signature === "RUG_RISK" && rrCrowd && rrInEnvelope) {
         await audit("live_rugrisk_formula", {
           mint,
@@ -777,6 +784,18 @@ export async function maybeLiveBuy(
           walletRugHits: sig.walletRugHits,
           inflow: rrLg,
           reason: "crowd-PASS + in-envelope RUG_RISK — formula overrides the stale veto, half clip via mirror fraction",
+        });
+      } else if (cfg.RUGRISK_FORMULA_ROUTE && sig.signature === "RUG_RISK" && rrSubfloorCrowd) {
+        // SUB-FLOOR TICKET, door 2 (ratified 2026-07-25): the session's home
+        // band — paper's half-clips ran the richest lane of the night here.
+        subFloorTicket = true;
+        await audit("live_subfloor_ticket", {
+          mint,
+          door: "RUG_RISK",
+          walletWinnerHits: sig.walletWinnerHits,
+          walletRugHits: sig.walletRugHits,
+          inflow: rrLg,
+          reason: `sub-floor RUG_RISK with ${sig.walletWinnerHits}W/0R crowd — ticket-size confirmation entry`,
         });
       } else {
         await audit("live_buy_skipped", { mint, reason: `${sig.signature} — class is not traded${cfg.RUGRISK_FORMULA_ROUTE && sig.signature === "RUG_RISK" ? " (RUG_RISK not formula-qualified: needs crowd-PASS + in-envelope)" : ""}` });
@@ -1015,14 +1034,33 @@ export async function maybeLiveBuy(
         });
       }
       if (!moonShot && sig.liqGrowth != null && (sig.liqGrowth > cfg.INFLOW_CEILING || sig.liqGrowth < cfg.INFLOW_FLOOR)) {
-        await audit("live_buy_skipped", {
-          mint,
-          reason:
-            sig.liqGrowth > cfg.INFLOW_CEILING
-              ? `inflow ${sig.liqGrowth.toFixed(2)}× above the ${cfg.INFLOW_CEILING}× envelope — manufactured-spike territory (F3)`
-              : `inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — sub-envelope crowd-pass ran −$0.81/t at size (F3 floor, ratified; paper probes it)`,
-        });
-        return;
+        // SUB-FLOOR TICKET, door 1 (ratified 2026-07-25): below the floor
+        // with a deep clean crowd aboard, live takes a ticket instead of
+        // refusing — 22 of 31 refusals in the copy-gap window were this cell.
+        // Above the ceiling (manufactured spike) still refuses outright.
+        const subfloorCrowd =
+          cfg.SUBFLOOR_TICKET_ENABLED && sig.liqGrowth < cfg.INFLOW_FLOOR &&
+          (sig.walletWinnerHits ?? 0) >= cfg.SUBFLOOR_TICKET_MIN_WH && (sig.walletRugHits ?? 0) === 0;
+        if (subfloorCrowd) {
+          subFloorTicket = true;
+          await audit("live_subfloor_ticket", {
+            mint,
+            door: "F3",
+            walletWinnerHits: sig.walletWinnerHits,
+            walletRugHits: sig.walletRugHits,
+            inflow: sig.liqGrowth,
+            reason: `sub-floor inflow ${sig.liqGrowth.toFixed(2)}× with ${sig.walletWinnerHits}W/0R crowd — ticket-size confirmation entry`,
+          });
+        } else {
+          await audit("live_buy_skipped", {
+            mint,
+            reason:
+              sig.liqGrowth > cfg.INFLOW_CEILING
+                ? `inflow ${sig.liqGrowth.toFixed(2)}× above the ${cfg.INFLOW_CEILING}× envelope — manufactured-spike territory (F3)`
+                : `inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — sub-envelope crowd-pass ran −$0.81/t at size (F3 floor, ratified; paper probes it)`,
+          });
+          return;
+        }
       }
       // ARM SPEC (ratified 2026-07-24): live fires the CONVICTION seat only
       // (1.2–1.65 — 83% win / $2.51/t). The 1.65–2.05 sensor slice measured
@@ -1201,7 +1239,7 @@ export async function maybeLiveBuy(
           (cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
             typeof sig.signature === "string" && sig.signature.startsWith("MOON") &&
             !(sig.triggerMultiple != null && Number(sig.triggerMultiple) > cfg.CONVICTION_SEAT_MAX)));
-      if (mPrecision) {
+      if (mPrecision || subFloorTicket) {
         await audit("live_mandate_ticket", {
           mint,
           sizedUsd: usd,
@@ -1217,6 +1255,10 @@ export async function maybeLiveBuy(
         return;
       }
     }
+    // SUB-FLOOR cell entries are capped AT the ticket — confirmation-size real
+    // capital until the live cohort proves the half-clip promotion (≥55% over
+    // its first ~30 fills).
+    if (subFloorTicket) usd = Math.min(usd, cfg.LIVE_MIN_POSITION_USD);
     const lamports = BigInt(Math.floor((usd / sol) * 1e9));
 
     // ── MIRROR-FRESHNESS GATE (DRILLCAT, 2026-07-23) ─────────────────────────

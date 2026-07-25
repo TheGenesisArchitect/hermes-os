@@ -652,6 +652,17 @@ const envSchema = z.object({
   // 1st +3.4¢, 3rd-4th +19.5¢, 5th+ +2.8¢) — his re-harvest of the players
   // who "learned" from the opening. Half-clip demotion; moon shots outrank.
   F6_SECOND_LAUNCH_DEMOTION: z.coerce.boolean().default(true),
+  // SUB-FLOOR TICKET PROMOTION (ratified 2026-07-25, copy-gap analysis: 22 of
+  // 31 live refusals in the 3h window were ONE cell — sub-floor inflow with
+  // winner crowds, the session's home band — while paper's half-clips ran the
+  // richest lane of the night). Live now enters that cell at TICKET size
+  // (LIVE_MIN_POSITION_USD) through both doors — the F3 floor and the
+  // RUG_RISK envelope — when the crowd is aboard (wh≥MIN_WH, zero rug-rep).
+  // Tickets are the confirmation instrument; half-clip promotion waits for
+  // the live cohort itself to hold ≥55% over its first ~30 fills. The depth
+  // floor and ceiling still govern; the mid-crowd rug den stays refused.
+  SUBFLOOR_TICKET_ENABLED: z.coerce.boolean().default(true),
+  SUBFLOOR_TICKET_MIN_WH: z.coerce.number().default(2),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction
