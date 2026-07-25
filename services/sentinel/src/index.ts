@@ -102,7 +102,9 @@ async function checkTradeDiagnosis(s: SentinelState): Promise<void> {
   for (const p of rows) {
     const pnl = p.pnl ?? 0;
     const offer = p.peakx != null && p.peakx > 1 ? (p.peakx - 1) * p.size : 0;
-    const capture = offer > 0.01 ? pnl / offer : null;
+    // Capture undefined below a $0.50 offer — near-zero denominators
+    // manufacture ±hundreds-of-percent absurdities (operator-flagged).
+    const capture = offer >= 0.5 ? pnl / offer : null;
     // The verdict ladder — first match wins. no_rung_death is the loudest
     // class by operator directive ("No Rung Hit, No Bank").
     const verdict =

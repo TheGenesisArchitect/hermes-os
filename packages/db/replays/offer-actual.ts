@@ -31,7 +31,11 @@ const MIN = Number(process.argv[2] ?? 15);
       FROM positions
       WHERE lane = '${lane}' AND status = 'closed' AND closed_at > now() - make_interval(mins => ${MIN})
         AND entry_price_usd > 0`)) as unknown as { n: number; offered: number; actual: number; wins: number }[];
-    const cap = w!.offered > 0 ? (100 * w!.actual) / w!.offered : null;
+    // Capture is only meaningful against a REAL offer — dividing a loss by a
+    // near-zero offer manufactures absurdities (−305% on a $0.15 "offer",
+    // operator-flagged 2026-07-25). Below $1 of window offer the stat is
+    // undefined; the actual-P&L column already tells the entry-outcome story.
+    const cap = w!.offered >= 1 ? (100 * w!.actual) / w!.offered : null;
     const [open] = (await q.unsafe(`
       SELECT count(*)::int n, coalesce(sum(size_usd::float), 0)::float deployed
       FROM positions WHERE lane = '${lane}' AND status = 'open'`)) as unknown as { n: number; deployed: number }[];

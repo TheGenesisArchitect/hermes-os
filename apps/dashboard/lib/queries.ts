@@ -4627,8 +4627,10 @@ export async function getTradeManager(limit = 14): Promise<TradeManagerView> {
         rungs: Number(r.rungs),
         exitReason: r.exit_reason,
         offerUsd: r.offer == null ? null : Number(r.offer),
+        // Capture undefined below a $0.50 offer — a near-zero denominator
+        // manufactures ±hundreds-of-percent absurdities (operator-flagged).
         capturePct:
-          r.pnl != null && r.offer != null && r.offer > 0.01 ? (Number(r.pnl) / Number(r.offer)) * 100 : null,
+          r.pnl != null && r.offer != null && r.offer >= 0.5 ? (Number(r.pnl) / Number(r.offer)) * 100 : null,
         twinPnl: r.twin_pnl == null ? null : Number(r.twin_pnl),
         dragPp: livePct != null && twinPct != null ? livePct - twinPct : null,
       });
