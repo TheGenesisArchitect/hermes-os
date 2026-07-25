@@ -615,6 +615,9 @@ const envSchema = z.object({
   // 0.02/8 = 0.25%/slot, identical to the prior per-slot spec; the adaptive
   // policy (autoMode=live) moves MANDATE_AGG_FRAC with hostility.
   MANDATE_AGG_FRAC: z.coerce.number().default(0.02),
+  // Probe scale (operator 2026-07-25: ".35 on probes" — sensor tuition cut
+  // 77% while proven bands carry the capital).
+  PAPER_PROBE_USD: z.coerce.number().default(0.35),
   MANDATE_SLOTS: z.coerce.number().default(8),
   MANDATE_SIZE_MIN_FRAC: z.coerce.number().default(0.002),
   MANDATE_SIZE_MAX_FRAC: z.coerce.number().default(0.0025),
