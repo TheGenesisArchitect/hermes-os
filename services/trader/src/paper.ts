@@ -1436,6 +1436,22 @@ export function decideExit(
       targetSold = tp0Cum;
       tpReason = "take_profit_0";
     }
+    // MICRO-TP MILESTONES (ratified 2026-07-25, operator: "Micro TP all the
+    // way up... from 2.5 and up"): above the ladder the position banks 5% of
+    // the original at each milestone crossed {2.5, 3, 5, 8, 13, 21, 34, 55},
+    // capped at 95% cumulative so a final tranche always rides the ratchet.
+    // Harness (992 positions, liquidity-aware): +$39.72/10d vs the pure
+    // ratchet with rug give-back IDENTICAL — banks the flight on the way up
+    // without amputating the tail. RISER keeps its own trail programme.
+    if (position.signature !== "RISER" && mark >= 2.5) {
+      const MICRO_MS = [2.5, 3, 5, 8, 13, 21, 34, 55];
+      const crossed = MICRO_MS.filter((m) => mark >= m).length;
+      const microTarget = Math.min(0.95, tp2Cum + 0.05 * crossed);
+      if (microTarget > targetSold) {
+        targetSold = microTarget;
+        tpReason = "take_profit_micro";
+      }
+    }
     // Only sell the INCREMENT needed to reach the target cumulative sold — a level
     // already banked never re-fires. Expressed as a fraction of what REMAINS.
     if (targetSold > soldFrac + 1e-6) {
