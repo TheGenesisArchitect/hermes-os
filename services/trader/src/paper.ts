@@ -432,6 +432,9 @@ async function openFromSignal(
   // Capital = base + realized (the compounding bankroll), so the same frac that
   // sized a $1,000 day-one book scales with every banked dollar since.
   const bankrollNow = await paperBankrollNow(cfg);
+  // PROBE = .35 OF THE SLOT (operator correction 2026-07-25: "Probes are .35
+  // of 15, not 35 cents") — the sensor scales with the basket.
+  const probeUsd = Number((bankrollNow * (cfg.MANDATE_AGG_FRAC / Math.max(1, cfg.MANDATE_SLOTS)) * cfg.PROBE_SLOT_FRAC).toFixed(2));
   const sizeUsd = Number(
     (conv
       ? bankrollNow * frac * routedRiskMult * sessionMult * sigMult
@@ -458,7 +461,7 @@ async function openFromSignal(
     cfg.MOONSHOT_TIER_ENABLED && sig?.stars === 2 &&
     typeof sig?.signature === "string" && sig.signature.startsWith("MOON") &&
     !(shotTm != null && Number.isFinite(shotTm) && shotTm > cfg.CONVICTION_SEAT_MAX);
-  if (sig?.signature === "MOON_STEADY" && !isMoonShot && sizedUsd > cfg.PAPER_PROBE_USD) {
+  if (sig?.signature === "MOON_STEADY" && !isMoonShot && sizedUsd > probeUsd) {
     const [hc] = await db
       .select({ ev: safetyChecks.evidence })
       .from(safetyChecks)
@@ -466,7 +469,7 @@ async function openFromSignal(
       .limit(1);
     const lg = Number((hc?.ev as { largestHolderPct?: number } | null)?.largestHolderPct);
     if (Number.isFinite(lg) && lg >= 30) {
-      sizedUsd = cfg.PAPER_PROBE_USD;
+      sizedUsd = probeUsd;
       tierDemoted = true;
     }
   }
@@ -512,10 +515,10 @@ async function openFromSignal(
       // on the full book (−2.3¢/$ vs 3rd-4th's +19.5¢/$): the opening launch
       // proves demand, the second harvests the players who "learned" from it.
       // Half-clip; every other launch order rides its normal tier.
-      cfg.F6_SECOND_LAUNCH_DEMOTION && sig?.launchOrder === 2 && crowdPass && sizedUsd > cfg.PAPER_PROBE_USD
+      cfg.F6_SECOND_LAUNCH_DEMOTION && sig?.launchOrder === 2 && crowdPass && sizedUsd > probeUsd
     ) {
       tierDemoted = true;
-      sizedUsd = Math.max(cfg.PAPER_PROBE_USD, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2)));
+      sizedUsd = Math.max(probeUsd, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2)));
       await audit("entry_second_launch", {
         mint: signal.mint,
         launchOrder: 2,
@@ -533,11 +536,11 @@ async function openFromSignal(
       lgNum != null && lgNum < cfg.INFLOW_FLOOR &&
       (sig?.walletWinnerHits ?? 0) >= cfg.DEEPCROWD_MIN_WH &&
       (sig?.walletRugHits ?? 0) === 0 &&
-      sizedUsd > cfg.PAPER_PROBE_USD
+      sizedUsd > probeUsd
     ) {
       tierDemoted = true;
       const halfCap = Number(((bankrollNow * cfg.MANDATE_AGG_FRAC / Math.max(1, cfg.MANDATE_SLOTS)) * 0.5).toFixed(2));
-      sizedUsd = Math.max(cfg.PAPER_PROBE_USD, Math.min(halfCap, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2))));
+      sizedUsd = Math.max(probeUsd, Math.min(halfCap, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2))));
       await audit("entry_deepcrowd_floor", {
         mint: signal.mint,
         walletWinnerHits: sig?.walletWinnerHits ?? null,
@@ -546,9 +549,9 @@ async function openFromSignal(
         reason: `deep crowd ${sig?.walletWinnerHits}W/0R below the floor — half-clip moon-nursery ride (67%/17%, 1-in-3 ≥3×)`,
         sizedUsd,
       });
-    } else if ((!crowdPass || spike || upperSlice) && sizedUsd > cfg.PAPER_PROBE_USD) {
+    } else if ((!crowdPass || spike || upperSlice) && sizedUsd > probeUsd) {
       tierDemoted = true;
-      sizedUsd = Math.max(cfg.PAPER_PROBE_USD, Number((sizedUsd * cfg.SENSOR_TIER_SIZE_MULT).toFixed(2)));
+      sizedUsd = Math.max(probeUsd, Number((sizedUsd * cfg.SENSOR_TIER_SIZE_MULT).toFixed(2)));
       await audit("entry_sensor_tier", {
         mint: signal.mint,
         walletWinnerHits: sig?.walletWinnerHits ?? null,
@@ -558,7 +561,7 @@ async function openFromSignal(
         sizedUsd,
       });
     } else if (
-      crowdPass && sig?.walletStrictHits === 0 && sizedUsd > cfg.PAPER_PROBE_USD &&
+      crowdPass && sig?.walletStrictHits === 0 && sizedUsd > probeUsd &&
       // ENVELOPE PROMOTION (ratified 2026-07-25, good-band harness): crowd-pass
       // + MEASURED in-envelope inflow earns the full slot regardless of
       // strict-vs-recovered — the 1.20-1.30 cell is the system's best per-$
@@ -572,7 +575,7 @@ async function openFromSignal(
       // winners / 28% rugs (vs strict 73%/4%), so it trades at a reduced clip
       // rather than full conviction. Null strictHits = pre-tier row, full size.
       tierDemoted = true;
-      sizedUsd = Math.max(cfg.PAPER_PROBE_USD, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2)));
+      sizedUsd = Math.max(probeUsd, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2)));
       await audit("entry_recovered_tier", {
         mint: signal.mint,
         walletWinnerHits: sig?.walletWinnerHits ?? null,
@@ -662,7 +665,7 @@ async function openFromSignal(
       // a crowd-based exemption alone let it through above the ratified cap.
       const cap = deepCrowdNursery
         ? Number(((bankrollNow * cfg.MANDATE_AGG_FRAC / Math.max(1, cfg.MANDATE_SLOTS)) * 0.5).toFixed(2))
-        : cfg.PAPER_PROBE_USD;
+        : probeUsd;
       if (sizedUsd > cap) {
         const prior = sizedUsd;
         sizedUsd = cap;
@@ -687,7 +690,7 @@ async function openFromSignal(
   // probe scale — NOT a refusal: the probe keeps the wave measured so the
   // L3-4 golden re-entry stays visible once the drain has printed. Unlike
   // live's version, a still-open sibling does not demote (paper explores).
-  if (sig && sizedUsd > cfg.PAPER_PROBE_USD && token.symbol) {
+  if (sig && sizedUsd > probeUsd && token.symbol) {
     const [waveRug] = (await db.execute(sql`
       SELECT 1 FROM positions p2 JOIN tokens t2 ON t2.mint = p2.mint
       WHERE t2.symbol = ${token.symbol} AND p2.mint <> ${signal.mint}
@@ -698,7 +701,7 @@ async function openFromSignal(
     if (waveRug) {
       tierDemoted = true;
       const prior = sizedUsd;
-      sizedUsd = cfg.PAPER_PROBE_USD;
+      sizedUsd = probeUsd;
       await audit("entry_clone_wave_probe", {
         mint: signal.mint,
         symbol: token.symbol,
@@ -715,8 +718,8 @@ async function openFromSignal(
   // paper-mirrors-live-gates doctrine ("not hallucinating what's available").
   // The clip now scales to what the pool can exit: sized ≤ pool/25, floored
   // at probe scale so the sensor keeps measuring thin venues.
-  if (sig && market.liquidityUsd != null && Number.isFinite(market.liquidityUsd) && sizedUsd > cfg.PAPER_PROBE_USD) {
-    const depthCap = Math.max(cfg.PAPER_PROBE_USD, Number((market.liquidityUsd / 25).toFixed(2)));
+  if (sig && market.liquidityUsd != null && Number.isFinite(market.liquidityUsd) && sizedUsd > probeUsd) {
+    const depthCap = Math.max(probeUsd, Number((market.liquidityUsd / 25).toFixed(2)));
     if (sizedUsd > depthCap) {
       await audit("entry_depth_scaled", {
         mint: signal.mint,
