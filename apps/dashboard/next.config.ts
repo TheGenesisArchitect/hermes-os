@@ -26,6 +26,12 @@ for (const candidate of ["../../.env", ".env", "../../../.env"]) {
 }
 
 const nextConfig: NextConfig = {
+  // Dev compiles into its OWN tree. A `next dev` racing onto the production
+  // port used to write dev artifacts into .next while `next start` served
+  // from it — a hybrid tree that 404s chunks and 500s pages (2026-07-25
+  // incident, twice). Dev also binds 3778 (package.json) so the production
+  // port can never be raced again.
+  distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",
   transpilePackages: ["@hermes/db", "@hermes/core"],
   serverExternalPackages: ["postgres"],
   // workspace packages use NodeNext ".js" import specifiers on TS sources

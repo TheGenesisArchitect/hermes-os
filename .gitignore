@@ -8,6 +8,7 @@
 node_modules/
 dist/
 .next/
+.next-dev/
 *.tsbuildinfo
 
 # local data
