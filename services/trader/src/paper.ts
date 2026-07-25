@@ -651,17 +651,28 @@ async function openFromSignal(
       cfg.DEEPCROWD_FLOOR_ENABLED &&
       (sig.walletWinnerHits ?? 0) >= cfg.DEEPCROWD_MIN_WH &&
       (sig.walletRugHits ?? 0) === 0;
-    if (pLg != null && pLg < cfg.INFLOW_FLOOR && !deepCrowdNursery) {
-      const prior = sizedUsd;
-      sizedUsd = 1.5;
-      tierDemoted = true;
-      await audit("entry_subfloor_probe_cap", {
-        mint: signal.mint,
-        inflow: pLg,
-        from: prior,
-        to: sizedUsd,
-        reason: `inflow ${pLg.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — absolute probe cap (mild at slot scale −$44/24h vs +$16 at probe scale)`,
-      });
+    if (pLg != null && pLg < cfg.INFLOW_FLOOR) {
+      // Deep crowd keeps its ratified nursery ride — but BOUNDED at the
+      // nursery's own slot/2 ceiling. SPR (6W/0R, lg 1.14) reached $5.55 via
+      // the second-launch path: the 0.5× demotion has no absolute bound, and
+      // a crowd-based exemption alone let it through above the ratified cap.
+      const cap = deepCrowdNursery
+        ? Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC * 0.5).toFixed(2))
+        : 1.5;
+      if (sizedUsd > cap) {
+        const prior = sizedUsd;
+        sizedUsd = cap;
+        tierDemoted = true;
+        await audit("entry_subfloor_probe_cap", {
+          mint: signal.mint,
+          inflow: pLg,
+          from: prior,
+          to: sizedUsd,
+          reason: deepCrowdNursery
+            ? `deep crowd below the floor — bounded at the nursery half-clip ceiling (slot/2)`
+            : `inflow ${pLg.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — absolute probe cap (mild at slot scale −$44/24h vs +$16 at probe scale)`,
+        });
+      }
     }
   }
   // ── CLONE-WAVE MIRROR (ratified 2026-07-25, improvement ledger) ───────────
