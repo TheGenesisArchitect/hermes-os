@@ -4674,6 +4674,96 @@ export async function getVitals(): Promise<VitalsView> {
   }
 }
 
+// ── C2: ENVIRONMENT STRIP (Command Center phase C2, ratified 2026-07-25) ─────
+// The funnel condensed into one read-only context row: what's arriving, what
+// qualifies, what we board, the launch-order mix, the live moon queue, and
+// the adversary weather (drain-wave rate). No controls by design.
+export interface MoonQueueItem {
+  symbol: string | null;
+  signature: string | null;
+  stars: number | null;
+  wh: number | null;
+  rh: number | null;
+  lg: number | null;
+  trigMin: number;
+  entered: boolean;
+}
+export interface EnvironmentView {
+  arrivalsHr: number;
+  qualifiedHr: number;
+  enteredHr: number;
+  coveragePct: number | null;
+  session: "prime" | "off";
+  launchMix: { bucket: string; n: number }[];
+  moonQueue: MoonQueueItem[];
+  /** settled rug share, trailing 2h vs the 2h before — the drain-wave weather. */
+  rugShare2h: number | null;
+  rugSharePrev2h: number | null;
+  drainCutsHr: number;
+}
+
+export async function getEnvironment(): Promise<EnvironmentView> {
+  const cfg = loadConfig();
+  try {
+    const [row] = (await db.execute(sql`
+      SELECT
+        (SELECT count(*)::int FROM candidate_outcomes WHERE first_seen_at > now() - interval '60 minutes') AS arrivals,
+        (SELECT count(*)::int FROM candidate_outcomes
+          WHERE triggered_at > now() - interval '60 minutes'
+            AND (stars = 2 OR (wallet_winner_hits >= 1 AND wallet_winner_hits - coalesce(wallet_rug_hits, 0) >= 1))) AS qualified,
+        (SELECT count(*)::int FROM positions WHERE lane = 'paper' AND opened_at > now() - interval '60 minutes') AS entered,
+        (SELECT count(*)::int FROM positions
+          WHERE closed_at > now() - interval '60 minutes'
+            AND exit_reason IN ('dust_rug', 'depth_collapse_cut', 'live_unsellable')) AS drain_cuts,
+        (SELECT 100.0 * count(*) FILTER (WHERE label = 'rug') / nullif(count(*), 0) FROM candidate_outcomes
+          WHERE label IN ('winner','dud','rug') AND first_seen_at > now() - interval '2 hours') AS rug2,
+        (SELECT 100.0 * count(*) FILTER (WHERE label = 'rug') / nullif(count(*), 0) FROM candidate_outcomes
+          WHERE label IN ('winner','dud','rug')
+            AND first_seen_at BETWEEN now() - interval '4 hours' AND now() - interval '2 hours') AS rug_prev`)) as unknown as {
+      arrivals: number; qualified: number; entered: number; drain_cuts: number;
+      rug2: number | null; rug_prev: number | null;
+    }[];
+    const launchMix = ((await db.execute(sql`
+      SELECT CASE WHEN launch_order = 1 THEN 'L1' WHEN launch_order = 2 THEN 'L2'
+                  WHEN launch_order BETWEEN 3 AND 4 THEN 'L3-4' ELSE 'L5+' END AS bucket, count(*)::int AS n
+      FROM candidate_outcomes
+      WHERE launch_order IS NOT NULL AND first_seen_at > now() - interval '6 hours'
+      GROUP BY 1 ORDER BY min(launch_order)`)) as unknown as { bucket: string; n: number }[]);
+    const moonQueue = ((await db.execute(sql`
+      SELECT t.symbol, c.signature, c.stars, c.wallet_winner_hits AS wh, c.wallet_rug_hits AS rh,
+             c.liq_growth::float AS lg, c.entered,
+             extract(epoch from (now() - c.triggered_at)) / 60 AS trig_min
+      FROM candidate_outcomes c JOIN tokens t ON t.mint = c.mint
+      WHERE c.triggered_at > now() - interval '25 minutes'
+        AND (c.stars = 2 OR (c.wallet_winner_hits >= 1 AND c.wallet_winner_hits - coalesce(c.wallet_rug_hits, 0) >= 1))
+      ORDER BY c.triggered_at DESC LIMIT 8`)) as unknown as {
+      symbol: string | null; signature: string | null; stars: number | null;
+      wh: number | null; rh: number | null; lg: number | null; entered: boolean; trig_min: number;
+    }[]).map((r) => ({
+      symbol: r.symbol, signature: r.signature, stars: r.stars, wh: r.wh, rh: r.rh,
+      lg: r.lg == null ? null : Number(r.lg), trigMin: Number(r.trig_min), entered: r.entered,
+    }));
+    const r = row!;
+    return {
+      arrivalsHr: r.arrivals,
+      qualifiedHr: r.qualified,
+      enteredHr: r.entered,
+      coveragePct: r.qualified > 0 ? (100 * r.entered) / r.qualified : null,
+      session: cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours()) ? "prime" : "off",
+      launchMix,
+      moonQueue,
+      rugShare2h: r.rug2 == null ? null : Number(r.rug2),
+      rugSharePrev2h: r.rug_prev == null ? null : Number(r.rug_prev),
+      drainCutsHr: r.drain_cuts,
+    };
+  } catch {
+    return {
+      arrivalsHr: 0, qualifiedHr: 0, enteredHr: 0, coveragePct: null, session: "off",
+      launchMix: [], moonQueue: [], rugShare2h: null, rugSharePrev2h: null, drainCutsHr: 0,
+    };
+  }
+}
+
 export async function getTradeManager(limit = 14): Promise<TradeManagerView> {
   try {
     const rows = (await db.execute(sql`

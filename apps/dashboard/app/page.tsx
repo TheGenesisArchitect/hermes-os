@@ -12,6 +12,7 @@ import { KillSwitch } from "@/components/KillSwitch";
 import { LaneFilter } from "@/components/LaneFilter";
 import { ManagementBoard } from "@/components/ManagementBoard";
 import { VitalsStrip } from "@/components/VitalsStrip";
+import { EnvironmentStrip } from "@/components/EnvironmentStrip";
 import { RecorderBoard } from "@/components/RecorderBoard";
 import { PondRadar } from "@/components/PondRadar";
 import { TickerRadar } from "@/components/TickerRadar";
@@ -51,6 +52,7 @@ import {
   getSweetspotRadar,
   getTradeManager,
   getVitals,
+  getEnvironment,
   getAnticipation,
   getWinningFormula,
   getHourlyWindows,
@@ -112,6 +114,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     sweetspotRadar,
     tradeManager,
     vitals,
+    environment,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -149,6 +152,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     getSweetspotRadar(),
     getTradeManager(),
     getVitals(),
+    getEnvironment(),
   ]);
 
   const gridView = laneFilter
@@ -364,6 +368,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
           </div>
         </div>
         <VitalsStrip v={vitals} />
+        <EnvironmentStrip v={environment} />
         <ManagementBoard positions={managedView} />
       </section>
 
