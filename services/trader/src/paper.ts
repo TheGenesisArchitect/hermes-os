@@ -619,6 +619,35 @@ async function openFromSignal(
       }
     }
   }
+  // ── CLONE-WAVE MIRROR (ratified 2026-07-25, improvement ledger) ───────────
+  // The 8h rungless-death tax ran 92% of gross wins (bar ≤25%), concentrated
+  // in same-ticker relaunch waves (MONA −$6.69 on paper vs −$0.15 live on the
+  // IDENTICAL mint — live's clone-wave rule held it, paper had none). Mirror:
+  // a same-ticker sibling that RUGGED inside 60 minutes demotes this entry to
+  // probe scale — NOT a refusal: the probe keeps the wave measured so the
+  // L3-4 golden re-entry stays visible once the drain has printed. Unlike
+  // live's version, a still-open sibling does not demote (paper explores).
+  if (sig && sizedUsd > 1.5 && token.symbol) {
+    const [waveRug] = (await db.execute(sql`
+      SELECT 1 FROM positions p2 JOIN tokens t2 ON t2.mint = p2.mint
+      WHERE t2.symbol = ${token.symbol} AND p2.mint <> ${signal.mint}
+        AND p2.status = 'closed' AND p2.closed_at > now() - interval '60 minutes'
+        AND (p2.exit_reason IN ('dust_rug','live_unsellable','delisted','depth_collapse_cut')
+             OR p2.realized_pnl_usd::float <= -0.8 * p2.size_usd::float)
+      LIMIT 1`)) as unknown as unknown[];
+    if (waveRug) {
+      tierDemoted = true;
+      const prior = sizedUsd;
+      sizedUsd = 1.5;
+      await audit("entry_clone_wave_probe", {
+        mint: signal.mint,
+        symbol: token.symbol,
+        from: prior,
+        to: sizedUsd,
+        reason: `clone wave: a ${token.symbol} sibling rugged <60m — probe scale until the wave proves its golden window (mirror of live's rule)`,
+      });
+    }
+  }
   // ── EXIT-VIABILITY DEPTH SCALING (2026-07-25, collapse anatomy) ───────────
   // Every meteora-dbc drain death in 24h (−$47: all/in, Pumuckel, corncat…)
   // entered a ~$2k pool at slot size — a clip the pool could never pay back.
