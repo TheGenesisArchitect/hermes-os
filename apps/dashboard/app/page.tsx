@@ -53,6 +53,7 @@ import {
   getTradeManager,
   getVitals,
   getEnvironment,
+  getChainPulse,
   getAnticipation,
   getWinningFormula,
   getHourlyWindows,
@@ -115,6 +116,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     tradeManager,
     vitals,
     environment,
+    chainPulse,
   ] = await Promise.all([
     getEquitySeries(),
     getStats(),
@@ -153,6 +155,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     getTradeManager(),
     getVitals(),
     getEnvironment(),
+    getChainPulse(),
   ]);
 
   const gridView = laneFilter
@@ -369,7 +372,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
         </div>
         <VitalsStrip v={vitals} />
         <EnvironmentStrip v={environment} />
-        <ManagementBoard positions={managedView} />
+        <ManagementBoard positions={managedView} chain={chainPulse} />
       </section>
 
       {/* The Recorder — the data flywheel. Watches every safety-passed candidate,

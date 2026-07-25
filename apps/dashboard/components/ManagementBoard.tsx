@@ -7,7 +7,7 @@ import type { ManagementFeature } from "@hermes/core";
 import { getLiveCloseStatus, requestLiveClose, setManagementIntent } from "@/app/actions";
 import { fmtTs, fmtTsFull } from "@/components/ui";
 import { TradeDNA } from "@/components/TradeDNA";
-import type { ManagedPosition } from "@/lib/queries";
+import type { ChainPulseView, ManagedPosition } from "@/lib/queries";
 
 /** Serialized shape passed from the server page (Date → ISO). */
 export interface ManagedPositionView extends Omit<ManagedPosition, "openedAt"> {
@@ -252,7 +252,7 @@ function LiveCloseButton({ positionId, symbol }: { positionId: number; symbol: s
   );
 }
 
-function Card({ p }: { p: ManagedPositionView }) {
+function Card({ p, pulse }: { p: ManagedPositionView; pulse?: ChainPulseView }) {
   const [pending, start] = useTransition();
   const action = p.call?.action ?? "HOLD";
   const regime = p.call?.regime ?? "WATCH";
@@ -350,6 +350,19 @@ function Card({ p }: { p: ManagedPositionView }) {
             L{p.launchOrder}{p.launchOrder >= 3 && p.launchOrder <= 4 ? "⭐" : p.launchOrder === 2 ? "⚠" : ""}
           </span>
         ) : null}
+        {pulse ? (
+          <span
+            suppressHydrationWarning
+            className="rounded px-1.5 py-0.5 text-[10px]"
+            title={'P1 chain pulse — ws events on this pool, pool SOL, 2m change'}
+            style={{
+              color: pulse.change2m != null && pulse.change2m <= -0.3 ? "var(--status-critical)" : "var(--text-secondary)",
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            ⛓ {pulse.eventsPerMin}/min{pulse.lamports != null ? ' · ' + (pulse.lamports / 1e9).toFixed(1) + ' ◎' : ''}{pulse.change2m != null ? ' · ' + (pulse.change2m >= 0 ? '+' : '') + Math.round(pulse.change2m * 100) + '%/2m' : ''}
+          </span>
+        ) : null}
       </div>
 
       <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--text-secondary)" }}>
@@ -414,7 +427,7 @@ function Card({ p }: { p: ManagedPositionView }) {
   );
 }
 
-export function ManagementBoard({ positions }: { positions: ManagedPositionView[] }) {
+export function ManagementBoard({ positions, chain }: { positions: ManagedPositionView[]; chain?: Record<string, ChainPulseView> }) {
   if (positions.length === 0) {
     return (
       <div className="card p-6 text-center text-sm" style={{ color: "var(--text-muted)" }}>
@@ -431,7 +444,7 @@ export function ManagementBoard({ positions }: { positions: ManagedPositionView[
         {/* Biggest live float first — the star runner must never hide below the
             fold behind two fresher $0.90 positions (the missing-GAIN report). */}
         {[...positions].sort((a, b) => b.unrealizedNetUsd - a.unrealizedNetUsd).map((p) => (
-          <Card key={p.id} p={p} />
+          <Card key={p.id} p={p} pulse={chain?.[p.mint]} />
         ))}
       </div>
     </div>

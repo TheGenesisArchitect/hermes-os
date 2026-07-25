@@ -4764,6 +4764,43 @@ export async function getEnvironment(): Promise<EnvironmentView> {
   }
 }
 
+// ── C3: CHAIN PULSE for the baseball cards (P1 telemetry, ratified) ──────────
+export interface ChainPulseView {
+  eventsPerMin: number;
+  lamports: number | null;
+  /** pool SOL change over the trailing 2m of ticks, fraction (−1..∞) */
+  change2m: number | null;
+  ageSec: number;
+}
+export async function getChainPulse(): Promise<Record<string, ChainPulseView>> {
+  try {
+    const rows = (await db.execute(sql`
+      SELECT mint, count(*)::int n,
+        (array_agg(lamports ORDER BY at DESC))[1] AS last_l,
+        (array_agg(lamports ORDER BY at ASC))[1] AS first_l,
+        extract(epoch from (now() - max(at)))::int AS age
+      FROM chain_ticks WHERE at > now() - interval '2 minutes'
+      GROUP BY mint`)) as unknown as {
+      mint: string; n: number; last_l: number | null; first_l: number | null; age: number;
+    }[];
+    const out: Record<string, ChainPulseView> = {};
+    for (const r of rows) {
+      out[r.mint] = {
+        eventsPerMin: Math.round(r.n / 2),
+        lamports: r.last_l == null ? null : Number(r.last_l),
+        change2m:
+          r.first_l && r.last_l != null && Number(r.first_l) > 0
+            ? (Number(r.last_l) - Number(r.first_l)) / Number(r.first_l)
+            : null,
+        ageSec: r.age,
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 export async function getTradeManager(limit = 14): Promise<TradeManagerView> {
   try {
     const rows = (await db.execute(sql`
