@@ -1,0 +1,89 @@
+<title>Trading DNA Command Center — Design Spec</title>
+<style>
+  :root {
+    --bg: #fafbfc; --surface: #fff; --ink: #16211c; --muted: #5b6a63;
+    --line: #e3e8e5; --accent: #0e6e4f; --accent-soft: #e7f2ed; --warn: #8a6d1f; --gold: #9a7b1f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101512; --surface: #171d19; --ink: #e6ece8; --muted: #93a29a;
+      --line: #263029; --accent: #52b98e; --accent-soft: #1a2b23; --warn: #d3b45e; --gold: #d9b44a; }
+  }
+  :root[data-theme="dark"] { --bg: #101512; --surface: #171d19; --ink: #e6ece8; --muted: #93a29a;
+    --line: #263029; --accent: #52b98e; --accent-soft: #1a2b23; --warn: #d3b45e; --gold: #d9b44a; }
+  :root[data-theme="light"] { --bg: #fafbfc; --surface: #fff; --ink: #16211c; --muted: #5b6a63;
+    --line: #e3e8e5; --accent: #0e6e4f; --accent-soft: #e7f2ed; --warn: #8a6d1f; --gold: #9a7b1f; }
+  body { background: var(--bg); color: var(--ink); font: 14.5px/1.6 "Segoe UI", system-ui, sans-serif; margin: 0; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 25px; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 16.5px; font-weight: 650; margin: 36px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  p { margin: 0 0 10px; max-width: 74ch; }
+  .kicker { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-weight: 650; margin-bottom: 8px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+  .thesis { background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; padding: 12px 16px; font-size: 13.5px; margin: 16px 0 24px; }
+  .diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin: 12px 0 16px; overflow-x: auto; }
+  .tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; margin: 12px 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 9px 12px 7px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: top; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  ul { margin: 0 0 12px; padding-left: 20px; } li { margin-bottom: 4px; max-width: 72ch; }
+  footer { margin-top: 44px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <div class="kicker">Genesis Capital Engine · Trading DNA Command Center · Design Spec</div>
+  <h1>The DNA Panel as the platform's command center</h1>
+  <div class="sub">July 25, 2026 · consolidation, not addition — the existing Position Command / DNA surface absorbs the scattered lookups · companion to the Foundation Spec and the P0–P4 Chain program</div>
+
+  <div class="thesis">
+    <b>The metaphor is now literal.</b> The formula is a genome (F1–F6). Each trade is a cell running it.
+    The book is the organism. The market is the environment. Deployers are pathogens. The benchmark
+    contract is the vitals monitor. The diagnosis agent is immune memory. A command center is that
+    biology on one screen — every number already computed, every control already built, brought to
+    where the operator is already looking.
+  </div>
+
+  <h2>The three layers</h2>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+  subgraph L1["LAYER 1 · VITALS — are we winning right now"]
+    V[benchmark contract, live:\narmed capture/class vs 40% · W:L vs 1.5 · rungless tax vs 25%\nlive drag vs 5pp · board rate vs 100% · compound/24h vs 40%]
+    PAR[diagnosis Pareto — the loudest failure class, named]
+    V --- PAR
+  end
+  subgraph L2["LAYER 2 · THE ORGANISM — the book, cell by cell"]
+    CARDS[baseball cards: DNA chip · genome · F6 badge · ride/cut ·\nclose w/ verdict readback · P1: depth strip · flow tape · DEPLOYER flag · rail chip]
+    BASKET[basket state: greens accumulating · float total ·\nauto-harvest armed/cooling · harvest button]
+  end
+  subgraph L3["LAYER 3 · THE ENVIRONMENT — the market's DNA vs ours"]
+    ENV[arrivals/hr · coverage % · qualified flow by tier & launch order ·\nsharpened moon queue · session posture · adversary weather from diagnosis verdicts]
+  end
+  L1 --> L2 --> L3
+  </pre></div>
+
+  <h2>Layer contracts</h2>
+  <div class="tablebox"><table>
+    <tr><th>Layer</th><th>Content</th><th>Source (already computed)</th><th>Controls in context</th></tr>
+    <tr><td><b>1 · Vitals</b></td><td>Six benchmark tiles, green/amber/red, updating per close; diagnosis Pareto strip beneath — red tile → loudest verdict class named</td><td>Trade Manager KPIs · armed-capture-waterfall · trade_diagnosis audits</td><td>kill switches · live re-arm</td></tr>
+    <tr><td><b>2 · Organism</b></td><td>Enriched cards (existing + P1 chain telemetry: live depth strip, flow tape with DEPLOYER pathogen flag, rail posture chip) + basket/float state made visible as it forms</td><td>ManagedPositions · chain_ticks (P1) · auto-harvest state</td><td>ride/cut · close (verdict readback) · harvest</td></tr>
+    <tr><td><b>3 · Environment</b></td><td>Funnel condensed: arrivals, coverage, tier/L-order mix, moon queue, session, adversary weather (drain-wave rate)</td><td>coverage queries · queue-now · diagnosis verdicts</td><td>— (weather is read-only by design)</td></tr>
+  </table></div>
+
+  <h2>Consolidation rule</h2>
+  <p>This surface <b>retires lookups instead of adding panels</b>: the vitals absorb the checkpoint
+  scorecards; the environment strip absorbs the hand-run funnel queries; the organism absorbs the
+  per-trade forensics. One screen answers "are we winning, what's at risk, what's coming" — the three
+  questions every checkpoint currently answers in prose.</p>
+
+  <h2>Build phases</h2>
+  <div class="tablebox"><table>
+    <tr><th>Phase</th><th>Scope</th><th>Dependencies</th></tr>
+    <tr><td><b>C1</b></td><td>Vitals strip (six benchmark tiles + Pareto) on the Position Command section</td><td>None — all data computed today; one dashboard cycle</td></tr>
+    <tr><td><b>C2</b></td><td>Environment strip (funnel/coverage/moon queue/adversary weather)</td><td>None — existing queries condensed</td></tr>
+    <tr><td><b>C3</b></td><td>Chain enrichment of the cards: depth strip, flow tape, DEPLOYER flag, rail chip</td><td>P1 slot telemetry (Chain program)</td></tr>
+  </table></div>
+
+  <footer>Trading DNA Command Center · committed to <code>docs/GCE_DNA_COMMAND_CENTER.html</code> ·
+  authority: operator ratification → Canon GCE-FORMULA-001 → Foundation Spec → this design → code ·
+  panel standard applies: verified by rendering, exec-shareable, lanes never blended.</footer>
+</div>

@@ -55,6 +55,10 @@ interface SentinelState {
   moonshotPending: { mint: string; at: number }[];
   /** last position id given a trade_diagnosis verdict (Phase 2 agent) */
   lastDiagnosedPosId: number;
+  /** newest chain signature already ingested (P0 chain-truth ledger) */
+  lastChainSig: string | null;
+  /** epoch ms of the last chain ingestion pass */
+  lastChainMs: number;
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -74,7 +78,81 @@ async function loadState(): Promise<SentinelState> {
     lastOpenPosId: v.lastOpenPosId ?? -1,
     moonshotPending: v.moonshotPending ?? [],
     lastDiagnosedPosId: v.lastDiagnosedPosId ?? -1,
+    lastChainSig: v.lastChainSig ?? null,
+    lastChainMs: v.lastChainMs ?? 0,
   };
+}
+
+// ── P0: CHAIN-TRUTH LEDGER (ratified 2026-07-25) ─────────────────────────────
+// The raw truth layer: every live-wallet transaction parsed from the RPC into
+// chain_txs, then reconciled against fills by signature. Best-effort by
+// design — a failed pass never blocks the loop; the books re-anchor as rows
+// accrete. Plain JSON-RPC via resilientFetch: no new dependencies.
+const LIVE_WALLET_ADDR = "rEPAt2uXrLHpN3J7By4PaAjbdi21V7rXozDipw5X1Q5";
+const CHAIN_INGEST_MS = 60_000;
+async function rpcCall(method: string, params: unknown[]): Promise<any> {
+  const res = await resilientFetch(cfg.SOLANA_RPC_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const j = (await res.json()) as { result?: unknown };
+  return j?.result ?? null;
+}
+async function checkChainTruth(s: SentinelState): Promise<void> {
+  if (Date.now() - s.lastChainMs < CHAIN_INGEST_MS) return;
+  s.lastChainMs = Date.now();
+  try {
+    const sigs = (await rpcCall("getSignaturesForAddress", [
+      LIVE_WALLET_ADDR,
+      { limit: 25, ...(s.lastChainSig ? { until: s.lastChainSig } : {}) },
+    ])) as { signature: string; slot: number; blockTime: number | null; err: unknown }[] | null;
+    if (!sigs?.length) return;
+    // newest-first; ingest oldest-first so lastChainSig advances safely
+    for (const sg of [...sigs].reverse()) {
+      if (sg.err) {
+        s.lastChainSig = sg.signature;
+        continue; // failed txs cost only fees; skip parse, still advance
+      }
+      const tx = (await rpcCall("getTransaction", [
+        sg.signature,
+        { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
+      ])) as any;
+      if (!tx?.meta) continue; // transient RPC miss — retry next pass (do not advance)
+      const keys: string[] = (tx.transaction?.message?.accountKeys ?? []).map((k: any) =>
+        typeof k === "string" ? k : k.pubkey,
+      );
+      const wi = keys.indexOf(LIVE_WALLET_ADDR);
+      const solDelta = wi >= 0 ? ((tx.meta.postBalances?.[wi] ?? 0) - (tx.meta.preBalances?.[wi] ?? 0)) / 1e9 : 0;
+      const feeSol = wi === 0 ? (tx.meta.fee ?? 0) / 1e9 : 0;
+      const tokAgg = new Map<string, number>();
+      const addTok = (rows: any[], sign: number) => {
+        for (const b of rows ?? [])
+          if (b.owner === LIVE_WALLET_ADDR)
+            tokAgg.set(b.mint, (tokAgg.get(b.mint) ?? 0) + sign * Number(b.uiTokenAmount?.uiAmount ?? 0));
+      };
+      addTok(tx.meta.postTokenBalances, 1);
+      addTok(tx.meta.preTokenBalances, -1);
+      let tokenMint: string | null = null;
+      let tokenDelta = 0;
+      for (const [m, d] of tokAgg) if (Math.abs(d) > Math.abs(tokenDelta)) { tokenMint = m; tokenDelta = d; }
+      const cls =
+        tokenMint && tokenDelta > 0 && solDelta < 0 ? "buy"
+        : tokenMint && tokenDelta < 0 && solDelta > 0 ? "sell"
+        : !tokenMint && solDelta > 0 && solDelta < 0.01 ? "rent"
+        : !tokenMint ? "transfer"
+        : "unknown";
+      await db.execute(sql`
+        INSERT INTO chain_txs (signature, slot, block_time, sol_delta, fee_sol, token_mint, token_delta, class, matched_fill_id)
+        VALUES (${sg.signature}, ${sg.slot}, ${sg.blockTime ? new Date(sg.blockTime * 1000).toISOString() : null},
+                ${solDelta}, ${feeSol}, ${tokenMint}, ${tokenDelta}, ${cls},
+                (SELECT f.id FROM fills f WHERE f.tx_signature = ${sg.signature} LIMIT 1))
+        ON CONFLICT (signature) DO NOTHING`);
+      s.lastChainSig = sg.signature;
+    }
+  } catch (err) {
+    console.error(`chain-truth ingest failed (retries next pass): ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 // ── TRADE DIAGNOSIS AGENT (Phase 2, operator 2026-07-25: "an agent that can
@@ -928,6 +1006,7 @@ while (true) {
     await checkLiveOpens(state);
     await checkMoonshotOutcomes(state);
     await checkTradeDiagnosis(state);
+    await checkChainTruth(state);
     await checkFills(state);
     await checkHeartbeat(state);
     await checkDigests(state);
