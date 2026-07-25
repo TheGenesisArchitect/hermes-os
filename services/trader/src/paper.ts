@@ -1875,6 +1875,42 @@ async function clearHarvestRequest(): Promise<void> {
     .onConflictDoUpdate({ target: config.key, set: { value: { enabled: false }, updatedAt: new Date() } });
 }
 
+// ── AUTO-HARVEST (ratified 2026-07-25, golden study) ──────────────────────────
+// The golden days' profit engine was the basket harvest: +$2,073.96 across 57
+// sweep exits Jul 16-18 — sweeping accumulated green float into strength en
+// masse. The current fast per-position exits starved the float (48h sim: zero
+// windows with ≥4 concurrent greens), so this trigger ships ARMED BUT DORMANT:
+// it reuses the certified harvest_now → basket sweep path and wakes the moment
+// boarding volume rebuilds the float. Audited on every fire; 15m cooldown.
+let lastAutoHarvestMs = 0;
+export async function checkAutoHarvest(cfg: HermesConfig): Promise<void> {
+  if (!cfg.AUTO_HARVEST_ENABLED) return;
+  if (Date.now() - lastAutoHarvestMs < cfg.AUTO_HARVEST_COOLDOWN_MIN * 60_000) return;
+  const greens = (await db.execute(sql`
+    SELECT p.id, p.size_usd::float AS s, pt.mark_multiple::float AS mm
+    FROM positions p
+    CROSS JOIN LATERAL (
+      SELECT mark_multiple FROM position_ticks WHERE position_id = p.id
+      ORDER BY snapped_at DESC LIMIT 1) pt
+    WHERE p.lane = 'paper' AND p.status = 'open' AND pt.mark_multiple::float >= 1.08`)) as unknown as {
+    id: number; s: number; mm: number;
+  }[];
+  const unrealized = greens.reduce((t, g) => t + (Number(g.mm) - 1) * Number(g.s), 0);
+  if (greens.length >= cfg.AUTO_HARVEST_MIN_GREEN && unrealized >= cfg.AUTO_HARVEST_MIN_USD) {
+    lastAutoHarvestMs = Date.now();
+    await db
+      .insert(config)
+      .values({ key: "harvest_now", value: { enabled: true }, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: config.key, set: { value: { enabled: true }, updatedAt: new Date() } });
+    await audit("auto_harvest_triggered", {
+      greens: greens.length,
+      unrealizedUsd: Number(unrealized.toFixed(2)),
+      reason: `float rebuilt: ${greens.length} green ≥1.08× carrying $${unrealized.toFixed(2)} — sweeping into strength (golden-study engine)`,
+    });
+    console.log(`🧺 AUTO-HARVEST — ${greens.length} greens, $${unrealized.toFixed(2)} unrealized → sweep requested`);
+  }
+}
+
 // Per-position count of consecutive suspect (garbage) reads. In-memory: a
 // restart resets it, which is safe — a position mid-crash at restart simply
 // re-confirms over the next couple polls before we act.

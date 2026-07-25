@@ -7,7 +7,7 @@ acquireSingletonLock(resolve(import.meta.dirname, "../../../.hermes-trader.pid")
 import { loadConfig } from "@hermes/core";
 import { config, db } from "@hermes/db";
 import { eq } from "drizzle-orm";
-import { fastFloorSweep, managePositions, openConfirmedPositions, openNewPositions, snapshotEquity } from "./paper.js";
+import { checkAutoHarvest, fastFloorSweep, managePositions, openConfirmedPositions, openNewPositions, snapshotEquity } from "./paper.js";
 import { readEffectiveConfig, refreshAdaptivePolicy } from "./adaptive.js";
 import { guardLiveBook, liveLaneStatus, processLiveCloseRequests, processLiveRequeues, processWalletSends, snapshotLiveEquity, sweepLiveBook } from "./live/executor.js";
 
@@ -154,6 +154,9 @@ while (true) {
     if (Date.now() - lastPolicy >= ADAPTIVE_REFRESH_MS) {
       await refreshAdaptivePolicy(cfg);
       lastPolicy = Date.now();
+      // Auto-harvest check rides the same 60s cadence — dormant until the
+      // green float rebuilds, then fires the certified basket sweep.
+      void checkAutoHarvest(eff);
     }
     await writeTraderHealth(halted);
   } catch (err) {

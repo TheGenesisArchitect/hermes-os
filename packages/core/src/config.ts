@@ -668,6 +668,15 @@ const envSchema = z.object({
   // floor and ceiling still govern; the mid-crowd rug den stays refused.
   SUBFLOOR_TICKET_ENABLED: z.coerce.boolean().default(true),
   SUBFLOOR_TICKET_MIN_WH: z.coerce.number().default(2),
+  // AUTO-HARVEST (ratified 2026-07-25, golden study: basket_harvest exits
+  // banked +$2,073.96/57 sweeps Jul 16-18 — the golden engine). Armed but
+  // dormant until boarding volume rebuilds the green float (48h sim: zero
+  // qualifying windows under fast per-position exits). Fires the certified
+  // harvest_now sweep when ≥MIN_GREEN opens sit ≥1.08× carrying ≥MIN_USD.
+  AUTO_HARVEST_ENABLED: z.coerce.boolean().default(true),
+  AUTO_HARVEST_MIN_GREEN: z.coerce.number().default(4),
+  AUTO_HARVEST_MIN_USD: z.coerce.number().default(8),
+  AUTO_HARVEST_COOLDOWN_MIN: z.coerce.number().default(15),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction
