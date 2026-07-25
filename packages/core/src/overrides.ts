@@ -36,7 +36,8 @@ export type OverrideKey =
   | "TRAIL_WIDE_PCT"
   | "PROFIT_LOCK_ARM_MULT"
   | "PROFIT_FLOOR_USD"
-  | "FARM_MAX_SLOTS";
+  | "FARM_MAX_SLOTS"
+  | "MANDATE_AGG_FRAC";
 
 export type OverrideGroup = "size" | "tp" | "stop";
 
@@ -68,6 +69,7 @@ export const OVERRIDE_KNOBS: OverrideKnob[] = [
   { key: "POSITION_FRAC_MIN", label: "Size floor", hint: "% of capital on a 0-star residual setup — the bottom of the policy range", group: "size", unit: "x", min: 0.001, max: 0.05, step: 0.001 },
   { key: "POSITION_FRAC_MAX", label: "Size ceiling", hint: "% of capital on a 2-star conviction setup — the top of the policy range", group: "size", unit: "x", min: 0.002, max: 0.15, step: 0.001 },
   { key: "FARM_MAX_SLOTS", label: "Farm book cap", hint: "max concurrent farm-tape positions — dry powder waits for the organic pond", group: "size", unit: "slots", min: 0, max: 24, step: 1 },
+  { key: "MANDATE_AGG_FRAC", label: "Basket deploy", hint: "aggregate % of balance across the basket, split evenly per slot (regime-adaptive 1.5-5%)", group: "size", unit: "x", min: 0.015, max: 0.05, step: 0.001 },
   { key: "TP0_MULT", label: "TP0", hint: "first tranche — bank into the blow-off", group: "tp", unit: "x", min: 1.02, max: 3, step: 0.01, supersededBySignature: true },
   { key: "TP1_MULT", label: "TP1", hint: "bank the bulk", group: "tp", unit: "x", min: 1.05, max: 5, step: 0.01, supersededBySignature: true },
   { key: "TP2_MULT", label: "TP2", hint: "most banked; remainder rides uncapped", group: "tp", unit: "x", min: 1.1, max: 20, step: 0.05, supersededBySignature: true },
@@ -257,6 +259,10 @@ export function computeAdaptivePolicy(stats: RegimeStats, now: number): Adaptive
     PAPER_POSITION_USD: round(lerp(50, 8, hostility), 2), // legacy: unrouted positions only
     OFF_HOURS_SIZE_MULT: round(lerp(1, 0.4, hostility), 2),
     FARM_MAX_SLOTS: Math.round(lerp(10, 4, hostility)),
+    // The regime-adaptive basket (2026-07-25): favorable deploys 5% of the
+    // balance across even slots, hostile pulls to 1.5% — the whole board
+    // scales, never a single bet.
+    MANDATE_AGG_FRAC: round(lerp(0.05, 0.015, hostility), 4),
   };
   // Clamp every recommendation to its knob band.
   for (const k of Object.keys(auto) as OverrideKey[]) {

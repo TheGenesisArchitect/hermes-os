@@ -609,6 +609,13 @@ const envSchema = z.object({
   // basket breadth and compounding, defense from tiers and exits. PRECISION
   // trades clamp into this per-slot band; demoted tiers stay below it.
   MANDATE_SIZING_ENABLED: z.coerce.boolean().default(true),
+  // REGIME-ADAPTIVE BASKET (ratified 2026-07-25 late): aggregate deployment
+  // 1.5-5% of balance by regime, divided EVENLY across MANDATE_SLOTS — every
+  // ticket the same size so one trade can never destroy a basket. Default
+  // 0.02/8 = 0.25%/slot, identical to the prior per-slot spec; the adaptive
+  // policy (autoMode=live) moves MANDATE_AGG_FRAC with hostility.
+  MANDATE_AGG_FRAC: z.coerce.number().default(0.02),
+  MANDATE_SLOTS: z.coerce.number().default(8),
   MANDATE_SIZE_MIN_FRAC: z.coerce.number().default(0.002),
   MANDATE_SIZE_MAX_FRAC: z.coerce.number().default(0.0025),
   // MOON RUNNER (ratified 2026-07-24, moon-ride harness: 888 F1-qualified

@@ -536,7 +536,7 @@ async function openFromSignal(
       sizedUsd > 1.5
     ) {
       tierDemoted = true;
-      const halfCap = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC * 0.5).toFixed(2));
+      const halfCap = Number(((bankrollNow * cfg.MANDATE_AGG_FRAC / Math.max(1, cfg.MANDATE_SLOTS)) * 0.5).toFixed(2));
       sizedUsd = Math.max(1.5, Math.min(halfCap, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2))));
       await audit("entry_deepcrowd_floor", {
         mint: signal.mint,
@@ -618,8 +618,11 @@ async function openFromSignal(
       // erasing the ratified ×0.5 survive-the-farm-window discount (FSR,
       // Trump, worm all died as full $6.70 slots at 06-07Z). The band is the
       // slot spec × the session's risk posture, never more.
-      const lo = Number((bankrollNow * cfg.MANDATE_SIZE_MIN_FRAC * sessionMult).toFixed(2));
-      const hi = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC * sessionMult).toFixed(2));
+      // REGIME-ADAPTIVE BASKET (ratified 2026-07-25 late): aggregate 1.5-5%
+      // of balance by regime ÷ MANDATE_SLOTS, every ticket EVEN — one trade
+      // can never destroy a basket.
+      const lo = Number(((bankrollNow * cfg.MANDATE_AGG_FRAC / Math.max(1, cfg.MANDATE_SLOTS)) * sessionMult).toFixed(2));
+      const hi = lo; // even tickets — the basket divides exactly
       const clamped = Math.min(hi, Math.max(lo, sizedUsd));
       if (clamped !== sizedUsd) {
         await audit("entry_mandate_size", {
@@ -658,7 +661,7 @@ async function openFromSignal(
       // the second-launch path: the 0.5× demotion has no absolute bound, and
       // a crowd-based exemption alone let it through above the ratified cap.
       const cap = deepCrowdNursery
-        ? Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC * 0.5).toFixed(2))
+        ? Number(((bankrollNow * cfg.MANDATE_AGG_FRAC / Math.max(1, cfg.MANDATE_SLOTS)) * 0.5).toFixed(2))
         : 1.5;
       if (sizedUsd > cap) {
         const prior = sizedUsd;
@@ -740,7 +743,7 @@ async function openFromSignal(
     // on a grown bankroll a "half-clip" reached $5.54 (Tiana, second-launch
     // 0.5× of an $11 base) — above the ratified half-clip meaning of slot/2.
     // A demoted entry now caps at HALF the universal ceiling, any path.
-    const fullCap = Number((bankrollNow * cfg.MANDATE_SIZE_MAX_FRAC * sessionMult).toFixed(2));
+    const fullCap = Number(((bankrollNow * cfg.MANDATE_AGG_FRAC / Math.max(1, cfg.MANDATE_SLOTS)) * sessionMult).toFixed(2));
     const slotCap = tierDemoted ? Number((fullCap * 0.5).toFixed(2)) : fullCap;
     if (sizedUsd > slotCap) {
       await audit("entry_slot_cap", {
