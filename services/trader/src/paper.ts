@@ -35,6 +35,7 @@ import {
 } from "@hermes/db";
 import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { maybeLiveBuy, mirrorLiveSell } from "./live/executor.js";
+import { poolPulse, syncSlotWatch } from "./slotWatch.js";
 
 /** How many recent ticks the classifier reads to judge continuation. */
 const TICK_WINDOW = 12;
@@ -2407,6 +2408,21 @@ export async function fastFloorSweep(cfg: HermesConfig): Promise<void> {
 export async function managePositions(cfg: HermesConfig): Promise<void> {
   await refreshAutoFarm(cfg); // keep the adaptive farm list current (no-op inside refresh window)
   const open = await db.select().from(positions).where(and(eq(positions.status, "open"), eq(positions.lane, "paper")));
+  // P1: keep the ws pool watcher subscribed to exactly the open book (both
+  // lanes — a live twin shares the paper mint). Fail-open: an empty pool
+  // address just means no telemetry for that mint.
+  try {
+    const pools = (await db.execute(sql`
+      SELECT DISTINCT p.mint, t.pool_address FROM positions p
+      JOIN tokens t ON t.mint = p.mint
+      WHERE p.status = 'open' AND t.pool_address IS NOT NULL`)) as unknown as {
+      mint: string;
+      pool_address: string;
+    }[];
+    syncSlotWatch(new Map(pools.map((r) => [r.mint, r.pool_address])));
+  } catch {
+    /* telemetry is optional — the poll rail stands alone */
+  }
   if (open.length === 0) return;
 
   // Real-time marks for every open position in ONE keyless call — block-level
@@ -2755,14 +2771,27 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     // 6-15s (several "cuts" closed green, impossible against a real drain).
     // A genuine drain persists; the confirm costs one poll (~5s) against it.
     if (exit?.reason === "depth_collapse_cut" && cfg.DEPTH_COLLAPSE_CONFIRM_TICKS > 1) {
+      // P1 (2026-07-25): the ws pool watcher is ground truth the aggregator
+      // is not. A flip read shows a drain the chain never saw; a REAL drain
+      // shows the pool's own SOL falling in the same 30s window. When the
+      // watcher corroborates (≥50% of pool lamports gone), the drain TX
+      // itself is the second read — cut now, don't donate another poll to
+      // the exit window. No pulse / no drop → the poll confirm stands.
+      const pulse = poolPulse(position.mint);
+      const corroborated = pulse != null && pulse.drop30s >= 0.5;
       const c = (depthConfirmCounts.get(position.id) ?? 0) + 1;
-      if (c < cfg.DEPTH_COLLAPSE_CONFIRM_TICKS) {
+      if (!corroborated && c < cfg.DEPTH_COLLAPSE_CONFIRM_TICKS) {
         depthConfirmCounts.set(position.id, c);
         console.log(
           `🛡️  HOLD  ${short(position.mint)} — depth sub-threshold, read-confirming ${c}/${cfg.DEPTH_COLLAPSE_CONFIRM_TICKS} before cut`,
         );
         exit = null;
       } else {
+        if (corroborated && c < cfg.DEPTH_COLLAPSE_CONFIRM_TICKS) {
+          console.log(
+            `⚡ DRAIN CONFIRMED ${short(position.mint)} — ws pool −${Math.round((pulse?.drop30s ?? 0) * 100)}% in 30s, cutting on the event`,
+          );
+        }
         depthConfirmCounts.delete(position.id);
       }
     } else {
