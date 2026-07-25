@@ -1,0 +1,189 @@
+<title>GCE Chain-Level Speed &amp; Visibility Spec — P0–P4</title>
+<style>
+  :root {
+    --bg: #fafbfc; --surface: #fff; --ink: #16211c; --muted: #5b6a63;
+    --line: #e3e8e5; --accent: #0e6e4f; --accent-soft: #e7f2ed; --warn: #8a6d1f; --gold: #9a7b1f; --live: #b05c1e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101512; --surface: #171d19; --ink: #e6ece8; --muted: #93a29a;
+      --line: #263029; --accent: #52b98e; --accent-soft: #1a2b23; --warn: #d3b45e; --gold: #d9b44a; --live: #dd9257; }
+  }
+  :root[data-theme="dark"] { --bg: #101512; --surface: #171d19; --ink: #e6ece8; --muted: #93a29a;
+    --line: #263029; --accent: #52b98e; --accent-soft: #1a2b23; --warn: #d3b45e; --gold: #d9b44a; --live: #dd9257; }
+  :root[data-theme="light"] { --bg: #fafbfc; --surface: #fff; --ink: #16211c; --muted: #5b6a63;
+    --line: #e3e8e5; --accent: #0e6e4f; --accent-soft: #e7f2ed; --warn: #8a6d1f; --gold: #9a7b1f; --live: #b05c1e; }
+  body { background: var(--bg); color: var(--ink); font: 14.5px/1.6 "Segoe UI", system-ui, sans-serif; margin: 0; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 25px; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.01em; text-wrap: balance; }
+  h2 { font-size: 17px; font-weight: 650; margin: 40px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  h3 { font-size: 13.5px; font-weight: 650; margin: 16px 0 6px; }
+  p { margin: 0 0 10px; max-width: 74ch; }
+  .kicker { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-weight: 650; margin-bottom: 8px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+  .thesis { background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 0 6px 6px 0; padding: 12px 16px; font-size: 13.5px; margin: 16px 0 24px; }
+  .diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin: 12px 0 16px; overflow-x: auto; }
+  .tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; margin: 12px 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 9px 12px 7px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 7px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .est { color: var(--gold); font-weight: 650; }
+  .meas { color: var(--accent); font-weight: 650; }
+  ul { margin: 0 0 12px; padding-left: 20px; } li { margin-bottom: 4px; max-width: 72ch; }
+  footer { margin-top: 44px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+  <div class="kicker">Genesis Capital Engine · Chain-Level Speed &amp; Visibility Program</div>
+  <h1>Playing at slot level: the P0–P4 Tech Spec</h1>
+  <div class="sub">Companion to the Foundation Spec v1.0 · July 25, 2026 · <span class="meas">MEASURED</span> = this week's audited baselines · <span class="est">EST</span> = expected effect, scored by counterfactual watch after ship</div>
+
+  <div class="thesis">
+    <b>Thesis.</b> The adversary operates in ~400ms Solana slots; we have been operating in 5–30s
+    aggregator polls. Every defect fixed this week — phantom depth reads, 45–70s drain windows missed,
+    silent close failures, unsellable write-offs — was a symptom of that gap. This program moves the
+    engine's eyes, hands, and books to the chain itself. The pillars it serves: <b>Right Entries + Speed.</b>
+  </div>
+
+  <h2>P0 · The Chain-Truth Ledger</h2>
+  <p>Today the live double-entry ledger derives from our own <code>fills</code> — our story, told twice.
+  P0 adds the raw truth layer: every wallet signature parsed from the chain (pre/post balances, token
+  deltas, real fee, slot), with per-signature reconciliation against fills. Recorded slippage becomes
+  <i>measured</i> slippage; the audit's $283.48-in / $149.30-now equation gets a per-transaction proof.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph TODAY["Today — self-referential"]
+    A1[executor intent] --> F1[fills] --> L1[double-entry ledger]
+  end
+  subgraph P0["P0 — chain-anchored"]
+    A2[executor intent] --> F2[fills = intent record]
+    RPC[(Solana RPC)] --> CT[chain_txs — raw truth]
+    F2 <-->|per-signature reconcile| CT
+    CT --> L2[live double-entry ledger]
+    F2 --> L3[paper ledger unchanged]
+  end
+  TODAY -.upgrade.-> P0
+  </pre></div>
+  <div class="tablebox"><table>
+    <tr><th>Lane</th><th>Impact</th><th>Expectation</th></tr>
+    <tr><td>LIVE</td><td>Books re-anchored to chain; true fees/slippage per trade; untracked txs impossible</td><td><span class="est">EST</span> equity:adjustment account → ~$0 (today it absorbs drift); every future audit is one query</td></tr>
+    <tr><td>PAPER</td><td>Unchanged (simulation has no chain)</td><td>Gains the live lane's measured slippage curves to calibrate its models</td></tr>
+  </table></div>
+
+  <h2>P1 · Slot-Level Telemetry → the Live Baseball Card</h2>
+  <p>WebSocket subscriptions on every open position's pool (≤15 live subs). The stream lives in the
+  <b>trader</b> — the exits consume it first, the card renders the same truth: a real-time depth strip,
+  the flow tape of every swap hitting our pool, and the rail's live posture.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  POOL[(pool on chain)] -->|ws events ~400ms| W[trader watcher]
+  W --> RAIL[event-driven depth rail\nfires on the drain TX]
+  W --> CTK[chain_ticks hot stream]
+  CTK --> CARD[baseball card\ndepth strip · flow tape · rail chip]
+  CTK --> DIAG[diagnosis agent context]
+  </pre></div>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant D as Deployer
+  participant P as Pool
+  participant OLD as Today (5s polls)
+  participant NEW as P1 (slot events)
+  D->>P: drain TX (slot N)
+  P-->>NEW: vault delta event (slot N+1, ~0.4-0.8s)
+  NEW->>P: sell into remaining depth
+  Note over NEW: exit near entry price
+  P-->>OLD: next aggregator poll (up to 5-10s + 2-read confirm)
+  OLD->>P: sell attempt
+  Note over OLD: pool already $2 — write-off or pennies
+  </pre></div>
+  <div class="tablebox"><table>
+    <tr><th>Metric</th><th>Baseline <span class="meas">MEASURED</span></th><th>P1 <span class="est">EST</span></th></tr>
+    <tr><td>Drain reaction time</td><td>5–10s (poll + 2-read confirm)</td><td>&lt;1s (the drain TX itself is the signal; phantom reads impossible by construction)</td></tr>
+    <tr><td>Unsellable write-offs (live)</td><td>$93.19 lifetime; $5.00 today post-rail</td><td>→ near-zero: exits fire while the drain is still executing</td></tr>
+    <tr><td>Cut exit quality</td><td>cuts recover 60–95% of ticket</td><td>most cuts exit green (sell before the price leg of the pull)</td></tr>
+  </table></div>
+
+  <h2>P2 · Execution Hardening</h2>
+  <p>Warm routes (quotes pre-fetched at arm), priority-fee autoscaling to congestion, and Jito bundle
+  submission — entries and exits that land where quoted, invisible to sandwichers, with inclusion
+  guaranteed in congested blocks.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph TODAY2["Today: 1–3s visible round trip"]
+    T1[arm] --> T2[quote] --> T3[build] --> T4[sign] --> T5[send public mempool]
+  end
+  subgraph P2X["P2: warm + bundled"]
+    U1[arm → route pre-fetched] --> U2[sign warm TX]
+    U2 --> U3[Jito bundle · priority fee autoscale]
+    U3 --> U4[atomic inclusion · no sandwich exposure]
+  end
+  TODAY2 -.upgrade.-> P2X
+  </pre></div>
+  <div class="tablebox"><table>
+    <tr><th>Lane</th><th>Impact</th></tr>
+    <tr><td>LIVE</td><td>Entry latency 1–3s → <span class="est">~0.5s</span>; measured slippage (via P0) becomes the tuning signal; sandwich class eliminated from the loss ledger</td></tr>
+    <tr><td>PAPER</td><td>Mirror timing tightens — the DRILLCAT class (paper banks while live's buy is in flight) shrinks with the latency</td></tr>
+  </table></div>
+
+  <h2>P3 · Pre-Entry Slot Awareness — the Right-Entries pillar</h2>
+  <p>Subscribe to a candidate's pool at <b>arm</b>, before commitment. The last 2–3 slots of real flow
+  become the final gate: a pool whose depth is already stepping down, or whose flow is one wallet
+  selling into manufactured buys, never receives our ticket. This targets the insta-drain class that
+  churned live's sub-floor tickets (65 cuts in one day for ±pennies).</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  ARM[candidate arms] --> SUB[subscribe pool ws]
+  SUB --> OBS{2–3 slots of real flow}
+  OBS -->|depth stable · organic flow| GO[commit entry\nwarm route fires]
+  OBS -->|depth stepping down\nor single-wallet churn| ABORT[refuse — audit entry_slot_veto]
+  </pre></div>
+  <div class="tablebox"><table>
+    <tr><th>Metric</th><th>Baseline <span class="meas">MEASURED</span></th><th>P3 <span class="est">EST</span></th></tr>
+    <tr><td>Live ticket churn (insta-drain entries)</td><td>65 cuts/day at ±pennies; 2 unsellables/day</td><td>majority filtered pre-entry — capital concentrates on pools with real flow</td></tr>
+    <tr><td>Rungless-death tax (paper benchmark ≤25%)</td><td>ran 92% of gross wins on the worst 8h</td><td>the drain-at-birth subclass removed at the door</td></tr>
+  </table></div>
+
+  <h2>P4 · Deployer Intelligence — F6's deepening</h2>
+  <p>From <i>which launch</i> to <i>whose hand</i>: index deployer wallets from chain history, link
+  ticker waves to operators, score them like we score crowds. The L-order table becomes a reputation
+  graph for the other side of the table.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  CHAIN[(chain history)] --> DEP[deployer wallet index]
+  DEP --> REP[deployer reputation\nrug cadence · wave patterns · L3-4 payout habits]
+  REP --> F6X[F6 v2: launch order × deployer hand]
+  F6X --> TIERS[tier ladder + moon alerts + flow-tape DEPLOYER flag]
+  </pre></div>
+
+  <h2>Impact on Basket Harvesting — the golden engine at chain fidelity</h2>
+  <p>The harvest was the golden window's entire profit (<span class="meas">+$2,073.96 across 57 sweeps</span>).
+  Speed + visibility upgrade every stage of it:</p>
+  <ul>
+    <li><b>Truth-counted baskets:</b> the harvest button and auto-harvest count sellable greens from
+    chain depth, not aggregator marks — the "clicked 19, banked 2" sellability disconnect becomes impossible.</li>
+    <li><b>Sweep into strength, verified live:</b> the sweep sells while the flow tape shows real bids —
+    harvesting into the buyers we can see, not the marks we hope for. Manual clicks (your +$36/sweep-exit
+    edge, 80–92% captures today) get the same live depth strip you'd want before pulling the trigger.</li>
+    <li><b>Atomic basket exits (P2):</b> multi-position sweeps ride priority-fee bundles — the whole
+    basket lands in adjacent slots instead of dribbling through 5s cycles while the wave turns.</li>
+    <li><b>Float you can watch accumulate:</b> the cards' live strips make the basket's build-up visible
+    in real time — the operator sees the harvest moment forming, the auto-harvest fires on chain-confirmed
+    depth when unattended.</li>
+  </ul>
+
+  <h2>Lane impact summary &amp; rollout</h2>
+  <div class="tablebox"><table>
+    <tr><th>Phase</th><th>LIVE lane</th><th>PAPER lane</th><th>Risk</th></tr>
+    <tr><td>P0 chain ledger</td><td>Books anchored to truth; audits instant</td><td>Slippage models calibrated from live truth</td><td>None — read-only</td></tr>
+    <tr><td>P1 slot telemetry + card</td><td>Sub-second rail; card shows the game live</td><td>Extends to paper pools after proving (same pools, more subs)</td><td>Low — additive stream; poll path stays as fallback</td></tr>
+    <tr><td>P2 execution</td><td>Faster, cheaper, sandwich-proof fills</td><td>Mirror gap shrinks</td><td>Medium — touches the money path; ships behind flags, ticket-size proving first</td></tr>
+    <tr><td>P3 slot-aware entries</td><td>Insta-drain class filtered at the door</td><td>Same gate mirrored (lanes-mirror doctrine)</td><td>Low — a refusal gate, rails never loosen</td></tr>
+    <tr><td>P4 deployer graph</td><td colspan="2">F6 v2 across every surface — alerts, tiers, flow tape</td><td>None — intelligence layer</td></tr>
+  </table></div>
+  <p>Rollout order P0 → P1 → P2 → P3 → P4; each phase ships behind a flag with a pre-registered
+  counterfactual watch, under the standing change control:
+  <b>harness → ratify → ship → watch.</b> The equity curve is the final assay for every phase.</p>
+
+  <footer>GCE Chain-Level Speed &amp; Visibility Spec · committed to <code>docs/GCE_CHAIN_SPEED_SPEC.html</code> ·
+  authority: operator ratification → Canon GCE-FORMULA-001 → Foundation Spec v1.0 → this program → code.</footer>
+</div>
