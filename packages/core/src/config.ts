@@ -637,6 +637,11 @@ const envSchema = z.object({
   // depth, sell everything into whatever remains, immediately, both lanes.
   // Set low enough ($1.2k) that legitimate thin-venue moons are untouched.
   DEPTH_COLLAPSE_USD: z.coerce.number().default(1200),
+  // Read confirmation for the depth cut (2026-07-25 drain-onset forensic):
+  // 17/19 live insta-cuts fired on single flip reads against GROWING pools.
+  // A real drain persists across polls; require this many consecutive
+  // sub-threshold reads before selling. Costs ~5s against a true drain.
+  DEPTH_COLLAPSE_CONFIRM_TICKS: z.coerce.number().default(2),
   // DEEP-CROWD FLOOR EXCEPTION (ratified 2026-07-25, subfloor-deepcrowd
   // harness): the sub-floor band is NOT homogeneous — wh≥5 / 0-rug-rep crowds
   // run 67% win / 17% rug with 1-in-3 reaching ≥3× (the overnight moon

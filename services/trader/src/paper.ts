@@ -1879,6 +1879,14 @@ const suspectCounts = new Map<number, number>();
 // from entry 15s after a one-tick −6% wick stopped us out). A restart resets
 // the count; the stop simply re-confirms over the next polls before acting.
 const stopConfirmCounts = new Map<number, number>();
+// Consecutive sub-threshold DEPTH reads per position — the depth-collapse cut's
+// wick confirmation (2026-07-25). The drain-onset forensic: 17 of 19 live
+// insta-cuts fired 6-15s after entry into pools that were GROWING (slopes
+// 107-142%) — and several cuts closed GREEN, which is impossible against a
+// genuinely drained pool. The cuts were firing on single pool-flip/index-lag
+// thin reads (the trusted-read class). A REAL drain persists across polls; a
+// flip read does not. Same discipline as the pre-arm hard stop's wick confirm.
+const depthConfirmCounts = new Map<number, number>();
 // Consecutive dust-pool reads per position. A dust read is HELD (never booked off
 // its fake price), but once the pool stays dust for PERSISTENT_DUST_TICKS polls
 // the tradeable liquidity is genuinely gone and the position is a corpse — book
@@ -2639,6 +2647,25 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
       }
     } else {
       stopConfirmCounts.delete(position.id); // any non-stop tick resets the count
+    }
+    // DEPTH-CUT READ CONFIRMATION (2026-07-25): a sub-threshold depth read must
+    // persist DEPTH_COLLAPSE_CONFIRM_TICKS consecutive polls before the cut
+    // sells — one flip read was ejecting live from healthy, growing pools in
+    // 6-15s (several "cuts" closed green, impossible against a real drain).
+    // A genuine drain persists; the confirm costs one poll (~5s) against it.
+    if (exit?.reason === "depth_collapse_cut" && cfg.DEPTH_COLLAPSE_CONFIRM_TICKS > 1) {
+      const c = (depthConfirmCounts.get(position.id) ?? 0) + 1;
+      if (c < cfg.DEPTH_COLLAPSE_CONFIRM_TICKS) {
+        depthConfirmCounts.set(position.id, c);
+        console.log(
+          `🛡️  HOLD  ${short(position.mint)} — depth sub-threshold, read-confirming ${c}/${cfg.DEPTH_COLLAPSE_CONFIRM_TICKS} before cut`,
+        );
+        exit = null;
+      } else {
+        depthConfirmCounts.delete(position.id);
+      }
+    } else {
+      depthConfirmCounts.delete(position.id); // any healthy-depth tick resets
     }
     if (exit && !(intent === "ride" && (exit.reason === "profit_trail" || exit.reason === "hard_stop"))) {
       await sell(position, market, exit.fraction, exit.reason);
