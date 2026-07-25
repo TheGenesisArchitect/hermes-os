@@ -502,10 +502,27 @@ async function observe(
     // announce. Re-arms after a disarm keep the original triggeredAt as the
     // "first confirmed demand" mark.
     const firstArm = armed && !o.triggeredAt;
+    // F6: LAUNCH ORDER (the adversary's tempo, ratified 2026-07-25) — which
+    // launch of this ticker this mint is, over the prior 24h. Stamped ONCE at
+    // first arm so every trade traces through the pipeline with it (canon:
+    // No Drift). Harness: 2nd launches are the only net-negative cell
+    // (−2.3¢/$); 3rd–4th the golden window (+19.5¢/$).
+    let launchOrder: number | null = null;
+    if (firstArm) {
+      const [lo] = (await db.execute(sql`
+        SELECT count(DISTINCT c2.mint)::int + 1 AS ord
+        FROM candidate_outcomes c2
+        JOIN tokens t2 ON t2.mint = c2.mint
+        WHERE t2.symbol = (SELECT symbol FROM tokens WHERE mint = ${o.mint})
+          AND c2.mint <> ${o.mint}
+          AND c2.first_seen_at > now() - interval '24 hours'`)) as unknown as { ord: number }[];
+      launchOrder = lo?.ord ?? 1;
+    }
     await db
       .update(candidateOutcomes)
       .set({
         armed,
+        ...(launchOrder != null ? { launchOrder } : {}),
         // Freshest demand read while armed — the trader sizes off THIS (quality
         // sizing), so it must reflect the tick it will actually enter into, not
         // the first-arm snapshot from minutes ago.

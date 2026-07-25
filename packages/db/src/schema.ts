@@ -285,6 +285,10 @@ export const candidateOutcomes = pgTable("candidate_outcomes", {
   // reputation AS OF this arm. walletEdge ∈ [0,1] composite; hits are the raw
   // presence counts the validation keyed on.
   walletEdge: numeric("wallet_edge"),
+  // F6: LAUNCH ORDER — which launch of this ticker (1-based, prior-24h window),
+  // stamped at trigger time. The adversary's tempo: 2nd launches are the only
+  // net-negative cell (−2.3¢/$); 3rd–4th the golden window (+19.5¢/$).
+  launchOrder: integer("launch_order"),
   walletWinnerHits: integer("wallet_winner_hits"),
   // PRECISION subset of winner hits (never-rugged wallets). NULL on rows written
   // before the RECOVERED tier (2026-07-24) — treat NULL as "winnerHits are strict".

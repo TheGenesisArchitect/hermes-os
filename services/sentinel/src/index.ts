@@ -89,12 +89,15 @@ async function checkTradeDiagnosis(s: SentinelState): Promise<void> {
     SELECT p.id, p.lane, p.mint, tk.symbol, p.size_usd::float AS size,
            p.realized_pnl_usd::float AS pnl, p.exit_reason,
            CASE WHEN p.entry_price_usd::float > 0 THEN p.peak_price_usd::float / p.entry_price_usd::float END AS peakx,
-           (SELECT count(*)::int FROM fills f WHERE f.position_id = p.id AND f.side = 'sell' AND f.reason LIKE 'take_profit%') AS rungs
+           (SELECT count(*)::int FROM fills f WHERE f.position_id = p.id AND f.side = 'sell' AND f.reason LIKE 'take_profit%') AS rungs,
+           co.launch_order AS launch_order
     FROM positions p LEFT JOIN tokens tk ON tk.mint = p.mint
+    LEFT JOIN candidate_outcomes co ON co.mint = p.mint
     WHERE p.status = 'closed' AND p.id > ${s.lastDiagnosedPosId}
     ORDER BY p.id ASC LIMIT 50`)) as unknown as {
     id: number; lane: string; mint: string; symbol: string | null; size: number;
     pnl: number | null; exit_reason: string | null; peakx: number | null; rungs: number;
+    launch_order: number | null;
   }[];
   for (const p of rows) {
     const pnl = p.pnl ?? 0;
@@ -125,6 +128,7 @@ async function checkTradeDiagnosis(s: SentinelState): Promise<void> {
         rungs: p.rungs, exitReason: p.exit_reason,
         capturePct: capture != null ? Math.round(capture * 100) : null,
         peakX: p.peakx != null ? Number(p.peakx.toFixed(2)) : null,
+        launchOrder: p.launch_order ?? null,
       },
     });
     s.lastDiagnosedPosId = p.id;
@@ -401,6 +405,7 @@ async function checkMoonshots(s: SentinelState): Promise<void> {
       wWin: candidateOutcomes.walletWinnerHits,
       wRug: candidateOutcomes.walletRugHits,
       liqGrowth: candidateOutcomes.liqGrowth,
+      launchOrder: candidateOutcomes.launchOrder,
       trigMult: candidateOutcomes.triggerMultiple,
       symbol: tokens.symbol,
       dex: tokens.dex,
@@ -437,7 +442,7 @@ async function checkMoonshots(s: SentinelState): Promise<void> {
       `MOONSHOT · ${r.symbol ?? short(r.mint)} — ${grade} 2★`,
       [
         `shape    ${shape}${dipPct != null && dipPct > 5 ? ` · wick −${dipPct.toFixed(0)}%` : ""}${snapPct != null ? ` · snap +${snapPct.toFixed(0)}%` : ""}${rate != null ? ` @ ${rate.toFixed(1)}×/min` : ""}`,
-        `crowd    ${num(r.wWin) > 0 ? `${num(r.wWin)} winner-rep wallet${num(r.wWin) > 1 ? "s" : ""} aboard` : "retrace + holders confirm"}`,
+        `crowd    ${num(r.wWin) > 0 ? `${num(r.wWin)} winner-rep wallet${num(r.wWin) > 1 ? "s" : ""} aboard` : "retrace + holders confirm"}${r.launchOrder != null ? ` · launch #${r.launchOrder}${Number(r.launchOrder) >= 3 && Number(r.launchOrder) <= 4 ? " ⭐ golden window" : Number(r.launchOrder) === 2 ? " ⚠ re-harvest cell" : ""}` : ""}`,
         // HONEST DISPOSITION (operator, 2026-07-24: "we are getting Qualified
         // Moon alerts and we are not entering them") — the old line hardcoded
         // "both lanes firing" while F1/F3/seat demoted 17 of the last 20

@@ -182,6 +182,8 @@ async function openFromSignal(
     /** PRECISION subset (never-rugged wallets); null = pre-tier row, treat winner hits as strict. */
     walletStrictHits?: number | null;
     walletRugHits?: number | null;
+    /** F6: which launch of this ticker (1-based, prior 24h). 2nd = the adversary's re-harvest. */
+    launchOrder?: number | null;
     /** Pool inflow at trigger — F3 envelope check for the sensor tier. */
     liqGrowth?: number | null;
     /** Trigger multiple — the seat position; >CONVICTION_SEAT_MAX fires at sensor size. */
@@ -494,6 +496,22 @@ async function openFromSignal(
         walletRugHits: sig?.walletRugHits ?? null,
         inflow: lgNum,
         reason: "2★ moon fingerprint — SHOT at slot size (alert cohort: 11/20 winners incl. 9.67×/7.82× were $1.50 probes)",
+        sizedUsd,
+      });
+    } else if (
+      // F6: SECOND-LAUNCH DEMOTION (ratified 2026-07-25) — the adversary's
+      // re-harvest. Launch #2 of a ticker is the ONLY net-negative launch cell
+      // on the full book (−2.3¢/$ vs 3rd-4th's +19.5¢/$): the opening launch
+      // proves demand, the second harvests the players who "learned" from it.
+      // Half-clip; every other launch order rides its normal tier.
+      cfg.F6_SECOND_LAUNCH_DEMOTION && sig?.launchOrder === 2 && crowdPass && sizedUsd > 1.5
+    ) {
+      tierDemoted = true;
+      sizedUsd = Math.max(1.5, Number((sizedUsd * cfg.RECOVERED_TIER_SIZE_MULT).toFixed(2)));
+      await audit("entry_second_launch", {
+        mint: signal.mint,
+        launchOrder: 2,
+        reason: "F6: 2nd launch of ticker — the adversary's re-harvest cell (−2.3¢/$ full-book), half-clip",
         sizedUsd,
       });
     } else if (
@@ -858,6 +876,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
       walletWinnerHits: candidateOutcomes.walletWinnerHits,
       walletStrictHits: candidateOutcomes.walletStrictHits,
       walletRugHits: candidateOutcomes.walletRugHits,
+      launchOrder: candidateOutcomes.launchOrder,
       walletKnown: candidateOutcomes.walletKnown,
       convictionScore: candidateOutcomes.convictionScore,
       liqGrowth: candidateOutcomes.liqGrowth,
@@ -994,7 +1013,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     return;
   }
 
-  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletStrictHits, walletRugHits, walletKnown, liqGrowth, signature, dipDepth, snapPct, snapRate, stars } of armed) {
+  for (const { signal, token, mint, triggerBuyShare, rugProb, triggerMultiple, walletWinnerHits, walletStrictHits, walletRugHits, walletKnown, liqGrowth, signature, dipDepth, snapPct, snapRate, stars, launchOrder } of armed) {
     if (total() >= cfg.PAPER_MAX_CONCURRENT) break; // global cap hit — leave the rest armed
 
     // WALLET ANTI-GATE, PAPER EDITION (band dissection 2026-07-23): rug-history
@@ -1173,6 +1192,7 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
           walletWinnerHits: walletWinnerHits ?? null,
           walletStrictHits: walletStrictHits ?? null,
           walletRugHits: walletRugHits ?? null,
+          launchOrder: launchOrder ?? null,
         }
       : null;
     // LIVE FIRES ON THE SAME SIGNAL, INDEPENDENTLY — not as a shadow of paper.

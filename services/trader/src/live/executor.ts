@@ -715,6 +715,8 @@ export async function maybeLiveBuy(
      * the reduced clip live inherits via paperFrac. Null = pre-tier row. */
     walletStrictHits?: number | null;
     walletRugHits?: number | null;
+    /** F6: which launch of this ticker (1-based). Sizing flows via paperFrac; carried for audit visibility. */
+    launchOrder?: number | null;
   } | null = null,
   /**
    * The fraction of ITS capital paper just committed to this same signal. Live

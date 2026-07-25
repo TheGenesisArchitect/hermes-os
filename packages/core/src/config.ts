@@ -646,6 +646,12 @@ const envSchema = z.object({
   // sub-floor until the half-clip cell proves (paper reveals, live confirms).
   DEEPCROWD_FLOOR_ENABLED: z.coerce.boolean().default(true),
   DEEPCROWD_MIN_WH: z.coerce.number().default(5),
+  // F6: LAUNCH ORDER (ratified 2026-07-25) — the adversary's tempo, stamped
+  // by the recorder on every candidate at first arm. The 2nd launch of a
+  // ticker is the only net-negative launch cell on the full book (−2.3¢/$;
+  // 1st +3.4¢, 3rd-4th +19.5¢, 5th+ +2.8¢) — his re-harvest of the players
+  // who "learned" from the opening. Half-clip demotion; moon shots outrank.
+  F6_SECOND_LAUNCH_DEMOTION: z.coerce.boolean().default(true),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction
