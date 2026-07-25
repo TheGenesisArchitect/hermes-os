@@ -436,6 +436,9 @@ export interface ManagedPosition {
    * the health chip which needs trajectory. The board must match the matrix the
    * moment a trade opens, not minutes later. */
   signature: string | null;
+  /** F6: which launch of this ticker (1-based, prior 24h) — the adversary's
+   * tempo, woven into every card. 2 = re-harvest cell, 3-4 = golden window. */
+  launchOrder: number | null;
   call: ManagementCall | null; // live classifier verdict, recomputed for full factors
   dna: TradeDna | null; // fused health state + moonshot clock (docs/trade-dna-health.md)
   spark: { i: number; mm: number }[]; // markMultiple trajectory
@@ -480,9 +483,11 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
       realizedPnlUsd: positions.realizedPnlUsd,
       openedAt: positions.openedAt,
       signature: positions.signature,
+      launchOrder: candidateOutcomes.launchOrder,
     })
     .from(positions)
     .innerJoin(tokens, eq(tokens.mint, positions.mint))
+    .leftJoin(candidateOutcomes, eq(candidateOutcomes.mint, positions.mint))
     // BOTH LANES — live records position_ticks from the guard now, so its cards
     // carry the same DNA/spark/factors as paper. Callers doing paper-bankroll
     // math (equity, harvest) must filter lane='paper' themselves.
@@ -547,6 +552,7 @@ export async function getManagedPositions(): Promise<ManagedPosition[]> {
       mint: p.mint,
       symbol: p.symbol,
       dex: p.dex,
+      launchOrder: p.launchOrder ?? null,
       sizeUsd,
       entryPriceUsd: entryPrice,
       markMultiple,

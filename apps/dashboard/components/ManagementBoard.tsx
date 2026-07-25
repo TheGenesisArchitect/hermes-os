@@ -308,6 +308,18 @@ function Card({ p }: { p: ManagedPositionView }) {
       <div className="mt-2 flex items-center gap-2">
         <span className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>DNA</span>
         <TradeDNA dna={p.dna} />
+        {p.launchOrder != null ? (
+          <span
+            className="rounded px-1.5 py-0.5 text-[10px] font-bold tracking-wide"
+            title={`F6 launch order — launch #${p.launchOrder} of this ticker in 24h${p.launchOrder === 2 ? " · the adversary's re-harvest cell (half-clip)" : p.launchOrder >= 3 && p.launchOrder <= 4 ? " · golden window (+19.5¢/$)" : ""}`}
+            style={{
+              color: p.launchOrder === 2 ? "var(--status-critical)" : p.launchOrder >= 3 && p.launchOrder <= 4 ? "#ffc44d" : "var(--text-muted)",
+              border: `1px solid ${p.launchOrder === 2 ? "var(--status-critical)" : p.launchOrder >= 3 && p.launchOrder <= 4 ? "#ffc44d" : "var(--border-subtle)"}`,
+            }}
+          >
+            L{p.launchOrder}{p.launchOrder >= 3 && p.launchOrder <= 4 ? "⭐" : p.launchOrder === 2 ? "⚠" : ""}
+          </span>
+        ) : null}
       </div>
 
       <p className="mt-2 text-xs leading-relaxed" style={{ color: "var(--text-secondary)" }}>
