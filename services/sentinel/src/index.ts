@@ -430,6 +430,18 @@ async function checkMoonshots(s: SentinelState): Promise<void> {
   for (const r of rows) {
     if (s.moonshotSeen.includes(r.mint)) continue;
     s.moonshotSeen.push(r.mint);
+    // ── ALERT SHARPENING (ratified 2026-07-25, moon-f6-cut + moon-conversion:
+    // 10% conversion over the last 50 alerts, "the notifications are becoming
+    // noise") ────────────────────────────────────────────────────────────────
+    // F6 gate: L1 first-launches fizzle 64% (vs 53-59% flying for L2+) — the
+    // adversary's opening is where the fingerprint lies. L1 moons stay in the
+    // hourly digest, never a phone buzz.
+    // Machine gate: a ping means the machine is TAKING the shot — seat-probe
+    // dispositions (>1.65× trigger) don't buzz either.
+    const tmGate = r.trigMult != null && Number(r.trigMult) > cfg.CONVICTION_SEAT_MAX;
+    if ((r.launchOrder != null && Number(r.launchOrder) === 1) || tmGate) {
+      continue; // seen-marked above — no ping, no debrief queued
+    }
     // every 🌙 call owes the operator a verdict — queue the outcome debrief
     s.moonshotPending.push({ mint: r.mint, at: Date.now() });
     if (s.moonshotSeen.length > 60) s.moonshotSeen = s.moonshotSeen.slice(-40);
