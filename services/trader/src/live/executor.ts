@@ -1713,18 +1713,55 @@ async function liveSellPosition(
       positionId: position.id, mint: position.mint, qty: qtyUiSold,
       priceUsd: qtyUiSold > 0 ? proceedsUsd / qtyUiSold : 0, feeUsd,
       entryPriceUsd: n(position.entryPriceUsd), reason, txSignature: res.signature });
-    await db
-      .update(positions)
-      .set({
-        qtyRemaining: String(Math.max(0, remainingUi)),
-        realizedPnlUsd: String(n(position.realizedPnlUsd) + pnl),
-        // Persist the realized exit price (proceeds per token) so the paired ledger
-        // reads exit apples-to-apples without reconstructing from fills.
-        ...(closing
-          ? { status: "closed", closedAt: new Date(), exitReason: reason, exitPriceUsd: String(qtyUiSold > 0 ? proceedsUsd / qtyUiSold : 0) }
-          : {}),
-      })
-      .where(eq(positions.id, position.id));
+    const closePatch = {
+      qtyRemaining: String(Math.max(0, remainingUi)),
+      realizedPnlUsd: String(n(position.realizedPnlUsd) + pnl),
+      // Persist the realized exit price (proceeds per token) so the paired ledger
+      // reads exit apples-to-apples without reconstructing from fills.
+      ...(closing
+        ? { status: "closed" as const, closedAt: new Date(), exitReason: reason, exitPriceUsd: String(qtyUiSold > 0 ? proceedsUsd / qtyUiSold : 0) }
+        : {}),
+    };
+    try {
+      await db.update(positions).set(closePatch).where(eq(positions.id, position.id));
+    } catch (err) {
+      // THE SELL IS DONE ON-CHAIN (fill row + tx signature recorded above).
+      // A bookkeeping write failure must NEVER surface as a failed sell — the
+      // caller's retry would re-sell an already-sold position (BullPad #5131
+      // and CALLOUT both booked phantom losses this way; on re-read the row
+      // was often already correct — DPI ack-loss, not a real write failure).
+      // Verify-then-retry the WRITE only; if all else fails, log loudly and
+      // let the chain-truth recon heal the row.
+      let healed = false;
+      for (let i = 0; i < 3 && !healed; i++) {
+        await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+        try {
+          const [row] = await db
+            .select({ q: positions.qtyRemaining })
+            .from(positions)
+            .where(eq(positions.id, position.id));
+          if (row && Math.abs(Number(row.q) - Math.max(0, remainingUi)) < 1e-6) {
+            healed = true; // the "failed" write actually landed
+            break;
+          }
+          await db.update(positions).set(closePatch).where(eq(positions.id, position.id));
+          healed = true;
+        } catch {
+          /* next attempt */
+        }
+      }
+      if (!healed) {
+        console.error(
+          `⚠️ book-write failed after CONFIRMED sell ${res.signature} (pos #${position.id}) — chain recon heals: ${err instanceof Error ? err.message.slice(0, 100) : err}`,
+        );
+        await audit("live_bookwrite_failed", {
+          positionId: position.id,
+          mint: position.mint,
+          signature: res.signature,
+          intended: closePatch,
+        }).catch(() => {});
+      }
+    }
     await audit("live_sell", {
       positionId: position.id,
       mint: position.mint,
