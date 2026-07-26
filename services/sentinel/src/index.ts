@@ -101,7 +101,7 @@ async function loadState(): Promise<SentinelState> {
 // design — a failed pass never blocks the loop; the books re-anchor as rows
 // accrete. Plain JSON-RPC via resilientFetch: no new dependencies.
 const LIVE_WALLET_ADDR = "rEPAt2uXrLHpN3J7By4PaAjbdi21V7rXozDipw5X1Q5";
-const CHAIN_INGEST_MS = 60_000;
+const CHAIN_INGEST_MS = 300_000; // slowed 5x 2026-07-26: sentinel RPC load was starving LIVE SELLS (429s -> write-offs)
 async function rpcCall(method: string, params: unknown[]): Promise<any> {
   const res = await resilientFetch(cfg.SOLANA_RPC_URL, {
     method: "POST",
@@ -153,7 +153,7 @@ async function checkHarvestWindow(s: SentinelState): Promise<void> {
 // to their genesis tx; fee payer = deployer → token_deployers. The rep gate
 // and card flag read this table.
 async function checkDeployerWalk(s: SentinelState): Promise<void> {
-  if (Date.now() - s.lastDeployerWalkMs < 5 * 60_000) return;
+  if (Date.now() - s.lastDeployerWalkMs < 30 * 60_000) return; // slowed 6x: sells outrank fingerprints
   s.lastDeployerWalkMs = Date.now();
   try {
     const mints = (await db.execute(sql`
