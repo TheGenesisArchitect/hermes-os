@@ -4801,6 +4801,35 @@ export async function getChainPulse(): Promise<Record<string, ChainPulseView>> {
   }
 }
 
+// /command recent-closes shelf: every finished trade of the last N minutes.
+export interface RecentCloseView {
+  id: number; mint: string; symbol: string | null; lane: string;
+  sizeUsd: number; pnl: number; peakx: number; rungs: number;
+  signature: string | null; exitReason: string | null;
+}
+export async function getRecentCloses(minutes = 30): Promise<RecentCloseView[]> {
+  try {
+    const rows = (await db.execute(sql`
+      SELECT p.id, p.mint, tk.symbol, p.lane, p.size_usd::float sz,
+        p.realized_pnl_usd::float pnl, p.signature, p.exit_reason,
+        CASE WHEN p.entry_price_usd::float > 0 THEN p.peak_price_usd::float / p.entry_price_usd::float ELSE 1 END peakx,
+        (SELECT count(*)::int FROM fills f WHERE f.position_id = p.id AND f.side = 'sell' AND f.reason LIKE 'take_profit%') rungs
+      FROM positions p LEFT JOIN tokens tk ON tk.mint = p.mint
+      WHERE p.status = 'closed' AND p.closed_at > now() - make_interval(mins => ${minutes})
+      ORDER BY p.closed_at DESC LIMIT 24`)) as unknown as {
+      id: number; mint: string; symbol: string | null; lane: string; sz: number;
+      pnl: number; signature: string | null; exit_reason: string | null; peakx: number; rungs: number;
+    }[];
+    return rows.map((r) => ({
+      id: r.id, mint: r.mint, symbol: r.symbol, lane: r.lane, sizeUsd: Number(r.sz),
+      pnl: Number(r.pnl ?? 0), peakx: Number(r.peakx ?? 1), rungs: r.rungs,
+      signature: r.signature, exitReason: r.exit_reason,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export async function getTradeManager(limit = 14): Promise<TradeManagerView> {
   try {
     const rows = (await db.execute(sql`

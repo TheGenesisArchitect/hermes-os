@@ -59,6 +59,8 @@ interface SentinelState {
   lastChainSig: string | null;
   /** epoch ms of the last chain ingestion pass */
   lastChainMs: number;
+  /** epoch ms of the last harvest-window summons (15m cooldown) */
+  lastHarvestPingMs: number;
   /** oldest chain signature already ingested — the history backfill cursor */
   backChainSig: string | null;
   /** true once the backward walk has exhausted the wallet's history */
@@ -84,6 +86,7 @@ async function loadState(): Promise<SentinelState> {
     lastDiagnosedPosId: v.lastDiagnosedPosId ?? -1,
     lastChainSig: v.lastChainSig ?? null,
     lastChainMs: v.lastChainMs ?? 0,
+    lastHarvestPingMs: v.lastHarvestPingMs ?? 0,
     backChainSig: v.backChainSig ?? null,
     chainBackfillDone: v.chainBackfillDone ?? false,
   };
@@ -105,6 +108,43 @@ async function rpcCall(method: string, params: unknown[]): Promise<any> {
   const j = (await res.json()) as { result?: unknown };
   return j?.result ?? null;
 }
+// HARVEST SUMMONS (operator 2026-07-26: Law 3 — the basket harvest is the
+// centerpiece; the summons finds the operator when the basket is ripe).
+// Window = ≥4 greens (latest tick mark ≥1.08×) carrying ≥$8 of float.
+// 15m cooldown; auto-harvest remains the unattended backstop.
+async function checkHarvestWindow(s: SentinelState): Promise<void> {
+  if (Date.now() - s.lastHarvestPingMs < 15 * 60_000) return;
+  try {
+    const rows = (await db.execute(sql`
+      SELECT count(*)::int AS n, coalesce(sum(p.size_usd::float * (tk.mark - 1)), 0)::float AS carry
+      FROM positions p JOIN LATERAL (
+        SELECT mark_multiple::float AS mark FROM position_ticks
+        WHERE position_id = p.id ORDER BY snapped_at DESC LIMIT 1
+      ) tk ON true
+      WHERE p.status = 'open' AND p.lane = 'paper' AND tk.mark >= 1.08`)) as unknown as {
+      n: number;
+      carry: number;
+    }[];
+    const r = rows[0];
+    if (r && r.n >= 4 && Number(r.carry) >= 8) {
+      s.lastHarvestPingMs = Date.now();
+      await notify(
+        "SUMMARY",
+        `HARVEST WINDOW — ${r.n} greens carrying $${Number(r.carry).toFixed(0)}`,
+        [
+          "tap /command to sweep — auto-harvest backstops in the cooldown",
+          `basket float $${Number(r.carry).toFixed(2)} across ${r.n} greens ≥1.08×`,
+        ],
+        4,
+        ["moneybag"],
+        "http://localhost:3777/command",
+      );
+    }
+  } catch {
+    /* summons is best-effort */
+  }
+}
+
 type ChainSigRow = { signature: string; slot: number; blockTime: number | null; err: unknown };
 /** Parse + insert one signature. "skip" = failed tx (fees only), "retry" = RPC miss. */
 async function ingestChainTx(sg: ChainSigRow): Promise<"ok" | "skip" | "retry"> {
@@ -1055,6 +1095,7 @@ while (true) {
     await checkMoonshotOutcomes(state);
     await checkTradeDiagnosis(state);
     await checkChainTruth(state);
+    await checkHarvestWindow(state);
     await checkFills(state);
     await checkHeartbeat(state);
     await checkDigests(state);
