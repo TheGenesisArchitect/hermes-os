@@ -19,6 +19,7 @@ import { FluxbeamProvider } from "./fluxbeam.js";
 import { PumpSwapProvider } from "./pumpswap.js";
 import { PumpPortalProvider } from "./pumpportal.js";
 import { MeteoraDbcProvider, MeteoraDammV2Provider } from "./meteora.js";
+import { PumpFunCurveProvider } from "./pumpfunCurve.js";
 
 const BREAKER_TRIP_AFTER = 3; // consecutive failures → open
 const BREAKER_COOLDOWN_MS = 30_000; // skip an open provider this long, then re-probe
@@ -57,6 +58,10 @@ export class SwapRouter {
       // protocol", so non-Meteora tokens pass through at zero cost.
       new MeteoraDbcProvider(),
       new MeteoraDammV2Provider(),
+      // PumpFun CURVE direct, ahead of the PumpPortal last resort (2026-07-26):
+      // bonding-curve SELLS that PumpPortal 400s — the last write-off class.
+      // Sell-only; everything else NoRoutes straight through.
+      new PumpFunCurveProvider(),
       new PumpPortalProvider(),
     ];
     for (const p of this.providers) this.breakers.set(p.name, { fails: 0, openUntil: 0 });
