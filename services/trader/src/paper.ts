@@ -1564,13 +1564,20 @@ export function decideExit(
     const tp2Cum = farm ? cfg.FARM_TP2_CUM_SELL : cfg.TP2_CUM_SELL;
     let targetSold = 0;
     let tpReason = "";
-    if (mark >= cfg.TP2_MULT) {
+    // PEAK-TRIGGERED RUNGS (operator 2026-07-25 "fix the failures asap"):
+    // the base ladder was mark-gated at poll time, so a spike through a rung
+    // between 2s polls banked NOTHING — since the 5% pin, all four rungless
+    // hard-stops peaked ≥1.22× and died full-ticket. Same mechanism as the
+    // ratified micro-TP fix: the PEAK crosses the rung, the fill guard
+    // (mark ≥ 0.7× rung) prices the bank at what's actually still there.
+    const rungHit = (rung: number) => peakMult >= rung && mark >= rung * cfg.MOON_RUNNER_RATCHET;
+    if (rungHit(cfg.TP2_MULT)) {
       targetSold = tp2Cum;
       tpReason = "take_profit_2";
-    } else if (mark >= cfg.TP1_MULT) {
+    } else if (rungHit(cfg.TP1_MULT)) {
       targetSold = tp1Cum;
       tpReason = "take_profit_1";
-    } else if (mark >= cfg.TP0_MULT) {
+    } else if (rungHit(cfg.TP0_MULT)) {
       // First tranche into the blow-off top. Organic tape banks 40% here and rides
       // the ~60% runner for winners' tail; FARM tape dumps 100% (tp0Cum=1.0) — the
       // escalator's "runner" is bait that rugs to $0, so first level = full exit.
