@@ -1107,11 +1107,21 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
   // must take the slot ahead of a marginal flat-pool confirm. Sorted first so
   // the later stable sorts (hot family, prime venue) layer on top.
   if (cfg.LIQ_INFLOW_STRONG > 0) {
-    armed.sort((a, b) => {
-      const av = a.liqGrowth == null ? 0 : Number(a.liqGrowth) >= cfg.LIQ_INFLOW_STRONG ? 1 : 0;
-      const bv = b.liqGrowth == null ? 0 : Number(b.liqGrowth) >= cfg.LIQ_INFLOW_STRONG ? 1 : 0;
-      return bv - av;
-    });
+    // BAND-WEIGHTED SLOT PRIORITY (operator-ratified 2026-07-26: "ship the
+    // slot priority if it holds" — it held: strong 9.4¢/$ vs winner-rep
+    // sub-strong 1.3¢/$ over 3d, 6.1 vs 4.3 over 7d, 'other' negative both).
+    // Tickets stay EVEN (the ratified basket geometry); what adapts is WHO
+    // boards first when slots contend: strong inflow > winner-rep crowd >
+    // rest. Allocation follows efficiency; geometry never moves.
+    const tier = (x: (typeof armed)[number]): number => {
+      const lg = x.liqGrowth == null ? null : Number(x.liqGrowth);
+      if (lg != null && lg >= cfg.LIQ_INFLOW_STRONG) return 2;
+      const wr =
+        x.walletWinnerHits != null && x.walletRugHits != null &&
+        Number(x.walletWinnerHits) - Number(x.walletRugHits) >= 1;
+      return wr ? 1 : 0;
+    };
+    armed.sort((a, b) => tier(b) - tier(a));
   }
 
   // HOT-TICKER meta-momentum: refresh the family set, then stable-sort hot
