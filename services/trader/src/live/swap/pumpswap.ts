@@ -69,7 +69,24 @@ export class PumpSwapProvider implements SwapProvider {
     // Resolve the pool here so a non-pumpswap token (e.g. a bonding-curve %pump)
     // throws and the router fails over to PumpPortal — clean venue separation
     // without a hardcoded venue check.
-    const pool = await pumpswapPool(mint);
+    let pool = await pumpswapPool(mint);
+    if (!pool) {
+      // MIGRATION-WINDOW FALLBACK (2026-07-27, specimen CATE Dg5P −$1.88):
+      // a token that graduates MID-TRADE has a live PumpSwap pool minutes
+      // before DexScreener indexes it — the curve provider correctly declines
+      // ("complete"), pumpportal 400s (migrated), and this provider blinded
+      // itself by asking only DexScreener. Derive the canonical pool PDA
+      // locally and verify it EXISTS on-chain (quote-time verification — a
+      // phantom pool must NoRoute here, never strand the build).
+      try {
+        const { canonicalPumpPoolPda } = await import("@pump-fun/pump-sdk");
+        const derived = canonicalPumpPoolPda(new PublicKey(mint));
+        const info = await rpcPool(cfg).read((c) => c.getAccountInfo(derived, "confirmed"));
+        if (info) pool = derived.toBase58();
+      } catch {
+        /* derivation/read failed — fall through to NoRoute */
+      }
+    }
     if (!pool) throw new NoRouteError("no pumpswap pool");
     const raw: PumpSwapRaw = { isBuy, mint, pool, amountRaw: amountRaw.toString(), slippageBps };
     return {
