@@ -2483,14 +2483,27 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
   // lanes — a live twin shares the paper mint). Fail-open: an empty pool
   // address just means no telemetry for that mint.
   try {
+    // P3 (2026-07-26): armed QUALIFIED candidates subscribe too — entries get
+    // pulse data BEFORE boarding (slot-aware entry evidence; also P4's pool-
+    // creation observation point). Open positions take priority for the subs.
     const pools = (await db.execute(sql`
-      SELECT DISTINCT p.mint, t.pool_address FROM positions p
-      JOIN tokens t ON t.mint = p.mint
-      WHERE p.status = 'open' AND t.pool_address IS NOT NULL`)) as unknown as {
+      SELECT mint, pool_address FROM (
+        SELECT DISTINCT p.mint, t.pool_address, 0 AS prio FROM positions p
+        JOIN tokens t ON t.mint = p.mint
+        WHERE p.status = 'open' AND t.pool_address IS NOT NULL
+        UNION ALL
+        SELECT c.mint, t.pool_address, 1 AS prio FROM candidate_outcomes c
+        JOIN tokens t ON t.mint = c.mint
+        WHERE c.triggered_at > now() - interval '10 minutes' AND c.entered = false
+          AND (c.stars = 2 OR (c.wallet_winner_hits >= 1 AND c.wallet_winner_hits - coalesce(c.wallet_rug_hits, 0) >= 1))
+          AND t.pool_address IS NOT NULL
+      ) u ORDER BY prio LIMIT 15`)) as unknown as {
       mint: string;
       pool_address: string;
     }[];
-    syncSlotWatch(new Map(pools.map((r) => [r.mint, r.pool_address])));
+    const wanted = new Map<string, string>();
+    for (const r of pools) if (!wanted.has(r.mint)) wanted.set(r.mint, r.pool_address);
+    syncSlotWatch(wanted);
   } catch {
     /* telemetry is optional — the poll rail stands alone */
   }
