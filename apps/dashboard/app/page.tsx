@@ -240,7 +240,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
 
   return (
     <div className="space-y-6">
-      <AutoRefresh />
+      <AutoRefresh ms={60_000} />
 
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">
