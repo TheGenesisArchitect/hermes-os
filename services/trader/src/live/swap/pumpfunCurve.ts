@@ -47,10 +47,20 @@ export class PumpFunCurveProvider implements SwapProvider {
     if (inputMint === WSOL_MINT || outputMint !== WSOL_MINT) {
       throw new NoRouteError("pumpfun-curve is sell-only");
     }
-    // Cheap protocol check happens in buildSwapTx (fetchSellState throws for
-    // non-curve mints); here we only refuse the obviously-wrong direction so a
-    // dead pool doesn't cost the router an RPC read at quote time. Build-only:
-    // on-chain slippage protects the fill, no quoted valuation.
+    // PROTOCOL CHECK AT QUOTE TIME (fix 2026-07-27: the router only fails
+    // over at quote — a build-time NoRoute strands the sell with no fallback;
+    // CATE looped 3× on "no live bonding curve" instead of walking to
+    // PumpPortal). One RPC read here buys correct failover.
+    const conn = rpcConnection(_cfg);
+    const online = new OnlinePumpSdk(conn);
+    try {
+      const st = await online.fetchSellState(new PublicKey(inputMint), new PublicKey("11111111111111111111111111111111"), TOKEN_PROGRAM).catch(() => null);
+      if (!st) throw new NoRouteError("no live bonding curve");
+      if ((st.bondingCurve as { complete?: boolean }).complete) throw new NoRouteError("curve complete — graduated");
+    } catch (e) {
+      if (e instanceof NoRouteError) throw e;
+      throw new NoRouteError("curve state unreadable");
+    }
     const raw: CurveRaw = { mint: inputMint, amountRaw: amountRaw.toString(), slippageBps };
     return {
       inputMint,
