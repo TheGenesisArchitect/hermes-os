@@ -409,6 +409,29 @@ async function openFromSignal(
       return false;
     }
   }
+  // ── MOON ARM CONFIRMATION (operator-ratified 2026-07-26: "Don't enter a
+  // Moon until it's confirmed Armed. Pre-Arm is too early and the trades
+  // collapse and we keep donating... Wait for the Confirmation and then
+  // Grab the Tail and ride it.") ─────────────────────────────────────────
+  // F2's seat lower edge (1.20×) becomes a hard ENTRY FLOOR for MOON
+  // classes — the move must have already confirmed the arm bar before real
+  // capital boards. Every drag trade of the 5% test (Rex, Dat×2, USDP,
+  // Thumbelina, realcoin) was a moon half-clip that died PRE-ARM. A WAIT,
+  // not a dismissal: the candidate re-checks every tick and boards late
+  // rather than never.
+  if (sig && typeof sig.signature === "string" && sig.signature.startsWith("MOON")) {
+    const mTm = sig.triggerMultiple != null ? Number(sig.triggerMultiple) : null;
+    if (mTm == null || !Number.isFinite(mTm) || mTm < cfg.PROFIT_LOCK_ARM_MULT) {
+      await audit("entry_filtered", {
+        mint: signal.mint,
+        reason: `${sig.signature} trigger ${mTm == null ? "unknown" : mTm.toFixed(2) + "×"} below the ${cfg.PROFIT_LOCK_ARM_MULT}× arm bar — moon boards CONFIRMED ARMED only (pre-arm collapses were the 5%-test drag)`,
+      });
+      console.log(
+        `⏳ WAIT   ${token.symbol ?? "?"} ${short(signal.mint)} — ${sig.signature} not armed yet (${mTm == null ? "n/a" : mTm.toFixed(2) + "×"} < ${cfg.PROFIT_LOCK_ARM_MULT}×)`,
+      );
+      return false;
+    }
+  }
   const sigMult = sigProfile?.size ?? 1;
   // ── SIZING: REGIME × SIGNATURE, not eight heuristics multiplied ────────────
   // PAPER_POSITION_USD is the regime's capital call (the adaptive policy's only
