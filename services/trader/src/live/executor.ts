@@ -2294,7 +2294,13 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
         const { decideExit } = await import("../paper.js");
         const entry = Number(lp.entryPriceUsd) || 0;
         const ecfg = { ...cfg, ...signatureExitOverrides(lp.signature as Signature) };
-        const synthetic = { priceUsd: entry * markNow, liquidityUsd: 0, fdvUsd: 0, pairAddress: "", dexId: "" } as never;
+        // liquidityUsd must be NULL, not 0: this synthetic predates the depth
+        // rail, and the stubbed 0 read as "pool is dust" — every live position
+        // depth-cut within seconds of its fill (6-for-6 on 2026-07-26 re-arm)
+        // while paper twins rode 1.15-1.69×. Unknown depth skips the depth
+        // rail here; real depth protection stays with the ws drain rail and
+        // the paper mirror, which read actual pools.
+        const synthetic = { priceUsd: entry * markNow, liquidityUsd: null, fdvUsd: 0, pairAddress: "", dexId: "" } as never;
         const dec = decideExit(ecfg, lp, synthetic, entry * peakMark, null);
         if (dec) {
           // DUST-AWARE RUNGS: a partial rung on a micro position produces a sub-$1
