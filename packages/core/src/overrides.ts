@@ -37,7 +37,8 @@ export type OverrideKey =
   | "PROFIT_LOCK_ARM_MULT"
   | "PROFIT_FLOOR_USD"
   | "FARM_MAX_SLOTS"
-  | "MANDATE_AGG_FRAC";
+  | "MANDATE_AGG_FRAC"
+  | "PROBE_SLOT_FRAC";
 
 export type OverrideGroup = "size" | "tp" | "stop";
 
@@ -70,6 +71,7 @@ export const OVERRIDE_KNOBS: OverrideKnob[] = [
   { key: "POSITION_FRAC_MAX", label: "Size ceiling", hint: "% of capital on a 2-star conviction setup — the top of the policy range", group: "size", unit: "x", min: 0.002, max: 0.15, step: 0.001 },
   { key: "FARM_MAX_SLOTS", label: "Farm book cap", hint: "max concurrent farm-tape positions — dry powder waits for the organic pond", group: "size", unit: "slots", min: 0, max: 24, step: 1 },
   { key: "MANDATE_AGG_FRAC", label: "Basket deploy", hint: "aggregate % of balance across the basket, split evenly per slot (regime-adaptive 1.5-5%)", group: "size", unit: "x", min: 0.015, max: 0.05, step: 0.001 },
+  { key: "PROBE_SLOT_FRAC", label: "Probe scale", hint: "sensor ticket as a fraction of the slot — sub-floor/clone/sensor tuition", group: "size", unit: "x", min: 0.05, max: 0.5, step: 0.01 },
   { key: "TP0_MULT", label: "TP0", hint: "first tranche — bank into the blow-off", group: "tp", unit: "x", min: 1.02, max: 3, step: 0.01, supersededBySignature: true },
   { key: "TP1_MULT", label: "TP1", hint: "bank the bulk", group: "tp", unit: "x", min: 1.05, max: 5, step: 0.01, supersededBySignature: true },
   { key: "TP2_MULT", label: "TP2", hint: "most banked; remainder rides uncapped", group: "tp", unit: "x", min: 1.1, max: 20, step: 0.05, supersededBySignature: true },
