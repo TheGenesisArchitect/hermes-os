@@ -37,6 +37,41 @@ import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { maybeLiveBuy, mirrorLiveSell } from "./live/executor.js";
 import { poolPulse, syncSlotWatch } from "./slotWatch.js";
 
+// P2 FAST EXIT — fired by the ws watcher the moment a pool's SOL halves in
+// 30s. Sells the open paper position at once (reason: depth_collapse_cut,
+// same ratified rail, just event-speed) and mirrors live. In-flight guard
+// prevents a double-sell against the concurrent manage poll; the fresh
+// re-read means an already-closed position is a no-op.
+const drainInFlight = new Set<string>();
+export async function fastDrainExit(cfg: HermesConfig, mint: string): Promise<void> {
+  if (drainInFlight.has(mint)) return;
+  drainInFlight.add(mint);
+  try {
+    const open = await db
+      .select()
+      .from(positions)
+      .where(and(eq(positions.status, "open"), eq(positions.lane, "paper"), eq(positions.mint, mint)));
+    if (!open.length) return;
+    const markets = await fetchTokenMarkets([mint]).catch(() => new Map<string, TokenMarket | null>());
+    const market = markets.get(mint) ?? null;
+    if (!market) return; // no priceable route this instant — the poll rail owns it
+    for (const position of open) {
+      console.log(`⚡ FAST DRAIN EXIT ${short(mint)} — pool SOL halved in 30s (ws event), cutting at event speed`);
+      await audit("fast_drain_exit", {
+        mint,
+        positionId: position.id,
+        reason: "ws pool drain ≥50%/30s — event-speed cut (measured cut tax 13-16% at poll speed)",
+      });
+      await sell(position, market, 1, "depth_collapse_cut");
+      void mirrorLiveSell(cfg, mint, 1, "depth_collapse_cut");
+    }
+  } catch (err) {
+    console.error(`fast drain exit failed (poll rail still armed): ${err instanceof Error ? err.message : err}`);
+  } finally {
+    drainInFlight.delete(mint);
+  }
+}
+
 /** How many recent ticks the classifier reads to judge continuation. */
 const TICK_WINDOW = 12;
 

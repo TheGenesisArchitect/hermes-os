@@ -29,6 +29,16 @@ interface PoolState {
   samples: [number, number][];
   eventsMin: number[];
   lastInsertMs: number;
+  lastDrainFireMs: number;
+}
+
+// P2 FAST EXIT (operator 2026-07-26: "kill the drain-cut tail"): when the
+// pool's own SOL halves inside 30s, the drain is executing NOW — waiting for
+// the next manage poll pays the measured 13-16% cut tax. The handler fires
+// the exit the moment the event lands; 30s re-fire guard per pool.
+let drainHandler: ((mint: string) => void) | null = null;
+export function setDrainHandler(fn: (mint: string) => void): void {
+  drainHandler = fn;
 }
 
 const WS_URLS = ["wss://solana-rpc.publicnode.com", "wss://api.mainnet-beta.solana.com"];
@@ -81,6 +91,19 @@ function connect(): void {
           }
           st.eventsMin.push(now);
           while (st.eventsMin.length && now - st.eventsMin[0]! > 60_000) st.eventsMin.shift();
+          // Drain detection on the event itself: ≥50% of pool SOL gone in 30s.
+          if (drainHandler && now - st.lastDrainFireMs > 30_000) {
+            const windowStart = now - 30_000;
+            const inWindow = st.samples.filter(([t]) => t >= windowStart);
+            if (inWindow.length >= 2) {
+              const first = inWindow[0]![1];
+              const last = inWindow[inWindow.length - 1]![1];
+              if (first > 0.05e9 && last < first * 0.5) {
+                st.lastDrainFireMs = now;
+                drainHandler(mint);
+              }
+            }
+          }
           if (now - st.lastInsertMs >= 1_000) {
             st.lastInsertMs = now;
             void db
@@ -155,6 +178,7 @@ export function syncSlotWatch(wanted: Map<string, string>): void {
       samples: [],
       eventsMin: [],
       lastInsertMs: 0,
+      lastDrainFireMs: 0,
     };
     state.set(mint, fresh);
     sendSub(mint, fresh);

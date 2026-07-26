@@ -7,7 +7,13 @@ acquireSingletonLock(resolve(import.meta.dirname, "../../../.hermes-trader.pid")
 import { loadConfig } from "@hermes/core";
 import { config, db } from "@hermes/db";
 import { eq } from "drizzle-orm";
-import { checkAutoHarvest, fastFloorSweep, managePositions, openConfirmedPositions, openNewPositions, snapshotEquity } from "./paper.js";
+import { checkAutoHarvest, fastDrainExit, fastFloorSweep, managePositions, openConfirmedPositions, openNewPositions, snapshotEquity } from "./paper.js";
+import { setDrainHandler } from "./slotWatch.js";
+
+// P2 fast exit: the ws watcher calls this the instant a pool's SOL halves —
+// the cut runs at event speed instead of paying the 13-16% poll-speed tax.
+let latestEff = loadConfig();
+setDrainHandler((mint) => void fastDrainExit(latestEff, mint));
 import { readEffectiveConfig, refreshAdaptivePolicy } from "./adaptive.js";
 import { guardLiveBook, liveLaneStatus, processLiveCloseRequests, processLiveRequeues, processWalletSends, snapshotLiveEquity, sweepLiveBook } from "./live/executor.js";
 
@@ -114,6 +120,7 @@ while (true) {
     // throws into the loop. Static-cadence knobs (poll intervals, session
     // windows) stay on the base cfg; the tunable exit/size knobs use `eff`.
     const eff = await readEffectiveConfig(cfg);
+    latestEff = eff; // the fast drain-exit handler always uses the freshest config
 
     if (!halted && sessionOpen && Date.now() - lastOpen >= cfg.TRADER_POLL_MS) {
       // Default: the recorder is the scout — enter only on confirmed demand.
