@@ -962,11 +962,28 @@ export async function maybeLiveBuy(
                OR (p.status = 'open' AND p.lane = 'live'))
         LIMIT 1`)) as unknown as unknown[];
       if (wave) {
-        await audit("live_buy_skipped", {
-          mint,
-          reason: `clone wave: ${symbol} rugged or still open on another mint <60m — live refuses relaunches (paper keeps exploring)`,
-        });
-        return;
+        // GOLDEN WINDOW (operator 2026-07-26: "Open the golden window door"):
+        // launches 3-4+ of a ticker are the measured golden cell (+19.5¢/$;
+        // paper's relaunch probes ran 75% win / +$4.27 over the last 24h while
+        // live refused them all). A relaunch with F6 launch order ≥3 now
+        // boards at TICKET size; launch #2 (the adversary's re-harvest,
+        // −2.3¢/$) and unknown orders stay refused.
+        const lo = sig?.launchOrder ?? null;
+        if (lo != null && lo >= 3) {
+          subFloorTicket = true;
+          await audit("live_golden_window", {
+            mint,
+            symbol,
+            launchOrder: lo,
+            reason: `golden window: launch #${lo} of ${symbol} — relaunch boards at ticket size (L3-4 +19.5¢/$; paper relaunch probes 75% win/24h)`,
+          });
+        } else {
+          await audit("live_buy_skipped", {
+            mint,
+            reason: `clone wave: ${symbol} rugged or still open on another mint <60m, launch order ${lo ?? "unknown"} — live refuses (golden window opens at L3+)`,
+          });
+          return;
+        }
       }
     }
     // ── WALLET-GRAPH ANTI-GATE ───────────────────────────────────────────────
