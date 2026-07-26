@@ -467,6 +467,32 @@ async function openFromSignal(
       return false;
     }
   }
+  // ── P4 DEPLOYER REP GATE (ordered 2026-07-26, "finish the wiring") ────────
+  // A deployer with ≥2 fingerprinted launches whose rugs outnumber winners is
+  // a MEASURED bad actor — refuse the launch outright, both lanes. Unknown
+  // deployers pass untouched (absence is not evidence).
+  try {
+    const drep = (await db.execute(sql`
+      SELECT d.deployer, count(co.mint)::int AS launches,
+        count(*) FILTER (WHERE co.label = 'rug')::int AS rugs,
+        count(*) FILTER (WHERE co.label = 'winner')::int AS wins
+      FROM token_deployers d
+      JOIN token_deployers d2 ON d2.deployer = d.deployer
+      LEFT JOIN candidate_outcomes co ON co.mint = d2.mint
+      WHERE d.mint = ${signal.mint} AND d.deployer IS NOT NULL
+      GROUP BY d.deployer`)) as unknown as { deployer: string; launches: number; rugs: number; wins: number }[];
+    const r = drep[0];
+    if (r && r.launches >= 2 && r.rugs > r.wins) {
+      await audit("entry_filtered", {
+        mint: signal.mint,
+        reason: `deployer ${r.deployer.slice(0, 8)}… rep: ${r.rugs} rugs vs ${r.wins} winners over ${r.launches} tracked launches — P4 rep gate refuses`,
+      });
+      console.log(`🚫 DEPLOYER ${short(signal.mint)} — known wallet, ${r.rugs}R/${r.wins}W over ${r.launches} launches, refused`);
+      return false;
+    }
+  } catch {
+    /* fingerprint table optional — gate fails open */
+  }
   const sigMult = sigProfile?.size ?? 1;
   // ── SIZING: REGIME × SIGNATURE, not eight heuristics multiplied ────────────
   // PAPER_POSITION_USD is the regime's capital call (the adaptive policy's only

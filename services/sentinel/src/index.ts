@@ -61,6 +61,8 @@ interface SentinelState {
   lastChainMs: number;
   /** epoch ms of the last harvest-window summons (15m cooldown) */
   lastHarvestPingMs: number;
+  /** epoch ms of the last deployer-fingerprint walk (P4, 5m cadence) */
+  lastDeployerWalkMs: number;
   /** oldest chain signature already ingested — the history backfill cursor */
   backChainSig: string | null;
   /** true once the backward walk has exhausted the wallet's history */
@@ -87,6 +89,7 @@ async function loadState(): Promise<SentinelState> {
     lastChainSig: v.lastChainSig ?? null,
     lastChainMs: v.lastChainMs ?? 0,
     lastHarvestPingMs: v.lastHarvestPingMs ?? 0,
+    lastDeployerWalkMs: v.lastDeployerWalkMs ?? 0,
     backChainSig: v.backChainSig ?? null,
     chainBackfillDone: v.chainBackfillDone ?? false,
   };
@@ -142,6 +145,57 @@ async function checkHarvestWindow(s: SentinelState): Promise<void> {
     }
   } catch {
     /* summons is best-effort */
+  }
+}
+
+// P4 CONTINUOUS FINGERPRINTING (ordered 2026-07-26, "finish the wiring"):
+// every 5m, walk up to 3 unwalked mints (traded first, then fresh qualified)
+// to their genesis tx; fee payer = deployer → token_deployers. The rep gate
+// and card flag read this table.
+async function checkDeployerWalk(s: SentinelState): Promise<void> {
+  if (Date.now() - s.lastDeployerWalkMs < 5 * 60_000) return;
+  s.lastDeployerWalkMs = Date.now();
+  try {
+    const mints = (await db.execute(sql`
+      SELECT u.mint FROM (
+        SELECT p.mint, 0 AS prio FROM positions p WHERE p.opened_at > now() - interval '6 hours'
+        UNION ALL
+        SELECT c.mint, 1 FROM candidate_outcomes c WHERE c.triggered_at > now() - interval '60 minutes'
+          AND (c.stars = 2 OR c.wallet_winner_hits >= 1)
+      ) u WHERE NOT EXISTS (SELECT 1 FROM token_deployers d WHERE d.mint = u.mint)
+      GROUP BY u.mint ORDER BY min(u.prio) LIMIT 3`)) as unknown as { mint: string }[];
+    for (const { mint } of mints) {
+      let before: string | undefined;
+      let oldest: { signature: string; blockTime: number | null } | null = null;
+      let pages = 0;
+      while (pages < 12) {
+        const sigs = (await rpcCall("getSignaturesForAddress", [
+          mint,
+          { limit: 1000, ...(before ? { before } : {}) },
+        ])) as { signature: string; blockTime: number | null }[] | null;
+        if (!sigs?.length) break;
+        oldest = sigs[sigs.length - 1]!;
+        before = oldest.signature;
+        pages++;
+        if (sigs.length < 1000) break;
+      }
+      if (!oldest) continue;
+      const tx = (await rpcCall("getTransaction", [
+        oldest.signature,
+        { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
+      ])) as any;
+      const k = tx?.transaction?.message?.accountKeys?.[0];
+      const deployer = typeof k === "string" ? k : (k?.pubkey ?? null);
+      await db.execute(sql`
+        INSERT INTO token_deployers (mint, deployer, creation_sig, created_at, tx_pages)
+        VALUES (${mint}, ${deployer}, ${oldest.signature},
+                ${oldest.blockTime ? new Date(oldest.blockTime * 1000).toISOString() : null}, ${pages})
+        ON CONFLICT (mint) DO UPDATE SET deployer = EXCLUDED.deployer,
+          creation_sig = EXCLUDED.creation_sig, created_at = EXCLUDED.created_at,
+          tx_pages = EXCLUDED.tx_pages, walked_at = now()`);
+    }
+  } catch (err) {
+    console.error(`deployer walk failed (retries next pass): ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -1096,6 +1150,7 @@ while (true) {
     await checkTradeDiagnosis(state);
     await checkChainTruth(state);
     await checkHarvestWindow(state);
+    await checkDeployerWalk(state);
     await checkFills(state);
     await checkHeartbeat(state);
     await checkDigests(state);
