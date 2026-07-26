@@ -207,3 +207,37 @@ export async function toggleKillSwitch(): Promise<void> {
   });
   revalidatePath("/");
 }
+
+/** C-fix (operator 2026-07-26: "all Trades get a position on the board"):
+ * lightweight open-book poll — the heavy page render takes 9-20s, so fast
+ * moons opened and closed invisibly between refreshes. The board polls this
+ * every few seconds and surfaces any open trade the last render missed. */
+export interface OpenBookLite {
+  id: number;
+  mint: string;
+  symbol: string | null;
+  lane: string;
+  sizeUsd: number;
+  signature: string | null;
+  openedAt: string;
+}
+export async function getOpenBookLite(): Promise<OpenBookLite[]> {
+  try {
+    const { sql } = await import("drizzle-orm");
+    const rows = (await db.execute(sql`
+      SELECT p.id, p.mint, tk.symbol, p.lane, p.size_usd::float AS size_usd,
+             p.signature, p.opened_at
+      FROM positions p LEFT JOIN tokens tk ON tk.mint = p.mint
+      WHERE p.status = 'open' ORDER BY p.opened_at DESC`)) as unknown as {
+      id: number; mint: string; symbol: string | null; lane: string;
+      size_usd: number; signature: string | null; opened_at: Date;
+    }[];
+    return rows.map((r) => ({
+      id: r.id, mint: r.mint, symbol: r.symbol, lane: r.lane,
+      sizeUsd: Number(r.size_usd), signature: r.signature,
+      openedAt: new Date(r.opened_at).toISOString(),
+    }));
+  } catch {
+    return [];
+  }
+}

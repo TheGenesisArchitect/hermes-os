@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { Line, LineChart, ReferenceLine, ResponsiveContainer, YAxis } from "recharts";
 import type { ManagementFeature } from "@hermes/core";
-import { getLiveCloseStatus, requestLiveClose, setManagementIntent } from "@/app/actions";
+import { getLiveCloseStatus, getOpenBookLite, requestLiveClose, setManagementIntent, type OpenBookLite } from "@/app/actions";
 import { fmtTs, fmtTsFull } from "@/components/ui";
 import { TradeDNA } from "@/components/TradeDNA";
 import type { ChainPulseView, ManagedPosition } from "@/lib/queries";
@@ -428,7 +428,21 @@ function Card({ p, pulse }: { p: ManagedPositionView; pulse?: ChainPulseView }) 
 }
 
 export function ManagementBoard({ positions, chain }: { positions: ManagedPositionView[]; chain?: Record<string, ChainPulseView> }) {
-  if (positions.length === 0) {
+  // LIVE OPEN-BOOK POLL (operator 2026-07-26: "all Trades get a position on
+  // the board"): the heavy page render lags 9-20s, so fast trades boarded and
+  // closed invisibly between refreshes. Poll the lite book every 5s and
+  // surface any open trade the last render doesn't know as a boarding card.
+  const [liteBook, setLiteBook] = useState<OpenBookLite[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const tick = () => getOpenBookLite().then((b) => { if (alive) setLiteBook(b); }).catch(() => {});
+    tick();
+    const id = setInterval(tick, 5_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+  const known = new Set(positions.map((p) => p.id));
+  const fresh = liteBook.filter((b) => !known.has(b.id));
+  if (positions.length === 0 && fresh.length === 0) {
     return (
       <div className="card p-6 text-center text-sm" style={{ color: "var(--text-muted)" }}>
         No open positions to manage. When a position opens, its live trajectory, the ride-vs-cut
@@ -441,6 +455,17 @@ export function ManagementBoard({ positions, chain }: { positions: ManagedPositi
     <div>
       <FloatSummary positions={positions} />
       <div className="grid gap-4 md:grid-cols-2">
+        {fresh.map((b) => (
+          <div key={"lite-" + b.id} className="card p-4" style={{ borderStyle: "dashed" }}>
+            <div className="flex items-baseline justify-between">
+              <span className="font-semibold">{b.lane === "live" ? "◆ " : ""}{b.symbol ?? b.mint.slice(0, 6)}</span>
+              <span className="tabular text-sm" style={{ color: "var(--text-secondary)" }}>${b.sizeUsd.toFixed(2)}</span>
+            </div>
+            <div suppressHydrationWarning className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+              {b.signature ?? "—"} · just boarded {Math.max(0, Math.round((Date.now() - new Date(b.openedAt).getTime()) / 1000))}s ago · full card on next refresh
+            </div>
+          </div>
+        ))}
         {/* Biggest live float first — the star runner must never hide below the
             fold behind two fresher $0.90 positions (the missing-GAIN report). */}
         {[...positions].sort((a, b) => b.unrealizedNetUsd - a.unrealizedNetUsd).map((p) => (
