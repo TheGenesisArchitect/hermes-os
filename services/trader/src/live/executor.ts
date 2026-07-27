@@ -1007,6 +1007,22 @@ export async function maybeLiveBuy(
     // inflow above the ceiling is the manufactured-spike envelope — the 07-23
     // atomic wave's costume.
     if (sig) {
+      // STRONG-ONLY BUILD-BACK (operator 2026-07-27, wallet at $109): while
+      // LIVE_INFLOW_FLOOR > INFLOW_FLOOR, live boards MEASURED strong inflow
+      // only — the 94-100%-win / 0-12%-rug band (9.4¢/$ 3d) — and every
+      // exception (sub-floor tickets, moonshots, golden-window relaunches)
+      // waits. Unmeasured inflow refuses too: strong must be measured.
+      // Exit the mode by lowering LIVE_INFLOW_FLOOR once the balance rebuilds.
+      if (cfg.LIVE_INFLOW_FLOOR > cfg.INFLOW_FLOOR) {
+        const lgBB = sig.liqGrowth != null ? Number(sig.liqGrowth) : null;
+        if (lgBB == null || !Number.isFinite(lgBB) || lgBB < cfg.LIVE_INFLOW_FLOOR) {
+          await audit("live_buy_skipped", {
+            mint,
+            reason: `build-back mode: inflow ${lgBB != null && Number.isFinite(lgBB) ? lgBB.toFixed(2) + "×" : "unmeasured"} below the strong ${cfg.LIVE_INFLOW_FLOOR}× floor — strong band only until the balance rebuilds`,
+          });
+          return;
+        }
+      }
       const wh = sig.walletWinnerHits;
       const rh = sig.walletRugHits;
       const crowdPass = wh != null && rh != null && wh >= 1 && wh - rh >= 1;

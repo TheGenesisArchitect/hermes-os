@@ -694,6 +694,11 @@ const envSchema = z.object({
   // +$25.59. Conviction size requires the envelope; below floor = sensor
   // (paper probes, live declines). Unmeasured inflow is not vetoed.
   INFLOW_FLOOR: z.coerce.number().default(1.2),
+  // STRONG-ONLY BUILD-BACK (operator 2026-07-27): when this exceeds
+  // INFLOW_FLOOR, live boards MEASURED-strong inflow only — no ticket/
+  // moonshot/relaunch exceptions. Set 1.30 while the wallet rebuilds;
+  // return to 1.2 (or below) to restore normal doors. Paper untouched.
+  LIVE_INFLOW_FLOOR: z.coerce.number().default(1.2),
   CONFIRM_MIN_TICKS: z.coerce.number().default(2), // need a trajectory, not one snap
   // RAISED 1.25 → 1.35 (2026-07-20). Realized P&L by the multiple a token had
   // ALREADY run at confirm exposed the barely-qualified band as the system's
