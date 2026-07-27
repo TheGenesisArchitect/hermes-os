@@ -493,6 +493,37 @@ async function openFromSignal(
   } catch {
     /* fingerprint table optional — gate fails open */
   }
+  // ── FAMILY CAP (operator 2026-07-27: "Ship the family cap") ───────────────
+  // The 7d family re-entry study (family-reentry.ts): entries #2–6 into a
+  // ticker family are the best flow in the book (+$358/wk) but the 7th+
+  // entry runs −$45/wk at an unchanged 57% win — the late-family tail is the
+  // adversary's re-harvest (NONGWAN entries 6–8: three straight dust rugs).
+  // ≥6 prior paper entries into the family within 7d refuses the next, both
+  // lanes (live mirrors paper flow, so the gate here covers it). Scoreboard:
+  // the 7th+ bucket's P&L must go to ~$0 over the next 7 days.
+  if (token.symbol && token.symbol.length > 1) {
+    try {
+      const famKey = token.symbol.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (famKey.length > 1) {
+        const fam = (await db.execute(sql`
+          SELECT count(*)::int AS n
+          FROM positions p JOIN tokens t ON t.mint = p.mint
+          WHERE p.lane = 'paper' AND p.opened_at > now() - interval '7 days'
+            AND lower(regexp_replace(t.symbol, '[^a-zA-Z0-9]', '', 'g')) = ${famKey}`)) as unknown as { n: number }[];
+        const n = fam[0]?.n ?? 0;
+        if (n >= 6) {
+          await audit("entry_filtered", {
+            mint: signal.mint,
+            reason: `family cap: ${n} prior ${famKey} entries in 7d — 7th+ family entries ran −$45/wk at 57% win (re-harvest tail), refused both lanes`,
+          });
+          console.log(`🚫 FAMILY ${token.symbol} ${short(signal.mint)} — entry #${n + 1} in 7d, cap is 6`);
+          return false;
+        }
+      }
+    } catch {
+      /* count query failing must never block the entry path */
+    }
+  }
   const sigMult = sigProfile?.size ?? 1;
   // ── SIZING: REGIME × SIGNATURE, not eight heuristics multiplied ────────────
   // PAPER_POSITION_USD is the regime's capital call (the adaptive policy's only
