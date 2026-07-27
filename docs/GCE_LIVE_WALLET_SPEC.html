@@ -1,0 +1,144 @@
+<title>GCE Live Wallet Architecture — The Proven Standard</title>
+<style>
+  :root {
+    --bg: #ffffff; --ink: #1a1d21; --muted: #5c6470; --line: #e3e6ea;
+    --accent: #0e7a5f; --gold: #a07d2a; --crit: #b3392e; --card: #f6f7f8; --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171a; --ink: #e8eaed; --muted: #9aa3ad; --line: #2a2f35; --accent: #4dc3a2; --gold: #d4b055; --crit: #e07268; --card: #1b1f23; }
+  }
+  :root[data-theme="dark"] { --bg: #14171a; --ink: #e8eaed; --muted: #9aa3ad; --line: #2a2f35; --accent: #4dc3a2; --gold: #d4b055; --crit: #e07268; --card: #1b1f23; }
+  :root[data-theme="light"] { --bg: #ffffff; --ink: #1a1d21; --muted: #5c6470; --line: #e3e6ea; --accent: #0e7a5f; --gold: #a07d2a; --crit: #b3392e; --card: #f6f7f8; }
+  body { background: var(--bg); color: var(--ink); font: 16px/1.65 system-ui, "Segoe UI", sans-serif; margin: 0; }
+  main { max-width: 860px; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .3rem; text-wrap: balance; }
+  .sub { color: var(--muted); margin-bottom: 2.2rem; }
+  h2 { font-size: 1.25rem; margin: 2.6rem 0 .8rem; padding-top: 1.2rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.02rem; margin: 1.6rem 0 .5rem; }
+  .eyebrow { font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--gold); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; }
+  code { font-family: var(--mono); font-size: .84em; background: var(--card); padding: .1em .35em; border-radius: 3px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.2rem; margin: 1rem 0; }
+  .law { border-left: 3px solid var(--accent); }
+  .wound { border-left: 3px solid var(--crit); }
+  .scroll { overflow-x: auto; }
+  .commit { font-family: var(--mono); font-size: .78rem; color: var(--accent); }
+  .proof { color: var(--accent); font-weight: 600; }
+  ul { padding-left: 1.25rem; } li { margin: .3rem 0; }
+  .mermaid { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: .8rem; }
+</style>
+<main>
+<p class="eyebrow">Genesis Capital Engine · Canon</p>
+<h1>Live Wallet Architecture — The Proven Standard</h1>
+<p class="sub">The complete buy/sell plumbing of the live lane, documented from what was <em>proven on-chain</em> during the 2026-07-25→27 proving runs. This is the foundation for every future build: no execution change ships except as an amendment to this spec, measured by the same instruments that proved it.</p>
+
+<div class="card law"><strong>The doctrine.</strong> Every component below earned its place by surviving a live defect and its fix — each carries the commit that proved it and the specimen that demanded it. The formula finds the trades; this architecture ensures what the formula wins, the wallet keeps.</div>
+
+<h2>1 · The lifecycle at a glance</h2>
+<div class="scroll"><pre class="mermaid">
+flowchart LR
+  SIG[qualified signal] --> DOORS{entry doors}
+  DOORS -->|pass| SIZE[ticket sizing]
+  DOORS -->|refuse| AUD[audited skip]
+  SIZE --> BUY[buy via SwapRouter]
+  BUY --> MANAGE[exit chain manages]
+  MANAGE --> SELL[sell via SwapRouter]
+  SELL --> BOOK[books + chain-truth ledger]
+  WS[ws pool telemetry] -.drain event.-> MANAGE
+  CHAIN[(chain_txs)] -.reconciles.-> BOOK
+</pre></div>
+
+<h2>2 · Entry doors (in evaluation order)</h2>
+<div class="scroll"><table>
+<tr><th>door</th><th>rule</th><th>why (specimen)</th></tr>
+<tr><td>Unrouted refusal</td><td>no signature genome → no live trade</td><td>unrouted flow ran −$22.95 lifetime</td></tr>
+<tr><td>Clone wave / <strong>golden window</strong></td><td>same-ticker sibling rugged/open &lt;60m → refuse, <em>unless</em> F6 launch order ≥3 → board at ticket <span class="commit">a0eac47</span></td><td>L3-4 = +19.5¢/$; L2 = the adversary's re-harvest (−2.3¢/$)</td></tr>
+<tr><td>Wallet-graph anti-gate</td><td>net rep ≤ −1 → refuse</td><td>rug-history crowds: 9.6% win / 49.3% rug</td></tr>
+<tr><td>F1 crowd</td><td>wh ≥ 1 ∧ wh − rh ≥ 1 (2★ MOON override, seat-checked)</td><td>crowd-fail cohort = live's entire −$128 loss history</td></tr>
+<tr><td>F3 envelope</td><td>inflow 1.20–2.05×; sub-floor ticket exception wh ≥ 2/0R; above ceiling always refused</td><td>manufactured-spike costume (07-23 atomic wave)</td></tr>
+<tr><td><strong>Moon arm confirmation</strong></td><td>MOON classes need trigger ≥ 1.2× at entry <span class="commit">d43575c</span></td><td>pre-arm moons were the entire 5%-test drag (Rex, Dat×2…)</td></tr>
+<tr><td>Conviction seat</td><td>trigger ≤ 1.65× (1.65–2.05 = paper-only sensor)</td><td>sensor slice measured −$1.01/t at size</td></tr>
+<tr><td><strong>Deployer rep gate</strong></td><td>fingerprinted deployer with ≥2 launches, rugs &gt; wins → refuse <span class="commit">3209afe</span></td><td>serial deployers cost −$52 before P4 named them</td></tr>
+<tr><td>Depth floors</td><td>pool ≥ $8k (std) / $2.5k (ticket paths); exit-route probe</td><td>a clip the pool can't pay back is a donation</td></tr>
+</table></div>
+
+<h2>3 · Sizing — even tickets, adaptive basket</h2>
+<ul>
+<li><strong>Regime-adaptive basket:</strong> aggregate deployment 1.5–5% of balance by adaptive-policy hostility, divided <em>evenly</em> across <code>MANDATE_SLOTS</code> (8) — one trade can never destroy a basket <span class="commit">aae66cb</span>. Terminal knobs: <code>MANDATE_AGG_FRAC</code>, <code>PROBE_SLOT_FRAC</code> (probe = .35 of slot).</li>
+<li><strong>Live mirror fraction:</strong> live receives paper's <em>realized</em> fraction against the wallet balance, floored at <code>LIVE_MIN_POSITION_USD</code> ($2.50) so fees never eat the ticket; capped ≤14%/position, ≤40% exposure, daily −$35, auto-kill −$32.</li>
+<li><strong>Band-weighted slot priority:</strong> when slots contend, strong inflow (≥1.30×) boards first, then winner-rep crowd, then rest — allocation follows measured ¢/$; geometry never moves <span class="commit">4f04bd5</span> (strong 9.4¢/$ vs 1.3¢/$, 3d).</li>
+</ul>
+
+<h2>4 · The SwapRouter — seven providers, full lifecycle coverage</h2>
+<div class="scroll"><pre class="mermaid">
+flowchart TD
+  Q[quote request] --> P1[1 · PumpSwap DIRECT + canonical-PDA migration fallback]
+  P1 -->|NoRoute| P2[2 · Jupiter hosted]
+  P2 -->|NoRoute/fail| P3[3 · Jupiter self-hosted]
+  P3 --> P4[4 · Fluxbeam]
+  P4 --> P5[5 · Meteora DBC direct]
+  P5 --> P6[6 · Meteora DAMMv2 direct]
+  P6 --> P7[7 · PumpFun CURVE direct · sell-only]
+  P7 --> P8[8 · PumpPortal · build-only last resort]
+</pre></div>
+<div class="scroll"><table>
+<tr><th>provider</th><th>owns</th><th>battle scar</th></tr>
+<tr><td>PumpSwap direct</td><td>graduated pumpswap pools; <strong>migration window</strong> via <code>canonicalPumpPoolPda</code> verified on-chain at quote <span class="commit">497e1e0</span></td><td>CATE Dg5P: graduated mid-trade, DexScreener lagged → write-off</td></tr>
+<tr><td>Jupiter hosted/self</td><td>everything indexed with routes</td><td>PumpSwap Token-2022 fee-vault MissingAccount → direct provider ahead of it</td></tr>
+<tr><td>Meteora DBC/DAMMv2</td><td>Meteora venues</td><td>48 pumpportal-400 deaths on Meteora tokens (07-21)</td></tr>
+<tr><td>PumpFun curve (sell-only)</td><td>live bonding-curve sells; protocol check at <em>quote</em> time <span class="commit">a3844a8, 1539e58</span></td><td>#memecoin: −$2.50 unsellable while twin banked +$9.24</td></tr>
+<tr><td>PumpPortal</td><td>last-resort builder</td><td>—</td></tr>
+</table></div>
+<p><strong>Router laws:</strong> breaker opens after 3 consecutive failures (30s cooldown); <code>NoRouteError</code> = clean "not my protocol" — walks past <em>without</em> tripping the breaker; <strong>protocol checks live at quote time, never build time</strong> — build-time refusal strands a sell with no failover (the CATE lesson).</p>
+
+<h2>5 · RPC architecture</h2>
+<ul>
+<li><strong>Keyed primary:</strong> Helius mainnet via <code>HELIUS_API_KEY</code> + <code>HELIUS_RPC_ENABLED</code> — per-key rate limits; verified by authenticated <code>getSlot</code> before trust. Public endpoints demote to fallback pool.</li>
+<li><strong>Sells outrank telemetry:</strong> sentinel chain-ingest at 5m, deployer walker at 30m <span class="commit">d08bbf0</span> — shared-RPC 429s once turned live sells into ~$20 of write-offs.</li>
+<li><strong>DPI-hardened transport:</strong> curl-fallback (<code>resilientFetch</code>/<code>rpcConnection</code>) everywhere — this host's DPI resets naked Node fetch.</li>
+<li><strong>ws telemetry (P1):</strong> one socket, <code>accountSubscribe</code> per open-position pool + armed candidates (cap 15, open book first) — lamports on bonding curves = the quote side of the pool, drain visible as the TX executes.</li>
+</ul>
+
+<h2>6 · The exit chain — one mechanism, end to end <span class="commit">64cf842</span></h2>
+<div class="scroll"><pre class="mermaid">
+flowchart LR
+  PEAK[peak crosses rung] --> RUNGS[peak-triggered TP rungs 0.7x fill guard]
+  RUNGS --> MICRO[micro-TPs 2.5x..55x]
+  MICRO --> RATCHET[milestone ratchet 0.7x of highest]
+  RATCHET --> TRAIL[class trail and cover genome]
+  DRAIN[ws drain ≥50%/30s] --> FAST[fastDrainExit — event-speed cut]
+  TRAIL --> CLOSE[close]
+  FAST --> CLOSE
+</pre></div>
+<ul>
+<li><strong>Peak-triggered rungs:</strong> a spike through a rung between polls still banks (was the "7/10 winners, break-even curve" choke: rungless deaths ran a 2.4:1 loss asymmetry).</li>
+<li><strong>Bank floor:</strong> learned profiles may move rung <em>prices</em>, never sell less than the compiled genome's fractions <span class="commit">d761e31</span> (Ferret: 45% banked vs 70% spec → 55% rode a 5.26× to zero).</li>
+<li><strong>Fast drain exit:</strong> pool SOL halves in 30s → sell fires off the ws event itself <span class="commit">d268436</span>. Proven: first two live drain cuts closed <span class="proof">green</span> against a measured −13/−16% legacy tail.</li>
+<li><strong>Retry escalation:</strong> backoff 2/2/5/10/20/40s with tolerance escalation; unsellable write-off only after ~14 minutes of exhausted routes.</li>
+<li><strong>Book-write integrity:</strong> a confirmed on-chain sell can never be re-reported as a failed sell — the close-patch verifies-then-retries the <em>write</em> only <span class="commit">110cca6</span> (BullPad/CALLOUT phantom losses).</li>
+</ul>
+
+<h2>7 · Chain-truth accounting</h2>
+<ul>
+<li><code>chain_txs</code>: every wallet signature parsed (SOL delta, fee, token delta, class) and matched to fills — forward cursor + history back-walker <span class="commit">71dc22b</span>. The ledger proved itself day one: caught 8 unbooked dust-sweep sells and corrected two phantom losses from fill/chain evidence.</li>
+<li><strong>True execution cost baseline</strong> (SOL price implied from our own buys): median −4.7%/round trip; drain cuts were −12.7…−15.8% — the number every P2 change must beat <span class="commit">97aac59</span>.</li>
+</ul>
+
+<h2>8 · Kill rails</h2>
+<p><code>live_kill</code> config row (operator-only), daily loss cap, absolute auto-kill, single-instance PID lock (refuses duplicate traders), desync sweep, and the paper mirror as the always-on shadow book. Every engage/clear is audited with reason.</p>
+
+<h2>9 · Proven results (the receipts)</h2>
+<div class="card">
+<ul>
+<li><span class="proof">Jimothy</span> $2.50 → +$0.83 (+33%, 105% capture) — first full lifecycle on the keyed lane, both sells first-try.</li>
+<li><span class="proof">Seven-green streak</span> (SOL +$0.90/97%, 👀 +$1.41/84%, BUD, BABYCATE, MICHI, DANNY, BTK) — post book-write fix.</li>
+<li><span class="proof">Drain cuts exiting green</span> (Bee +$0.49, BADZ +$0.48) on the mechanism that used to write off 13–16%.</li>
+<li><span class="proof">BTK banked through a mid-sell write failure</span> — book-write integrity holding under fire.</li>
+<li>Every write-off class discovered was named, specimen'd, fixed, and committed — the spec above <em>is</em> that list.</li>
+</ul></div>
+
+<h2>10 · Amendment protocol</h2>
+<p>This spec changes only by the loop that built it: <strong>specimen → harness → operator ratification → ship → score the very next batch → amend the spec with the commit</strong>. An execution change without a scoreboard is not an amendment; it is a regression waiting for its specimen.</p>
+</main>

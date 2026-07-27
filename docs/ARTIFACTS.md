@@ -8,6 +8,7 @@ exact HTML.
 
 | Date | Artifact | Canonical URL | Repo copy |
 |---|---|---|---|
+| 07-27 | Live Wallet Architecture — The Proven Standard | https://claude.ai/code/artifact/cf02eb1a-024d-4fb9-af59-519d48cac61b | `docs/GCE_LIVE_WALLET_SPEC.html` **verbatim** |
 | 07-25 | Chain-Level Speed & Visibility Spec (P0–P4) | https://claude.ai/code/artifact/96e1aeca-fdbc-4762-87e6-df3d75a8e128 | `docs/GCE_CHAIN_SPEED_SPEC.html` **verbatim** |
 | 07-25 | GCE Foundation Spec v1.0 | https://claude.ai/code/artifact/a9fbf646-3f7a-41d3-82b1-e6ca839f46e7 | `docs/GCE_FOUNDATION_SPEC.html` **verbatim** |
 | 07-25 | Weekly Recap (exec/finance) | https://claude.ai/code/artifact/cda0d22b-a305-442c-875c-4a76e95b2e1f | `docs/friday-recap-2026-07-25.html` **verbatim** |
