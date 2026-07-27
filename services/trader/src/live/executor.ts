@@ -936,10 +936,30 @@ export async function maybeLiveBuy(
                 WHERE p.lane = 'live' AND p.status = 'open' AND t2.dex = 'meteora-dbc') AS opencnt,
               (SELECT coalesce(sum(p.size_usd::float), 0) FROM positions p JOIN tokens t2 ON t2.mint = p.mint
                 WHERE p.lane = 'live' AND t2.dex = 'meteora-dbc'
-                  AND p.opened_at >= date_trunc('day', now())) AS spenttoday
+                  AND p.opened_at >= date_trunc('day', now())) AS spenttoday,
+              (SELECT count(*)::int FROM candidate_outcomes co JOIN tokens t3 ON t3.mint = co.mint
+                WHERE lower(t3.dex) = 'meteora-dbc' AND co.label IN ('winner','dud','rug')
+                  AND co.updated_at >= now() - interval '24 hours') AS tide_n,
+              (SELECT count(*)::int FROM candidate_outcomes co JOIN tokens t3 ON t3.mint = co.mint
+                WHERE lower(t3.dex) = 'meteora-dbc' AND co.label = 'rug'
+                  AND co.updated_at >= now() - interval '24 hours') AS tide_rugs
             FROM tokens tk WHERE tk.mint = ${mint}`)) as unknown as
-            { dex: string | null; opencnt: number; spenttoday: number }[];
+            { dex: string | null; opencnt: number; spenttoday: number; tide_n: number; tide_rugs: number }[];
           if (t?.dex === "meteora-dbc") {
+            // RUG-TIDE STAND-DOWN (operator "plug the gaps", 2026-07-27): when
+            // the venue itself is running at auto-farm rug share (24h paper:
+            // dbc rugs −$69.96 vs winners +$30.09, n=27 rugs), the moon door
+            // waits out the tide. Same thresholds the auto-farm blacklist uses;
+            // clears itself the day the venue's rug share drops.
+            const tideN = Number(t.tide_n) || 0;
+            const tideRugs = Number(t.tide_rugs) || 0;
+            if (tideN >= cfg.FARM_AUTO_MIN_N && tideRugs / tideN >= cfg.FARM_AUTO_RUG_RATE) {
+              await audit("live_buy_skipped", {
+                mint,
+                reason: `dbc ticket: venue rug tide ${tideRugs}/${tideN} (${Math.round((100 * tideRugs) / tideN)}% ≥ ${Math.round(cfg.FARM_AUTO_RUG_RATE * 100)}%) — moon door waits out the tide`,
+              });
+              return;
+            }
             if (Number(t.opencnt) >= cfg.LIVE_DBC_TICKET_MAX_CONCURRENT) {
               await audit("live_buy_skipped", { mint, reason: `dbc ticket: ${t.opencnt} already riding (cap ${cfg.LIVE_DBC_TICKET_MAX_CONCURRENT})` });
               return;
@@ -1825,7 +1845,16 @@ async function liveSellPosition(
       exclude: sellExclude.get(position.id),
     });
     usedProvider = quote.provider;
-    const b64 = await swapRouter.buildSwapTx(cfg, quote, wallet.publicKey.toBase58());
+    // PROTECTIVE PRIORITY ESCALATION (operator "fix the bleeding", 2026-07-27):
+    // hard stops booked −65% avg depth vs the −28% design — the flee tx was
+    // losing the block race while the pool drained. A protective exit bids 3×
+    // the standing priority fee (~$0.12): pennies against the 37pp of stop
+    // slippage it races. Direct-build providers read the fee off cfg at build
+    // time, so an overlay cfg scopes the bump to exactly this tx.
+    const buildCfg = isProtective
+      ? { ...cfg, PUMPPORTAL_PRIORITY_FEE: cfg.PUMPPORTAL_PRIORITY_FEE * 3 }
+      : cfg;
+    const b64 = await swapRouter.buildSwapTx(buildCfg, quote, wallet.publicKey.toBase58());
     const res = await executeSwap(cfg, b64, WSOL_MINT);
     const sol = (await solPriceUsd(cfg)) ?? 0;
     const proceedsUsd = res.outUi * sol;
