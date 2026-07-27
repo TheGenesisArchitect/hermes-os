@@ -759,6 +759,11 @@ export async function maybeLiveBuy(
     // carries a deep clean crowd, live enters at ticket size instead of
     // refusing — set by either door below, applied at sizing.
     let subFloorTicket = false;
+    // GOLDEN LANE (operator 2026-07-27: "Yes we open the Golden Lane, the
+    // moons are there" — the 4162× AFTER card): an L3+ relaunch pierces the
+    // strong-only build-back floor at TICKET size. L2 and unknowns still
+    // refuse; everything else still needs measured strong while building back.
+    let goldenWindow = false;
     // REFUSED CLASSES. Paper will not open RUG_RISK at all — 36.1% rug, and it
     // reaches 5× exactly 0% of the time — but the live path never consulted the
     // profile, so live was trading the single class paper refuses. A 1:1 lane
@@ -971,6 +976,7 @@ export async function maybeLiveBuy(
         const lo = sig?.launchOrder ?? null;
         if (lo != null && lo >= 3) {
           subFloorTicket = true;
+          goldenWindow = true;
           await audit("live_golden_window", {
             mint,
             symbol,
@@ -1013,7 +1019,7 @@ export async function maybeLiveBuy(
       // exception (sub-floor tickets, moonshots, golden-window relaunches)
       // waits. Unmeasured inflow refuses too: strong must be measured.
       // Exit the mode by lowering LIVE_INFLOW_FLOOR once the balance rebuilds.
-      if (cfg.LIVE_INFLOW_FLOOR > cfg.INFLOW_FLOOR) {
+      if (cfg.LIVE_INFLOW_FLOOR > cfg.INFLOW_FLOOR && !goldenWindow) {
         const lgBB = sig.liqGrowth != null ? Number(sig.liqGrowth) : null;
         if (lgBB == null || !Number.isFinite(lgBB) || lgBB < cfg.LIVE_INFLOW_FLOOR) {
           await audit("live_buy_skipped", {
