@@ -444,6 +444,8 @@ interface SwapResult {
   /** UI amount of the OUTPUT token that actually arrived (from tx meta). */
   outUi: number;
   feeSol: number;
+  /** ms from first broadcast to confirmed — the landing-rate scoreboard. */
+  landMs: number;
 }
 
 /** Sign, simulate, send, confirm, and read the real fill from the tx meta. */
@@ -473,9 +475,14 @@ async function executeSwap(
   );
   if (sim.value.err) throw new Error(`simulation failed: ${JSON.stringify(sim.value.err)}`);
 
+  const sendStart = Date.now();
   const signature = await rpc.send(tx, { skipPreflight: true, maxRetries: 3 });
 
-  // Confirm by polling signature status (bounded ~45s).
+  // Confirm by polling signature status (bounded ~45s), REBROADCASTING the
+  // signed tx every iteration while the blockhash lives. Shipped 2026-07-27:
+  // 16 of 17 buy-fails since the Helius lane were "tx unconfirmed after 45s"
+  // that never landed — a single broadcast fighting peak blocks. Re-sending
+  // the same signature is idempotent; "already processed" noise is swallowed.
   const deadline = Date.now() + 45_000;
   let confirmed = false;
   while (Date.now() < deadline) {
@@ -485,9 +492,11 @@ async function executeSwap(
       confirmed = true;
       break;
     }
+    await rpc.send(tx, { skipPreflight: true, maxRetries: 0 }).catch(() => {});
     await new Promise((r) => setTimeout(r, 2_000));
   }
   if (!confirmed) throw new Error(`tx unconfirmed after 45s: ${signature}`);
+  const landMs = Date.now() - sendStart;
 
   // Real fill from meta: output-token balance delta on our owner account
   // (works for SOL too via wrapped-SOL account when wrapAndUnwrapSol).
@@ -514,7 +523,7 @@ async function executeSwap(
   // fallback can go slightly negative (priority fee > proceeds), which would book
   // a negative fill price. Floor at 0: proceeds are gross-of-fee (fee is expensed
   // separately in the caller's pnl), so a rug sell books proceeds $0, not −$fee.
-  return { signature, outUi: Math.max(0, outUi), feeSol: n(info?.meta?.fee) / 1e9 };
+  return { signature, outUi: Math.max(0, outUi), feeSol: n(info?.meta?.fee) / 1e9, landMs };
 }
 
 async function solPriceUsd(cfg: HermesConfig): Promise<number | null> {
@@ -1480,7 +1489,11 @@ export async function maybeLiveBuy(
         const msg = err instanceof Error ? err.message : String(err);
         const venueReject = /build 400|no .*pool|Virtual pool|not tradable|NO_ROUTES/i.test(msg);
         const slipFail = /6001|ExceededSlippage|simulation failed/i.test(msg);
-        if (attempt >= 3 || (!venueReject && !slipFail)) throw err;
+        // Tag the terminal error with the provider that built the tx so
+        // live_buy_failed rows attribute landing failures per build path
+        // (suffix only — downstream regex classifiers keep matching).
+        if (attempt >= 3 || (!venueReject && !slipFail))
+          throw new Error(`${msg} [via ${quote.provider}]`);
         if (venueReject) excludedProviders.push(quote.provider);
         const out0 = Number(quote.outAmount);
         if (firstOut == null && out0 > 0) firstOut = out0;
@@ -1543,6 +1556,8 @@ export async function maybeLiveBuy(
     requeueUntil.delete(mint); // a landed fill closes any retry window
     await audit("live_open", {
       mint, usd, regime, convictionMult, anticipationMult: antiMult, qty: res.outUi, signature: res.signature, feeSol: res.feeSol,
+      // land-rate scoreboard (2026-07-27): which build path filled and how fast
+      provider: quote.provider, landMs: res.landMs,
       // the stage clock — where this entry's milliseconds went
       latencyMs: { gates: tGates - t0, quote: tQuote - tGates, swapAndConfirm: Date.now() - tQuote, total: Date.now() - t0 },
     });
