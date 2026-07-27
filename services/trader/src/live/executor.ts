@@ -1119,6 +1119,21 @@ export async function maybeLiveBuy(
       // counterfactual watch can split PRECISION vs RECOVERED cohorts.
       if (sig.walletStrictHits === 0) {
         recoveredTier = true;
+        // RECOVERED×DAMM-V2 DEMOTION (operator 2026-07-27 "Demote it"): this
+        // exact profile is the instant-LP-pull farm — 16 of 21 unsellables and
+        // −$34.58/4d, and it printed a fresh −$2.50 writeoff 24s after fill
+        // THROUGH every fence (probe passed honestly; the pull came after
+        // entry, which no entry-time check can see). Paper keeps taking the
+        // cohort so the counterfactual keeps measuring; live reopens on
+        // operator word after ~30 clean live-shape fills. Other venues'
+        // RECOVERED flow and all strict-winner flow are untouched.
+        if ((await venueForMint(mint)) === "meteora-damm-v2") {
+          await audit("live_buy_skipped", {
+            mint,
+            reason: "RECOVERED tier on meteora-damm-v2 — paper-only until proven (16/21 unsellables, −$34.58/4d, instant-pull farm profile; reopens on ~30 clean fills + operator word)",
+          });
+          return;
+        }
         await audit("live_recovered_tier", {
           mint,
           walletWinnerHits: wh ?? null,
