@@ -69,6 +69,12 @@ interface SentinelState {
   chainBackfillDone: boolean;
   /** epoch ms of the last candidate_ticks retention prune (daily) */
   lastTickPruneMs?: number;
+  /** epoch ms of the last lane-divergence evaluation (hourly cadence) */
+  lastDivergenceMs?: number;
+  /** true while a live-vs-paper divergence alarm is standing (transition-only alerts) */
+  divergenceActive?: boolean;
+  /** epoch ms of the last divergence ping (4h re-ping while standing) */
+  lastDivergencePingMs?: number;
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -113,6 +119,76 @@ async function rpcCall(method: string, params: unknown[]): Promise<any> {
   const j = (await res.json()) as { result?: unknown };
   return j?.result ?? null;
 }
+// LANE-DIVERGENCE TRIPWIRE (operator 2026-07-27: "This should be identified
+// much faster in the future, not an entire trading day. Once the divergence is
+// obvious, we should be inspecting the gaps and optimizing.") Hourly pass over
+// a 6h rolling window, three trips, each named so the alert already points at
+// the gap to inspect:
+//   EXEC  — live P&L trails the same-mint paper counterfactual by ≥$8 (n≥10)
+//   SELECT— skipped mints' paper outcomes are worth ≥+$10 at ticket size (n≥15)
+//   STRAND— ≥3 live_unsellable write-offs in the window
+// Transition-only + 4h re-ping while standing; recovery sends one green card.
+async function checkLaneDivergence(s: SentinelState): Promise<void> {
+  const now = Date.now();
+  if (now - (s.lastDivergenceMs ?? 0) < 60 * 60_000) return;
+  s.lastDivergenceMs = now;
+  try {
+    const [ex] = (await db.execute(sql`
+      WITH lv AS (
+        SELECT mint, size_usd::float sz, realized_pnl_usd::float pnl, exit_reason
+        FROM positions WHERE lane='live' AND status='closed' AND closed_at > now() - interval '6 hours'),
+      pp AS (
+        SELECT mint, sum(realized_pnl_usd)::float pnl, sum(size_usd)::float sz
+        FROM positions WHERE lane='paper' AND status='closed' AND closed_at > now() - interval '6 hours' GROUP BY mint)
+      SELECT (SELECT count(*)::int FROM lv) AS live_n,
+        (SELECT coalesce(sum(pnl),0)::float FROM lv) AS live_pnl,
+        (SELECT coalesce(sum(pp.pnl/nullif(pp.sz,0)*lv.sz),0)::float FROM lv JOIN pp USING (mint)) AS cf_pnl,
+        (SELECT count(*)::int FROM lv WHERE exit_reason='live_unsellable') AS unsellable_n`)) as unknown as
+      { live_n: number; live_pnl: number; cf_pnl: number; unsellable_n: number }[];
+    const [sk] = (await db.execute(sql`
+      WITH sk AS (
+        SELECT DISTINCT details->>'mint' AS mint FROM audit_log
+        WHERE action='live_buy_skipped' AND created_at > now() - interval '6 hours'),
+      pp AS (
+        SELECT mint, sum(realized_pnl_usd)::float pnl, sum(size_usd)::float sz
+        FROM positions WHERE lane='paper' AND status='closed' AND closed_at > now() - interval '6 hours' GROUP BY mint)
+      SELECT count(*)::int AS n, coalesce(sum(pp.pnl/nullif(pp.sz,0)*2.50),0)::float AS cf
+      FROM sk JOIN pp ON pp.mint = sk.mint`)) as unknown as { n: number; cf: number }[];
+    const [fam] = (await db.execute(sql`
+      SELECT left(details->>'reason', 44) AS r, count(*)::int AS n FROM audit_log
+      WHERE action='live_buy_skipped' AND created_at > now() - interval '6 hours'
+      GROUP BY 1 ORDER BY 2 DESC LIMIT 1`)) as unknown as { r: string; n: number }[];
+    if (!ex) return;
+    const execGap = ex.live_n >= 10 && ex.live_pnl - ex.cf_pnl <= -8;
+    const selGap = sk && sk.n >= 15 && sk.cf >= 10;
+    const strand = ex && ex.unsellable_n >= 3;
+    const tripped = Boolean(execGap || selGap || strand);
+    if (tripped && (!s.divergenceActive || now - (s.lastDivergencePingMs ?? 0) >= 4 * 60 * 60_000)) {
+      s.divergenceActive = true;
+      s.lastDivergencePingMs = now;
+      const which = [execGap && "EXEC", selGap && "SELECT", strand && "STRAND"].filter(Boolean).join("+");
+      await notify(
+        "OPS",
+        `LANE DIVERGENCE (${which}) — live $${ex.live_pnl.toFixed(2)} vs cf $${ex.cf_pnl.toFixed(2)} (6h)`,
+        [
+          `live ${ex.live_n} closes · ${ex.unsellable_n} unsellable · skips cf $${sk?.cf?.toFixed(2) ?? "0"} on ${sk?.n ?? 0} mints`,
+          fam ? `loudest skip: ${fam.r} (${fam.n}×)` : "no dominant skip family",
+          "inspect the gap now — funnel query, not end-of-day autopsy",
+        ],
+        4,
+        ["rotating_light"],
+        "http://localhost:3777/live",
+      );
+      console.log(`📣 LANE DIVERGENCE ${which} — live $${ex.live_pnl.toFixed(2)} vs cf $${ex.cf_pnl.toFixed(2)}, skips cf $${sk?.cf?.toFixed(2)}`);
+    } else if (!tripped && s.divergenceActive) {
+      s.divergenceActive = false;
+      await notify("OPS", "lane divergence cleared", ["6h window back inside thresholds"], 3, ["white_check_mark"]);
+    }
+  } catch (err) {
+    console.warn(`divergence check failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
 // HARVEST SUMMONS (operator 2026-07-26: Law 3 — the basket harvest is the
 // centerpiece; the summons finds the operator when the basket is ripe).
 // Window = ≥4 greens (latest tick mark ≥1.08×) carrying ≥$8 of float.
@@ -1244,6 +1320,7 @@ while (true) {
     await checkTradeDiagnosis(state);
     await checkChainTruth(state);
     await checkHarvestWindow(state);
+    await checkLaneDivergence(state);
     await checkDeployerWalk(state);
     await checkFills(state);
     await checkHeartbeat(state);

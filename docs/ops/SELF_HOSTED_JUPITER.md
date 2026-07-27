@@ -58,3 +58,16 @@ automatically — live keeps trading. That is the whole point.
 - **Direct-DEX providers** (provider #3) for pumpswap + fluxbeam — RPC-only, needs
   no aggregator at all. This is what guarantees we can always exit a premium-venue
   position as long as the chain is up.
+
+## 2026-07-27 STATUS — path is now LICENSE-GATED
+- `ghcr.io/jup-ag/jupiter-swap-api` does not exist publicly (pull → unauthorized).
+- The repo now ships the **Metis v7 binary** (v7.0.17), which requires an
+  authenticated **Binary Key with a staked JUP requirement**, or a metered
+  partner deployment (Triton ~$80/M queries, QuickNode add-on).
+- Evidence check (48h audit 2026-07-27): all 14 live_unsellable write-offs were
+  LP pulls (pool gone — direct damm-v2 provider passed through "no pool"), NOT
+  hosted-Jupiter downtime. The direct-DEX chain (PumpSwap/MeteoraDbc/
+  MeteoraDammV2/PumpFunCurve/Fluxbeam/PumpPortal) already covers the outage
+  class this spec targeted.
+- DECISION NEEDED (operator): stake JUP / buy Triton metered, or accept the
+  direct-DEX chain as the failover. Provider #2 stays dormant until then.

@@ -759,6 +759,14 @@ export async function maybeLiveBuy(
     // carries a deep clean crowd, live enters at ticket size instead of
     // refusing — set by either door below, applied at sizing.
     let subFloorTicket = false;
+    // BUILD-BACK TICKET (ratified 2026-07-27): build-back mode caps size at
+    // the ticket instead of refusing in-envelope flow — set below, applied at
+    // sizing alongside subFloorTicket.
+    let buildBackTicket = false;
+    // RECOVERED-tier flag (2026-07-27): read by the strand-class exit
+    // pre-check — 10 of the 14 live_unsellable write-offs (−$33.82/48h)
+    // entered through this tier.
+    let recoveredTier = false;
     // GOLDEN LANE (operator 2026-07-27: "Yes we open the Golden Lane, the
     // moons are there" — the 4162× AFTER card): an L3+ relaunch pierces the
     // strong-only build-back floor at TICKET size. L2 and unknowns still
@@ -1021,12 +1029,28 @@ export async function maybeLiveBuy(
       // Exit the mode by lowering LIVE_INFLOW_FLOOR once the balance rebuilds.
       if (cfg.LIVE_INFLOW_FLOOR > cfg.INFLOW_FLOOR && !goldenWindow) {
         const lgBB = sig.liqGrowth != null ? Number(sig.liqGrowth) : null;
-        if (lgBB == null || !Number.isFinite(lgBB) || lgBB < cfg.LIVE_INFLOW_FLOOR) {
+        if (lgBB == null || !Number.isFinite(lgBB)) {
           await audit("live_buy_skipped", {
             mint,
-            reason: `build-back mode: inflow ${lgBB != null && Number.isFinite(lgBB) ? lgBB.toFixed(2) + "×" : "unmeasured"} below the strong ${cfg.LIVE_INFLOW_FLOOR}× floor — strong band only until the balance rebuilds`,
+            reason: `build-back mode: inflow unmeasured — measured flow only until the balance rebuilds`,
           });
           return;
+        }
+        if (lgBB < cfg.LIVE_INFLOW_FLOOR && lgBB >= cfg.INFLOW_FLOOR) {
+          // BUILD-BACK TICKET (ratified 2026-07-27): the binary refusal below
+          // the strong floor skipped 68 mints at 76% would-have-won (+$21.40
+          // CF/48h at ticket size) — procyclical: losses tightened the gate
+          // that skips the winners that rebuild the balance. In-envelope
+          // measured flow now pays TICKET money instead of refusing; every
+          // downstream gate (crowd, seat, depth, mirror) still applies.
+          // Sub-envelope (<INFLOW_FLOOR) falls through to the sub-floor doors,
+          // which already ticket-or-refuse on crowd depth.
+          buildBackTicket = true;
+          await audit("live_buildback_ticket", {
+            mint,
+            inflow: lgBB,
+            reason: `build-back mode: in-envelope inflow ${lgBB.toFixed(2)}× below the strong ${cfg.LIVE_INFLOW_FLOOR}× floor — ticket size instead of refusal (68-skip/76%-win counterfactual, ratified 2026-07-27)`,
+          });
         }
       }
       const wh = sig.walletWinnerHits;
@@ -1065,6 +1089,7 @@ export async function maybeLiveBuy(
       // reduced clip (inherited from paper via paperFrac). Audited so the
       // counterfactual watch can split PRECISION vs RECOVERED cohorts.
       if (sig.walletStrictHits === 0) {
+        recoveredTier = true;
         await audit("live_recovered_tier", {
           mint,
           walletWinnerHits: wh ?? null,
@@ -1130,10 +1155,24 @@ export async function maybeLiveBuy(
       const strongSeat =
         sig.liqGrowth != null && Number(sig.liqGrowth) >= 1.30 &&
         sig.triggerMultiple != null && sig.triggerMultiple <= 1.95;
-      if (sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && !strongSeat) {
+      // SENSOR-SLICE OPENING (ratified 2026-07-27, sensor-slice-study.ts 7d/14d):
+      // the "−$1.01/t" that closed the slice predates the F1 crowd gate — this
+      // code path only sees crowd-net flow now, and crowd-net flips the cells:
+      //   SEAT  1.96–2.05 @ strong (lg≥1.30):    n=47 · 98% win · 2% rug · 17.0c/$
+      //   TICKET 1.66–2.05 @ sub-strong (1.20–1.29): n=17 · 88% win · 6% rug —
+      //   thin sample ⇒ ticket-size only until ~30 fills prove the cell.
+      // Without crowd-net the same cells run −10.2c/$ / 35% rug — the F1 gate
+      // above is what makes this admission safe. Trigger >2.05 still declines.
+      const sensorSeat =
+        sig.liqGrowth != null && Number(sig.liqGrowth) >= 1.30 &&
+        sig.triggerMultiple != null && sig.triggerMultiple > 1.95 && sig.triggerMultiple <= 2.05;
+      const sensorTicket =
+        sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) < 1.30 &&
+        sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && sig.triggerMultiple <= 2.05;
+      if (sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && !strongSeat && !sensorSeat && !sensorTicket) {
         await audit("live_buy_skipped", {
           mint,
-          reason: `trigger ${sig.triggerMultiple.toFixed(2)}× in the sensor slice (>${cfg.CONVICTION_SEAT_MAX}) — paper probes it, live declines (−$1.01/t measured)`,
+          reason: `trigger ${sig.triggerMultiple.toFixed(2)}× beyond the sensor envelope (>2.05, or sub-envelope/unmeasured inflow) — paper probes it, live declines`,
         });
         return;
       }
@@ -1143,6 +1182,25 @@ export async function maybeLiveBuy(
           trigger: sig.triggerMultiple,
           inflow: sig.liqGrowth,
           reason: `strong-seat extension: trigger ${sig.triggerMultiple.toFixed(2)}× admitted on measured-strong inflow ${Number(sig.liqGrowth).toFixed(2)}× (74%/13% cell, 7d)`,
+        });
+      }
+      if (sensorSeat) {
+        await audit("live_sensor_seat", {
+          mint,
+          trigger: sig.triggerMultiple,
+          inflow: sig.liqGrowth,
+          reason: `sensor-seat opening: trigger ${sig.triggerMultiple!.toFixed(2)}× admitted on measured-strong inflow ${Number(sig.liqGrowth).toFixed(2)}× (98%/2% crowd-net cell n=47, 14d study 2026-07-27)`,
+        });
+      }
+      if (sensorTicket) {
+        subFloorTicket = true;
+        await audit("live_subfloor_ticket", {
+          mint,
+          door: "SENSOR",
+          walletWinnerHits: sig.walletWinnerHits ?? null,
+          walletRugHits: sig.walletRugHits ?? null,
+          inflow: sig.liqGrowth,
+          reason: `sensor ticket: trigger ${sig.triggerMultiple!.toFixed(2)}× on sub-strong inflow ${Number(sig.liqGrowth).toFixed(2)}× — ticket-size until ~30 fills prove the cell (88%/6% crowd-net n=17, thin)`,
         });
       }
     }
@@ -1331,7 +1389,7 @@ export async function maybeLiveBuy(
     // SUB-FLOOR cell entries are capped AT the ticket — confirmation-size real
     // capital until the live cohort proves the half-clip promotion (≥55% over
     // its first ~30 fills).
-    if (subFloorTicket) usd = Math.min(usd, cfg.LIVE_MIN_POSITION_USD);
+    if (subFloorTicket || buildBackTicket) usd = Math.min(usd, cfg.LIVE_MIN_POSITION_USD);
     const lamports = BigInt(Math.floor((usd / sol) * 1e9));
 
     // ── MIRROR-FRESHNESS GATE (DRILLCAT, 2026-07-23) ─────────────────────────
@@ -1381,10 +1439,24 @@ export async function maybeLiveBuy(
     // Sellability is already established upstream: the scout's honeypot probe is
     // an actual Jupiter round-trip (roundtripRatio ≈ 0.99 on these), and a
     // genuinely unsellable position is still caught by the strand write-off.
-    if (cfg.LIVE_EXIT_PRECHECK && !sig) {
+    // STRAND-CLASS PRE-CHECK (ratified 2026-07-27): the narrowing above stands
+    // for routed flow generally — new thin pools ARE the moon tail. But the 14
+    // live_unsellable write-offs (−$33.82/48h) were all meteora-damm-v2 pools
+    // $11–16k deep, entered via RECOVERED tier (10) / ticket doors (11) — old
+    // enough to be indexed, so a failed sell probe there means one-way pool,
+    // not un-indexed pool. Probe exactly that intersection; moon flow untouched.
+    const strandClass =
+      (subFloorTicket || buildBackTicket || recoveredTier) &&
+      (await venueForMint(mint)) === "meteora-damm-v2";
+    if (cfg.LIVE_EXIT_PRECHECK && (!sig || strandClass)) {
       const probeAmt = Number(quote.outAmount) > 1 ? BigInt(quote.outAmount) : 1_000_000_000n;
       if (!(await canExitLive(cfg, mint, probeAmt))) {
-        await audit("live_buy_skipped", { mint, reason: "no exit route — would strand" });
+        await audit("live_buy_skipped", {
+          mint,
+          reason: strandClass
+            ? "no sell route at entry (strand-class damm-v2 ticket/RECOVERED) — one-way pool, would strand"
+            : "no exit route — would strand",
+        });
         return;
       }
     }
