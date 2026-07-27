@@ -1,0 +1,13 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const url = /DATABASE_URL=(.+)/.exec(fs.readFileSync(path.join(root, ".env"), "utf8"))![1].trim();
+const sql = postgres(url);
+const [arr] = await sql`SELECT count(*)::int n FROM candidate_outcomes WHERE triggered_at > now() - interval '60 minutes'`;
+const gates = await sql`SELECT action, count(*)::int n FROM audit_log WHERE created_at > now() - interval '60 minutes' AND action IN ('entry_filtered','entry_crowd_unknown_refused','live_buy_skipped','entry_trigger') GROUP BY 1 ORDER BY n DESC`;
+const [sig2] = await sql`SELECT count(*)::int n FROM signals WHERE created_at > now() - interval '60 minutes'`;
+console.log(`triggered candidates 60m: ${arr.n} · new signals 60m: ${sig2.n}`);
+for (const g of gates) console.log(`  ${g.action}: ${g.n}`);
+await sql.end();

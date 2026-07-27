@@ -1,0 +1,14 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const url = /DATABASE_URL=(.+)/.exec(fs.readFileSync(path.join(root, ".env"), "utf8"))![1].trim();
+const sql = postgres(url);
+const [last] = await sql`SELECT max(opened_at) o, max(closed_at) c FROM positions WHERE lane='paper'`;
+console.log('last paper open:', last.o, '| last close:', last.c, '| db now:', (await sql`SELECT now() n`)[0].n);
+const fam = await sql`SELECT count(*)::int n, min(created_at) mn FROM audit_log WHERE action='entry_filtered' AND details->>'reason' LIKE 'family cap%' AND created_at > now() - interval '8 hours'`;
+console.log('family-cap refusals 8h:', fam[0].n, 'since', fam[0].mn);
+const reasons = await sql`SELECT left(details->>'reason',60) r, count(*)::int n FROM audit_log WHERE action='entry_filtered' AND created_at > now() - interval '3 hours' GROUP BY 1 ORDER BY n DESC LIMIT 8`;
+for (const x of reasons) console.log(`  ${String(x.n).padStart(4)}× ${x.r}`);
+await sql.end();

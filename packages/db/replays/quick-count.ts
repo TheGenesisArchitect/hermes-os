@@ -1,0 +1,12 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const url = /DATABASE_URL=(.+)/.exec(fs.readFileSync(path.join(root, ".env"), "utf8"))![1].trim();
+const sql = postgres(url);
+const [c] = await sql`SELECT count(*)::int closes, min(closed_at) mn, max(closed_at) mx FROM positions WHERE lane='paper' AND status='closed' AND closed_at > now() - interval '6 hours'`;
+const [o] = await sql`SELECT count(*)::int opens FROM positions WHERE lane='paper' AND opened_at > now() - interval '2 hours'`;
+const [s] = await sql`SELECT count(*)::int settled FROM candidate_outcomes WHERE window_closed_at > now() - interval '6 hours' AND label IN ('winner','dud','rug')`;
+console.log(`paper closes 6h: ${c.closes} (${c.mn ? new Date(c.mn).toISOString().slice(11,16) : '-'}–${c.mx ? new Date(c.mx).toISOString().slice(11,16) : '-'}) · opens 2h: ${o.opens} · settled candidates 6h: ${s.settled}`);
+await sql.end();
