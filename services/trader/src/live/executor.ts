@@ -1119,12 +1119,31 @@ export async function maybeLiveBuy(
       // ARM SPEC (ratified 2026-07-24): live fires the CONVICTION seat only
       // (1.2–1.65 — 83% win / $2.51/t). The 1.65–2.05 sensor slice measured
       // −$1.01/t at size; paper probes it, real capital declines it.
-      if (sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX) {
+      //
+      // STRONG-SEAT EXTENSION (ratified 2026-07-27, strong-seat-study.ts 7d):
+      // inside MEASURED-strong inflow (lg ≥ 1.30) the late trigger is not a
+      // chase — the strong pool is still filling. The 1.66–1.95 slice ran
+      // n=489 · 74% win / 13% rug · avg peak 6.19× · paper +$148.59 (5.4¢/$),
+      // the band's volume pipe (~2.9/h) live's ceiling was declining wholesale.
+      // Sub-strong keeps the 1.65 ceiling. Scoreboard: live must hold ≥4¢/$
+      // over the first 30 extended-slice fills.
+      const strongSeat =
+        sig.liqGrowth != null && Number(sig.liqGrowth) >= 1.30 &&
+        sig.triggerMultiple != null && sig.triggerMultiple <= 1.95;
+      if (sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && !strongSeat) {
         await audit("live_buy_skipped", {
           mint,
           reason: `trigger ${sig.triggerMultiple.toFixed(2)}× in the sensor slice (>${cfg.CONVICTION_SEAT_MAX}) — paper probes it, live declines (−$1.01/t measured)`,
         });
         return;
+      }
+      if (strongSeat && sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX) {
+        await audit("live_strong_seat", {
+          mint,
+          trigger: sig.triggerMultiple,
+          inflow: sig.liqGrowth,
+          reason: `strong-seat extension: trigger ${sig.triggerMultiple.toFixed(2)}× admitted on measured-strong inflow ${Number(sig.liqGrowth).toFixed(2)}× (74%/13% cell, 7d)`,
+        });
       }
     }
     if (!sig) {
