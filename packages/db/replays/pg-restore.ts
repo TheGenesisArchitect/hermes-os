@@ -1,0 +1,14 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const url = /DATABASE_URL=(.+)/.exec(fs.readFileSync(path.join(root, ".env"), "utf8"))![1].trim();
+const sql = postgres(url);
+await sql.unsafe("ALTER SYSTEM RESET max_parallel_workers_per_gather");
+await sql.unsafe("SELECT pg_reload_conf()");
+const [c] = await sql`SELECT count(*)::int n FROM positions WHERE status='open'`;
+const t0 = Date.now();
+await sql`SELECT count(*) FROM (SELECT mint, max(continuation_score) s FROM candidate_ticks WHERE watch_minutes <= 5 AND continuation_score IS NOT NULL GROUP BY mint) x`;
+console.log(`DB back: ${c.n} open positions intact · parallel workers restored · early query ${Date.now()-t0}ms`);
+await sql.end();

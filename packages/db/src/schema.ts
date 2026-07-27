@@ -222,7 +222,13 @@ export const candidateTicks = pgTable(
     continuationScore: numeric("continuation_score"),
     snappedAt: timestamp("snapped_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("candidate_ticks_mint_idx").on(t.mint)],
+  (t) => [
+    index("candidate_ticks_mint_idx").on(t.mint),
+    // Time index for the sentinel's daily 14d retention prune (and any
+    // time-window analytics) — without it each prune batch seq-scans the
+    // multi-million-row table (123s first run, 2026-07-27).
+    index("candidate_ticks_snapped_idx").on(t.snappedAt),
+  ],
 );
 
 /**

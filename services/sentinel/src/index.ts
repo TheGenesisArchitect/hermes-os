@@ -67,6 +67,8 @@ interface SentinelState {
   backChainSig: string | null;
   /** true once the backward walk has exhausted the wallet's history */
   chainBackfillDone: boolean;
+  /** epoch ms of the last candidate_ticks retention prune (daily) */
+  lastTickPruneMs?: number;
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -1047,6 +1049,40 @@ async function checkDigests(s: SentinelState): Promise<void> {
   }
 }
 
+// ── TICK RETENTION (operator 2026-07-27: "Ship the permanent fix") ──────────
+// candidate_ticks grew to 3.6M rows / 1GB and seq-scans of it took the
+// dashboard to 8-24s renders. Raw ticks older than 14 days serve no live
+// decision — labels and magnitudes persist forever in candidate_outcomes.
+// Daily batched delete keeps the table bounded; VACUUM reclaims and keeps
+// index-only scans healthy.
+async function checkTickRetention(s: SentinelState): Promise<void> {
+  const DAY = 24 * 60 * 60_000;
+  if (Date.now() - (s.lastTickPruneMs ?? 0) < DAY) return;
+  s.lastTickPruneMs = Date.now();
+  try {
+    let total = 0;
+    // Batched so the delete never holds a long lock against the recorder's
+    // inserts; 50k rows per pass, loop until the horizon is clean.
+    for (let i = 0; i < 200; i++) {
+      const rows = (await db.execute(sql`
+        WITH doomed AS (
+          SELECT id FROM candidate_ticks
+          WHERE snapped_at < now() - interval '14 days' LIMIT 50000)
+        DELETE FROM candidate_ticks t USING doomed WHERE t.id = doomed.id
+        RETURNING t.id`)) as unknown as unknown[];
+      total += rows.length;
+      if (rows.length < 50000) break;
+    }
+    if (total > 0) {
+      await db.execute(sql`VACUUM (PARALLEL 0, ANALYZE) candidate_ticks`).catch(() => {});
+      console.log(`🧹 tick retention: pruned ${total} candidate_ticks rows past the 14d horizon`);
+    }
+    await saveState(s);
+  } catch (err) {
+    console.warn(`tick retention failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
 async function checkHeartbeat(s: SentinelState): Promise<void> {
   const [hb] = (await db.execute(
     sql`select (max(snapped_at) < now() - interval '10 minutes') as stale from pnl_snapshots where lane='paper'`,
@@ -1212,6 +1248,7 @@ while (true) {
     await checkFills(state);
     await checkHeartbeat(state);
     await checkDigests(state);
+    await checkTickRetention(state);
     if (ledgerTick++ % 10 === 0) {
       try {
         await runLedgerSync();

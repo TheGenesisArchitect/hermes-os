@@ -1,0 +1,13 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const url = /DATABASE_URL=(.+)/.exec(fs.readFileSync(path.join(root, ".env"), "utf8"))![1].trim();
+const sql = postgres(url);
+console.time("index");
+await sql.unsafe("CREATE INDEX IF NOT EXISTS candidate_ticks_snapped_idx ON candidate_ticks (snapped_at)");
+console.timeEnd("index");
+const [n] = await sql`SELECT count(*)::int n FROM candidate_ticks WHERE snapped_at < now() - interval '14 days'`;
+console.log(`rows past 14d horizon: ${n.n}`);
+await sql.end();

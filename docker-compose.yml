@@ -3,6 +3,11 @@ services:
     image: postgres:16-alpine
     container_name: hermes-postgres
     restart: unless-stopped
+    # 1g: the Docker default (64MB) killed every parallel query worker on the
+    # 1GB+ candidate_ticks table ("could not resize shared memory segment",
+    # 2026-07-27 dashboard incident). Data lives in the named volume — safe
+    # across recreates.
+    shm_size: 1g
     environment:
       POSTGRES_USER: hermes
       POSTGRES_PASSWORD: hermes

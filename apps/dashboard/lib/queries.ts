@@ -38,6 +38,7 @@ import {
   type Tick,
 } from "@hermes/core";
 import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { unstable_cache } from "next/cache";
 
 const DAY_AGO = () => new Date(Date.now() - 24 * 3600 * 1000);
 
@@ -1374,7 +1375,7 @@ export interface RecorderOutcome {
  * (the "would we have confirmed it?" reading). If winners carry a higher early
  * score than duds, that column IS the edge, and the weight fit will find it.
  */
-export async function getRecorderOutcomes(limit = 150): Promise<RecorderOutcome[]> {
+async function getRecorderOutcomesUncached(limit = 150): Promise<RecorderOutcome[]> {
   const rows = await db
     .select({
       mint: candidateOutcomes.mint,
@@ -1387,9 +1388,13 @@ export async function getRecorderOutcomes(limit = 150): Promise<RecorderOutcome[
       ticks: candidateOutcomes.ticks,
       label: candidateOutcomes.label,
       entered: candidateOutcomes.entered,
+      // watch_minutes <= 5 as a LITERAL (not EARLY_MIN as a bind param): the
+      // partial index candidate_ticks_early_score only matches when the
+      // predicate is provable at plan time — the param form seq-scanned per
+      // row (10s/render, pg_stat_activity 2026-07-27).
       earlyScore: sql<
         number | null
-      >`(select max(${candidateTicks.continuationScore})::float from ${candidateTicks} where ${candidateTicks.mint} = ${candidateOutcomes.mint} and ${candidateTicks.watchMinutes} <= ${EARLY_MIN})`,
+      >`(select max(${candidateTicks.continuationScore})::float from ${candidateTicks} where ${candidateTicks.mint} = ${candidateOutcomes.mint} and ${candidateTicks.watchMinutes} <= 5 and ${candidateTicks.continuationScore} is not null)`,
     })
     .from(candidateOutcomes)
     .innerJoin(tokens, eq(tokens.mint, candidateOutcomes.mint))
@@ -1412,6 +1417,18 @@ export async function getRecorderOutcomes(limit = 150): Promise<RecorderOutcome[
   }));
 }
 
+// ANALYTICS CACHE LAYER (operator 2026-07-27: "Ship the permanent fix").
+// These two are the root page's historical-analytics heavyweights — whole-tape
+// aggregates that change by the minute, not by the request. A 60s shared cache
+// makes the render serve them instantly regardless of data growth; /command's
+// operating surface stays uncached and real-time.
+export const getRecorderOutcomes = unstable_cache(getRecorderOutcomesUncached, ["recorder-outcomes"], {
+  revalidate: 60,
+});
+export const getEdgeSeparation = unstable_cache(getEdgeSeparationUncached, ["edge-separation"], {
+  revalidate: 60,
+});
+
 /**
  * The separation readout — the whole point of the flywheel. Mean early
  * classifier score for winners vs duds, once there's data. If winnersMean pulls
@@ -1424,7 +1441,7 @@ export interface EdgeSeparation {
   dudsN: number;
 }
 
-export async function getEdgeSeparation(): Promise<EdgeSeparation> {
+async function getEdgeSeparationUncached(): Promise<EdgeSeparation> {
   // One grouped pass instead of a correlated max() per candidate row: the old
   // shape ran thousands of index dives into a 1.1M-row candidate_ticks table
   // TWICE per page render and grew with the tape until the dashboard crawled
