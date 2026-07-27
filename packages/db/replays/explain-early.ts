@@ -1,0 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const url = /DATABASE_URL=(.+)/.exec(fs.readFileSync(path.join(root, ".env"), "utf8"))![1].trim();
+const sql = postgres(url);
+const [vac] = await sql`SELECT last_vacuum, last_autovacuum, last_analyze, last_autoanalyze FROM pg_stat_user_tables WHERE relname='candidate_ticks'`;
+console.log('vacuum:', vac.last_vacuum ?? vac.last_autovacuum ?? 'never', '· analyze:', vac.last_analyze ?? vac.last_autoanalyze ?? 'never');
+await sql.end();

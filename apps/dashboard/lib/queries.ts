@@ -1180,7 +1180,12 @@ export async function getRecorderStats(): Promise<RecorderStats> {
       triggered: sql<number>`count(*) filter (where ${candidateOutcomes.triggeredAt} is not null)::int`,
     })
     .from(candidateOutcomes);
-  const [t] = await db.select({ n: sql<number>`count(*)::int` }).from(candidateTicks);
+  // Planner estimate, not count(*): candidate_ticks is >3.5M rows / 1GB and
+  // an exact count seq-scans it on EVERY root render (~8-12s page). The tick
+  // total is a magnitude stat — reltuples is exact enough and instant.
+  const [t] = (await db.execute(
+    sql`select coalesce(reltuples, 0)::bigint::int as n from pg_class where relname = 'candidate_ticks'`,
+  )) as unknown as { n: number }[];
   const winners = c?.winners ?? 0;
   const duds = c?.duds ?? 0;
   const rugs = c?.rugs ?? 0;
@@ -1427,7 +1432,13 @@ export async function getEdgeSeparation(): Promise<EdgeSeparation> {
   const rows = (await db.execute(sql`
     WITH early AS (
       SELECT mint, max(continuation_score)::float s
-      FROM candidate_ticks WHERE watch_minutes <= ${EARLY_MIN} AND continuation_score IS NOT NULL
+      -- LITERAL, not a bind param: the partial index candidate_ticks_early_score
+      -- has predicate (watch_minutes <= 5 AND continuation_score IS NOT NULL);
+      -- a parameterized "<= $1" can't be proven to imply it at plan time, so the
+      -- planner fell back to seq-scanning the 3.5M-row table (10.5s/render,
+      -- caught in pg_stat_activity 2026-07-27). EARLY_MIN must stay 5 or the
+      -- index predicate must move with it.
+      FROM candidate_ticks WHERE watch_minutes <= 5 AND continuation_score IS NOT NULL
       GROUP BY mint
     )
     SELECT

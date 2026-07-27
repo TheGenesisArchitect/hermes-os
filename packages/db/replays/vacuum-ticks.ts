@@ -1,0 +1,14 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const url = /DATABASE_URL=(.+)/.exec(fs.readFileSync(path.join(root, ".env"), "utf8"))![1].trim();
+const sql = postgres(url);
+console.time('vacuum');
+await sql.unsafe('VACUUM ANALYZE candidate_ticks');
+console.timeEnd('vacuum');
+const t0 = Date.now();
+const r = await sql`SELECT count(*) FROM (SELECT mint, max(continuation_score) s FROM candidate_ticks WHERE watch_minutes <= 5 AND continuation_score IS NOT NULL GROUP BY mint) x`;
+console.log(`early-score query with literal: ${Date.now()-t0}ms (${r[0].count} mints)`);
+await sql.end();

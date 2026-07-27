@@ -1,0 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const url = /DATABASE_URL=(.+)/.exec(fs.readFileSync(path.join(root, ".env"), "utf8"))![1].trim();
+const sql = postgres(url);
+const idx = await sql`SELECT indexname, indexdef FROM pg_indexes WHERE tablename='candidate_ticks'`;
+for (const i of idx) console.log(i.indexdef);
+await sql.end();
