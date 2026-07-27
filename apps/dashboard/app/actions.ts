@@ -241,3 +241,23 @@ export async function getOpenBookLite(): Promise<OpenBookLite[]> {
     return [];
   }
 }
+
+/** Arm/Disarm the LIVE WALLET from the cockpit (operator 2026-07-27:
+ * "We need an Arm DisArm button right on the wallet"). Same mechanism as
+ * the operator scripts: the live_kill config row + an audit entry. */
+export async function setLiveArm(arm: boolean): Promise<{ armed: boolean }> {
+  const { sql } = await import("drizzle-orm");
+  const value = arm
+    ? { enabled: false, clearedAt: new Date().toISOString(), by: "operator", reason: "armed from the cockpit button" }
+    : { enabled: true, at: new Date().toISOString(), by: "operator", reason: "disarmed from the cockpit button" };
+  await db.execute(sql`
+    INSERT INTO config (key, value) VALUES ('live_kill', ${JSON.stringify(value)}::jsonb)
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`);
+  await db.insert(auditLog).values({
+    actor: "user",
+    action: arm ? "live_kill_cleared" : "live_kill_engaged",
+    details: { reason: `cockpit ${arm ? "ARM" : "DISARM"} button` },
+  });
+  revalidatePath("/command");
+  return { armed: arm };
+}

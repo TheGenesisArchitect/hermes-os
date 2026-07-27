@@ -5,6 +5,7 @@
  * closes. ~5 light queries → sub-second render, 5s auto-refresh. The heavy
  * analytics stay on /.
  */
+import { ArmSwitch } from "@/components/ArmSwitch";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { EnvironmentStrip } from "@/components/EnvironmentStrip";
 import { HarvestButton } from "@/components/HarvestButton";
@@ -40,7 +41,7 @@ export default async function CommandPage() {
         <h1 className="text-sm font-medium" style={{ color: "var(--text-secondary)" }}>
           Command · the working book
         </h1>
-        <HarvestButton greenCount={sellable.length} greenUsd={sellableUsd} suspendedCount={greens.length - sellable.length} />
+        <span className="flex items-center gap-4"><ArmSwitch armed={!vitals.liveKilled} /><HarvestButton greenCount={sellable.length} greenUsd={sellableUsd} suspendedCount={greens.length - sellable.length} /></span>
       </div>
       <VitalsStrip v={vitals} />
       <EnvironmentStrip v={environment} />
