@@ -139,7 +139,7 @@ async function checkHarvestWindow(s: SentinelState): Promise<void> {
           `basket float $${Number(r.carry).toFixed(2)} across ${r.n} greens ≥1.08×`,
         ],
         4,
-        ["moneybag"],
+        ["bar_chart"],
         "http://localhost:3777/command",
       );
     }
@@ -419,7 +419,7 @@ async function checkMoonshotOutcomes(s: SentinelState): Promise<void> {
       const pct = live.capture != null ? `${(live.capture * 100).toFixed(0)}% of the moon` : money(live.captured);
       await notify("MOONWIN", `CAUGHT · ${sym} — ${pct}`,
         [flightLine, `capture  ${[offerBits("live", live), offerBits("SIM", paper)].filter(Boolean).join(" · ")}`, `scores   capture — the stat the business rides on`],
-        4, ["full_moon"], `https://dexscreener.com/solana/${pend.mint}`);
+        4, ["white_check_mark"], `https://dexscreener.com/solana/${pend.mint}`);
     } else {
       // why didn't live board? the latest refusal audit is the named reason
       const [ref] = (await db.execute(sql`
@@ -436,11 +436,11 @@ async function checkMoonshotOutcomes(s: SentinelState): Promise<void> {
         const pct = paper.capture != null ? `${(paper.capture * 100).toFixed(0)}%` : money(paper.captured);
         await notify("MOONHALF", `HALF · ${sym} — SIM took ${pct}, live took 0%`,
           [flightLine, `capture  ${offerBits("SIM", paper)} · live $0.00 (never boarded)`, why, `scores   P(board|live) — the receiver gap`],
-          4, ["last_quarter_moon"], `https://dexscreener.com/solana/${pend.mint}`);
+          4, ["warning"], `https://dexscreener.com/solana/${pend.mint}`);
       } else {
         await notify("MOONMISS", `MISSED · ${sym}${peakX != null ? ` — 0% of a ${peakX.toFixed(1)}× flight` : " — 0% captured"}`,
           [flightLine, `capture  $0.00 — no size aboard, the offering flew unpriced`, why, `scores   P(board) — every miss is boarding tuition`],
-          4, ["new_moon"], `https://dexscreener.com/solana/${pend.mint}`);
+          4, ["x"], `https://dexscreener.com/solana/${pend.mint}`);
       }
     }
   }
@@ -487,7 +487,7 @@ async function checkLiveOpens(s: SentinelState): Promise<void> {
         `entry    $${Number(r.size).toFixed(2)} @ pool ${r.liq != null ? `$${(Number(r.liq) / 1000).toFixed(1)}k` : "—"}`,
       ],
       3,
-      ["dna"],
+      ["chart_with_upwards_trend"],
       `https://dexscreener.com/solana/${r.mint}`,
     );
   }
@@ -516,10 +516,13 @@ type Category =
   | "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP"
   | "PULSE" | "SUMMARY" | "MOONSHOT" | "OPEN" | "MOONWIN" | "MOONHALF" | "MOONMISS" | "REVIVAL";
 
+// PROFESSIONAL STANDARD (operator 2026-07-27: "Only professional emojis or
+// bullets in the Report") — restrained glyph set; the report reads like an
+// investor communication, not a game feed.
 const CATEGORY_EMOJI: Record<Category, string> = {
-  KILL: "⛔", LIVE: "🔴", RUNNER: "🏃", ARM: "🎯", HEALTH: "🩺", OPS: "🔧",
-  TREND: "📈", RECAP: "🧾", PULSE: "❤️", SUMMARY: "📊", MOONSHOT: "🌙", OPEN: "🧬",
-  MOONWIN: "🌕", MOONHALF: "🌗", MOONMISS: "🌑", REVIVAL: "🧟",
+  KILL: "⛔", LIVE: "◆", RUNNER: "▲", ARM: "●", HEALTH: "✚", OPS: "🔧",
+  TREND: "📈", RECAP: "🧾", PULSE: "📈", SUMMARY: "📊", MOONSHOT: "▲", OPEN: "●",
+  MOONWIN: "✓", MOONHALF: "◑", MOONMISS: "✗", REVIVAL: "↻",
 };
 
 async function notify(
@@ -600,7 +603,7 @@ async function checkKillSwitches(s: SentinelState): Promise<void> {
           // Engagement is an emergency (max, breaks DND). Clearance is good news —
           // audible if awake, never a wake-up (operator: wake me only on NO-GO).
           enabled ? 5 : 3,
-          enabled ? ["rotating_light"] : ["rocket"],
+          enabled ? ["rotating_light"] : ["chart_with_upwards_trend"],
         );
       }
       s.liveKill = enabled;
@@ -696,7 +699,7 @@ async function checkMoonshots(s: SentinelState): Promise<void> {
         `tap to watch the flight ↗`,
       ],
       4,
-      ["new_moon", "rocket"],
+      ["x", "chart_with_upwards_trend"],
     );
   }
 }
@@ -789,6 +792,38 @@ function laneLine(tag: string, st: LaneStats, note?: string): string {
   return `${tag}: ${money(st.pnl)}${ofBal} · ${st.closes} closes · ${wr}% win${onDep}`;
 }
 
+/**
+ * SYSTEM HEALTH — the trust anchor of the investor report (operator
+ * 2026-07-27: "investor facing, Performance report, with System health
+ * updates. The Live Wallet depends on it"). Every scheduled report carries
+ * service freshness alongside P&L: Engine = trader pnl snapshots, Signals =
+ * candidate pipeline, Chain ledger = on-chain tx ingest, plus the RPC lane
+ * and the wallet arm state.
+ */
+async function systemHealthLines(s: SentinelState): Promise<string[]> {
+  const [hb] = (await db.execute(sql`
+    select extract(epoch from now() - max(snapped_at))/60 as m from pnl_snapshots
+  `)) as unknown as { m: number | null }[];
+  const [ch] = (await db.execute(sql`
+    select extract(epoch from now() - max(block_time))/60 as m from chain_txs
+  `)) as unknown as { m: number | null }[];
+  const [sg] = (await db.execute(sql`
+    select extract(epoch from now() - max(updated_at))/60 as m from candidate_outcomes
+  `)) as unknown as { m: number | null }[];
+  const mark = (m: number | null | undefined, okMin: number): string =>
+    m == null ? "no data" : Number(m) <= okMin ? `OK (${Math.round(Number(m))}m)` : `STALE (${Math.round(Number(m))}m) ⚠`;
+  const rpc = cfg.HELIUS_API_KEY && cfg.HELIUS_RPC_ENABLED ? "Helius dedicated" : "public fallback";
+  const arm = s.liveKill === true
+    ? "DISARMED"
+    : cfg.LIVE_INFLOW_FLOOR > cfg.INFLOW_FLOOR
+      ? "ARMED · selective mode"
+      : "ARMED";
+  return [
+    `• Engine ${mark(hb?.m, 10)} · Signals ${mark(sg?.m, 15)} · Chain ledger ${mark(ch?.m, 45)}`,
+    `• RPC: ${rpc} · Live wallet: ${arm}`,
+  ];
+}
+
 // PULSE — 3× an hour, one screen, no jargon. Replaces both the 15-min TREND
 // and the per-trade pings: what the last 20 minutes did, how well the moves
 // were kept, what the router is finding, what's on right now.
@@ -832,9 +867,10 @@ async function sendTrend(s: SentinelState): Promise<void> {
       count(*) filter (where realized_pnl_usd > 0)::int as g, count(*)::int as n
     from positions where lane='live' and status='closed' and closed_at > date_trunc('day', now())
   `)) as unknown as { pnl: number; g: number; n: number }[];
-  const title = `${live.balance.toFixed(2)} · day ${num(day?.pnl) >= 0 ? "+" : "−"}${Math.abs(num(day?.pnl)).toFixed(2)} · ${num(open?.p) + num(open?.l)} open`;
+  const title = `GCE $${live.balance.toFixed(2)} · day ${num(day?.pnl) >= 0 ? "+" : "−"}$${Math.abs(num(day?.pnl)).toFixed(2)} · ${num(open?.p) + num(open?.l)} open`;
   const lines = [
-    `live ${num(day?.g)}/${num(day?.n)} green${killed ? " · KILL ENGAGED" : ""} · capture live ${capLine("live")} · paper ${capLine("paper")}`,
+    `• Live: ${num(day?.g)}/${num(day?.n)} profitable today · capture ${capLine("live")}${killed ? " · HALTED" : ""}`,
+    `• Simulated: capture ${capLine("paper")} · ${num(open?.p)} positions working`,
   ];
   await notify("PULSE", title, lines, 2, ["chart_with_upwards_trend"]);
   s.prevTrendPaper = paper.pnl;
@@ -937,10 +973,10 @@ async function sendRecap(s: SentinelState): Promise<void> {
       const [tp] = (await db.execute(sql`select coalesce(sum(realized_pnl_usd),0)::float8 s from positions
         where lane='live' and status='closed' and closed_at >= ${new Date(fc.createdAt).toISOString()}::timestamptz`)) as unknown as { s: number }[];
       const tradingEq = Number(fc.baselineUsd) + num(tp?.s);
-      const tMark = tradingEq < p10 ? " ⚠" : tradingEq > p90 ? " 🚀" : "";
+      const tMark = tradingEq < p10 ? " ⚠" : tradingEq > p90 ? " ▲" : "";
       lines.push(
-        `📐 forecast d${day + 1}: ${snap.e.toFixed(0)} vs base p50 ${p50.toFixed(0)} (${vsP50 >= 0 ? "+" : ""}${vsP50.toFixed(0)}) · band ${p10.toFixed(0)}–${p90.toFixed(0)}${snap.e < p10 ? " ⚠ BELOW BAND" : snap.e > p90 ? " 🚀 ABOVE BAND" : ""}`,
-        `   trading-only ${tradingEq.toFixed(0)}${tMark} (alpha path, SOL beta stripped)`,
+        `• Forecast day ${day + 1}: $${snap.e.toFixed(0)} vs plan $${p50.toFixed(0)} (${vsP50 >= 0 ? "+" : ""}${vsP50.toFixed(0)}) · band $${p10.toFixed(0)}–$${p90.toFixed(0)}${snap.e < p10 ? " ⚠ below band" : snap.e > p90 ? " ▲ above band" : ""}`,
+        `• Trading-only path: $${tradingEq.toFixed(0)}${tMark} (market beta excluded)`,
       );
     }
   }
@@ -952,23 +988,45 @@ async function sendRecap(s: SentinelState): Promise<void> {
     from positions where lane='paper' and status='closed' and signature in ('RISER','MOON_FAST','MOON_STEADY')
       and closed_at > now() - make_interval(hours => ${cfg.LIVE_REGIME_CLASS_WINDOW_H})
     group by 1`)) as unknown as { signature: string; n: number; ret: number }[];
-  const stateIcon = (sig: string, core: boolean) => {
+  const stateIcon = (sig: string) => {
     const r = regimeRows.find((x) => x.signature === sig);
-    if (!r || r.n < cfg.LIVE_REGIME_CLASS_MIN_N) return core ? "🟡" : "⛔";
-    return Number(r.ret) > 0 ? "✅" : "⛔";
+    if (!r || r.n < cfg.LIVE_REGIME_CLASS_MIN_N) return "—";
+    return Number(r.ret) > 0 ? "✓" : "✗";
   };
   const [refusedHr] = (await db.execute(sql`
     select count(*)::int as n from audit_log where action='live_buy_skipped' and created_at > now() - interval '60 minutes'
   `)) as unknown as { n: number }[];
-  const fcLine = lines.find((l) => l.startsWith("📐")) ?? "📐 forecast: warming up";
-  const hotLine = hotRows.length ? `hot: ${hotRows.slice(0, 3).map((h) => h.fam).join(", ")}` : "quiet families";
+  // INVESTOR PERFORMANCE REPORT (operator 2026-07-27: "deliver a new
+  // standard"). Fixed grammar, lane-separated, simulated always labeled
+  // (Chadrick/MagnaCore doctrine), system health on every report. The
+  // simulated lane is presented as the proof measure it is — it leads, the
+  // live wallet mirrors its qualified flow.
+  const fcLines = lines.filter((l) => l.startsWith("• Forecast") || l.startsWith("• Trading-only"));
+  const wr = paper.closes > 0 ? `${Math.round((100 * paper.wins) / paper.closes)}% win` : "no closes";
+  const [capRow] = (await db.execute(sql`
+    select case when coalesce(sum(size_usd*(peak_price_usd/nullif(entry_price_usd,0)-1))
+                   filter (where peak_price_usd/nullif(entry_price_usd,0) >= 1.22),0) > 0
+      then round((100*sum(realized_pnl_usd) filter (where peak_price_usd/nullif(entry_price_usd,0) >= 1.22)
+           /sum(size_usd*(peak_price_usd/nullif(entry_price_usd,0)-1))
+             filter (where peak_price_usd/nullif(entry_price_usd,0) >= 1.22))::numeric,0)::float
+      else null end as capture
+    from positions where lane='paper' and status='closed' and closed_at > now() - interval '2 hours'
+  `)) as unknown as { capture: number | null }[];
+  const paperCap = capRow?.capture ?? null;
   const card = [
-    `money    live ${money(live.pnl)} (${live.closes} closed) · paper ${money(paper.pnl)} SIM`,
-    `machine  RISER${stateIcon("RISER", true)} FAST${stateIcon("MOON_FAST", true)} STEADY${stateIcon("MOON_STEADY", true)} · ${num(refusedHr?.n)} refused/h`,
-    fcLine,
-    `watch    ${hotLine}`,
+    `LIVE — REAL CAPITAL`,
+    `• Hour: ${money(live.pnl)} · ${live.closes} closes · balance $${live.balance.toFixed(2)}`,
+    `SIMULATED — STRATEGY PROOF LANE (leads live)`,
+    `• Hour: ${money(paper.pnl)} · ${paper.closes} closes · ${wr}${paperCap != null ? ` · capture ${Math.round(paperCap)}%` : ""}`,
+    ...(paper.best && paper.best.pnl > 0
+      ? [`• Best ${paper.best.sym} ${money(paper.best.pnl)}${paper.worst && paper.worst.pnl < 0 ? ` · worst ${paper.worst.sym} ${money(paper.worst.pnl)}` : ""}`]
+      : []),
+    `• Classes: RISER ${stateIcon("RISER")} · FAST ${stateIcon("MOON_FAST")} · STEADY ${stateIcon("MOON_STEADY")} · ${num(refusedHr?.n)} declined/h`,
+    ...(fcLines.length ? fcLines : ["• Forecast: calibrating"]),
+    `SYSTEM HEALTH`,
+    ...(await systemHealthLines(s)),
   ];
-  await notify("SUMMARY", `Hour: live ${money(live.pnl)} · ${live.balance.toFixed(2)}`, card, 3, ["bar_chart"]);
+  await notify("SUMMARY", `GCE Performance · live ${money(live.pnl)} · $${live.balance.toFixed(2)}`, card, 3, ["bar_chart"]);
 }
 
 async function checkDigests(s: SentinelState): Promise<void> {
@@ -1126,7 +1184,7 @@ async function checkRevivals(cfg2: typeof cfg): Promise<void> {
             `route    Jupiter pays ${outSol.toFixed(4)} SOL ≈ $${outUsd.toFixed(2)} at ${(Number(j.priceImpactPct ?? 0) * 100).toFixed(0)}% impact`,
             `action   fire-sale ready — say the word and the machinery harvests it`,
           ],
-          4, ["zombie"], `https://dexscreener.com/solana/${a.mint}`);
+          4, ["arrows_counterclockwise"], `https://dexscreener.com/solana/${a.mint}`);
         await db.insert(auditLog).values({ actor: "sentinel", action: "revival_detected", details: { mint: a.mint, outUsd, outSol } });
       } else if (hot && outUsd < 0.5) {
         revivalHot.set(a.mint, false); // route died back — re-arm the alert
