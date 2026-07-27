@@ -1152,9 +1152,15 @@ export async function maybeLiveBuy(
       // the band's volume pipe (~2.9/h) live's ceiling was declining wholesale.
       // Sub-strong keeps the 1.65 ceiling. Scoreboard: live must hold ≥4¢/$
       // over the first 30 extended-slice fills.
-      const strongSeat =
-        sig.liqGrowth != null && Number(sig.liqGrowth) >= 1.30 &&
-        sig.triggerMultiple != null && sig.triggerMultiple <= 1.95;
+      // STRONG-SEAT EXTENSION CLOSED (operator 2026-07-27, scoreboard read at
+      // fill 1 of 30): 7 admissions in 7h → all 5 paper-winners skipped
+      // (sub-viable sizer) or buy-failed; the only FILL was a MOON_VIOLENT rug,
+      // −100% in 20s via the dbc-ticket sizing seam. Adverse execution
+      // selection: this cell fills only in the hot moments that are rugs.
+      // Paper's crowd-net read agreed (−1.6¢/$, n=166). The 1.66–1.95×@strong
+      // slice returns to DECLINE; the 1.96–2.05×@strong sensor seat below is a
+      // different, 98%-win cell and stands on its own study.
+      const strongSeat = false;
       // SENSOR-SLICE OPENING (ratified 2026-07-27, sensor-slice-study.ts 7d/14d):
       // the "−$1.01/t" that closed the slice predates the F1 crowd gate — this
       // code path only sees crowd-net flow now, and crowd-net flips the cells:
@@ -1172,17 +1178,9 @@ export async function maybeLiveBuy(
       if (sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && !strongSeat && !sensorSeat && !sensorTicket) {
         await audit("live_buy_skipped", {
           mint,
-          reason: `trigger ${sig.triggerMultiple.toFixed(2)}× beyond the sensor envelope (>2.05, or sub-envelope/unmeasured inflow) — paper probes it, live declines`,
+          reason: `trigger ${sig.triggerMultiple.toFixed(2)}× declined — 1.66-1.95×@strong (extension closed 2026-07-27, rug-fill scoreboard), >2.05×, or unmeasured inflow`,
         });
         return;
-      }
-      if (strongSeat && sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX) {
-        await audit("live_strong_seat", {
-          mint,
-          trigger: sig.triggerMultiple,
-          inflow: sig.liqGrowth,
-          reason: `strong-seat extension: trigger ${sig.triggerMultiple.toFixed(2)}× admitted on measured-strong inflow ${Number(sig.liqGrowth).toFixed(2)}× (74%/13% cell, 7d)`,
-        });
       }
       if (sensorSeat) {
         await audit("live_sensor_seat", {
@@ -1343,11 +1341,22 @@ export async function maybeLiveBuy(
     // the ticket ceiling and the pool-fraction bound.
     let usd = sized;
     if (dbcTicket) {
+      // FLOOR CLAMP (operator 2026-07-27): Math.max(1.0, sized) let a $1.70
+      // sub-viable ticket through this door while the same afternoon three
+      // winners were skipped at $1.69-1.73 elsewhere — the universal fee-viable
+      // floor applies to EVERY door. Too-thin pool-fraction bound = skip, not
+      // a discount ticket.
       usd = Math.min(
         cfg.LIVE_DBC_TICKET_USD,
-        Math.max(1.0, sized),
         (dbcPoolLiq ?? cfg.LIVE_DBC_TICKET_MIN_LIQ_USD) * cfg.LIVE_DBC_TICKET_POOL_FRAC,
       );
+      if (usd < cfg.LIVE_MIN_POSITION_USD) {
+        await audit("live_buy_skipped", {
+          mint,
+          reason: `dbc ticket $${usd.toFixed(2)} below fee-viable floor $${cfg.LIVE_MIN_POSITION_USD.toFixed(2)} (pool-fraction bound) — no sub-viable tickets on any door`,
+        });
+        return;
+      }
     } else if (usd < cfg.LIVE_MIN_POSITION_USD) {
       // MANDATE TICKETS (operator, 2026-07-24: "This also includes the Live
       // Wallet Sizing — buy multiple tickets in qualified windows and harvest
