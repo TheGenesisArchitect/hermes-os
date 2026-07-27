@@ -816,6 +816,10 @@ const envSchema = z.object({
   // 23 trades since 2026-07-21T13:48, +$36.12 at 28% capture, and unlike the
   // gap victims these WALK (last six ticks flat at ~1.34×), so a tighter floor
   // is actually reachable. Static replay: 28% → +$58.09, 20% → +$77.95.
+  // TRAIL WIDEN (2026-07-27, trail harness: +$229.81 net over 59 armed trail
+  // closes at +10pp): extra trail width for ARMED positions only — the gain
+  // lock still guards the floor; this lets winners finish working.
+  TRAIL_WIDEN_PP: z.coerce.number().default(10),
   RUNNER_RATCHET_PRE_START: z.coerce.number().default(1.5), // green enough to defend
   RUNNER_RATCHET_PRE_PCT: z.coerce.number().default(28), // caps the class trail below the ladder
   RUNNER_RATCHET_START: z.coerce.number().default(3.2), // engages just past the top rung

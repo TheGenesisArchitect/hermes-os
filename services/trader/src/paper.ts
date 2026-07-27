@@ -1520,6 +1520,12 @@ export function trailWidthPct(
     w = Math.min(w, ratchet);
   }
   if (banked) w = Math.max(w, cfg.POST_BANK_TRAIL_PCT);
+  // TRAIL WIDEN (operator-ratified 2026-07-27, trail harness): 42 of 59 armed
+  // profit_trail exits recovered ≥10% within 15m of our exit — kept upside
+  // +$238.53 vs extra giveback −$8.71 at +10pp. Armed positions (the rung is
+  // already banked; the floor still can't go red) get the extra room to let
+  // winners finish working. Env TRAIL_WIDEN_PP=0 disables.
+  if (cfg.TRAIL_WIDEN_PP > 0 && peakMult >= cfg.PROFIT_LOCK_ARM_MULT) w += cfg.TRAIL_WIDEN_PP;
   if (call?.action === "RIDE" && peakMult >= RIDE_MIN_MULT && drawdownPct < SNUG_DD) {
     w += cfg.TRAIL_RIDE_BONUS_PCT; // earned: a real runner still printing highs
   } else if (stalled || call?.regime === "BLOWOFF" || call?.action === "TRIM") {
