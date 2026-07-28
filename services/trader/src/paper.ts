@@ -1179,6 +1179,17 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
     });
   }
 
+  // MOON PRIORITY (operator 2026-07-27: "ensure they are always top priority
+  // when we board and ride the tail"): a 2★ MOON-class confirm boards ahead
+  // of EVERYTHING — the final stable sort, so it outranks prime/hot/inflow.
+  // The base hits keep the wallet alive; the moon expands the equity curve —
+  // the rarest flow never waits behind the abundant.
+  armed.sort((a, b) => {
+    const am = a.stars === 2 && typeof a.signature === "string" && a.signature.startsWith("MOON") ? 1 : 0;
+    const bm = b.stars === 2 && typeof b.signature === "string" && b.signature.startsWith("MOON") ? 1 : 0;
+    return bm - am; // stable: preserves prime/hot/conviction order within each group
+  });
+
   // SHARED-CAPACITY book with reserved minimums. Each opportunity class is
   // guaranteed a floor of slots so the abundant small movers can't crowd out a
   // rare monster (the 0-of-4 failure), but every lane shares the surplus above the

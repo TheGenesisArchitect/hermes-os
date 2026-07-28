@@ -75,6 +75,8 @@ interface SentinelState {
   divergenceActive?: boolean;
   /** epoch ms of the last divergence ping (4h re-ping while standing) */
   lastDivergencePingMs?: number;
+  /** highest ride rung already pinged per open position (moon ride cards) */
+  moonRidesPinged?: Record<string, number>;
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -189,6 +191,57 @@ async function checkLaneDivergence(s: SentinelState): Promise<void> {
   }
 }
 
+// MOON RIDE CARDS (operator 2026-07-27: "Moons must be managed in real time
+// and we are still having challenges getting them loaded into cards we can
+// see"). The pre-flight 🌙 fingerprint alert only covers the boarding moment —
+// a position CROSSING moon territory in flight had no card at all. Every open
+// position (both lanes, labeled) pings once per rung crossed: 2×, 3×, 5×,
+// 10×, 20×. Live rides buzz at priority 4 (real capital riding the tail);
+// paper rides ride the same rail at 3 so the operator sees the whole basket.
+const RIDE_RUNGS = [2, 3, 5, 10, 20];
+async function checkMoonRides(s: SentinelState): Promise<void> {
+  try {
+    const rows = (await db.execute(sql`
+      SELECT p.id, p.lane, p.mint, p.size_usd::float sz, tk.mark, coalesce(t.symbol,'?') sym,
+        round(extract(epoch from (now() - p.opened_at))/60.0, 1)::float age_m,
+        lt.liq
+      FROM positions p
+      JOIN LATERAL (SELECT mark_multiple::float mark FROM position_ticks
+        WHERE position_id = p.id ORDER BY snapped_at DESC LIMIT 1) tk ON true
+      LEFT JOIN LATERAL (SELECT liquidity_usd::float liq FROM candidate_ticks
+        WHERE mint = p.mint ORDER BY snapped_at DESC LIMIT 1) lt ON true
+      LEFT JOIN tokens t ON t.mint = p.mint
+      WHERE p.status = 'open' AND tk.mark >= 2`)) as unknown as
+      { id: number; lane: string; mint: string; sz: number; mark: number; sym: string; age_m: number; liq: number | null }[];
+    const pinged = s.moonRidesPinged ?? {};
+    const openIds = new Set(rows.map((r) => String(r.id)));
+    // prune closed positions so the map never grows unbounded
+    for (const k of Object.keys(pinged)) if (!openIds.has(k)) delete pinged[k];
+    for (const r of rows) {
+      const rung = [...RIDE_RUNGS].reverse().find((x) => Number(r.mark) >= x);
+      if (!rung || (pinged[String(r.id)] ?? 0) >= rung) continue;
+      pinged[String(r.id)] = rung;
+      const carry = Number(r.sz) * Number(r.mark);
+      await notify(
+        "RUNNER",
+        `RIDING · ${r.sym} ${Number(r.mark).toFixed(1)}× (${r.lane.toUpperCase()})`,
+        [
+          `$${Number(r.sz).toFixed(2)} riding → $${carry.toFixed(2)} carry · ${r.age_m}m in`,
+          `pool ${r.liq != null ? "$" + Math.round(Number(r.liq)).toLocaleString() : "?"} · tail governed by the ${r.lane === "live" ? "genome trail + drain guard" : "genome trail"}`,
+          "in the harvest basket — /command to manage the ride",
+        ],
+        r.lane === "live" ? 4 : 3,
+        ["rocket"],
+        "http://localhost:3777/command",
+      );
+      console.log(`📣 RIDING ${r.sym} ${Number(r.mark).toFixed(1)}× (${r.lane}) — rung ${rung}× card sent`);
+    }
+    s.moonRidesPinged = pinged;
+  } catch (err) {
+    console.warn(`moon ride check failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
 // HARVEST SUMMONS (operator 2026-07-26: Law 3 — the basket harvest is the
 // centerpiece; the summons finds the operator when the basket is ripe).
 // Window = ≥4 greens (latest tick mark ≥1.08×) carrying ≥$8 of float.
@@ -196,15 +249,22 @@ async function checkLaneDivergence(s: SentinelState): Promise<void> {
 async function checkHarvestWindow(s: SentinelState): Promise<void> {
   if (Date.now() - s.lastHarvestPingMs < 15 * 60_000) return;
   try {
+    // BOTH LANES (operator 2026-07-27: moons "must be part of the basket we
+    // harvest") — the summons counts the whole basket, split by lane so the
+    // live carry (real capital) reads at a glance.
     const rows = (await db.execute(sql`
-      SELECT count(*)::int AS n, coalesce(sum(p.size_usd::float * (tk.mark - 1)), 0)::float AS carry
+      SELECT count(*)::int AS n, coalesce(sum(p.size_usd::float * (tk.mark - 1)), 0)::float AS carry,
+        count(*) FILTER (WHERE p.lane = 'live')::int AS live_n,
+        coalesce(sum(p.size_usd::float * (tk.mark - 1)) FILTER (WHERE p.lane = 'live'), 0)::float AS live_carry
       FROM positions p JOIN LATERAL (
         SELECT mark_multiple::float AS mark FROM position_ticks
         WHERE position_id = p.id ORDER BY snapped_at DESC LIMIT 1
       ) tk ON true
-      WHERE p.status = 'open' AND p.lane = 'paper' AND tk.mark >= 1.08`)) as unknown as {
+      WHERE p.status = 'open' AND tk.mark >= 1.08`)) as unknown as {
       n: number;
       carry: number;
+      live_n: number;
+      live_carry: number;
     }[];
     const r = rows[0];
     if (r && r.n >= 4 && Number(r.carry) >= 8) {
@@ -214,7 +274,7 @@ async function checkHarvestWindow(s: SentinelState): Promise<void> {
         `HARVEST WINDOW — ${r.n} greens carrying $${Number(r.carry).toFixed(0)}`,
         [
           "tap /command to sweep — auto-harvest backstops in the cooldown",
-          `basket float $${Number(r.carry).toFixed(2)} across ${r.n} greens ≥1.08×`,
+          `basket float $${Number(r.carry).toFixed(2)} across ${r.n} greens ≥1.08× (${r.live_n} live carrying $${Number(r.live_carry).toFixed(2)})`,
         ],
         4,
         ["bar_chart"],
@@ -1320,6 +1380,7 @@ while (true) {
     await checkTradeDiagnosis(state);
     await checkChainTruth(state);
     await checkHarvestWindow(state);
+    await checkMoonRides(state);
     await checkLaneDivergence(state);
     await checkDeployerWalk(state);
     await checkFills(state);
