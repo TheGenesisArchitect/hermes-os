@@ -28,6 +28,7 @@ function Metric({
 
 export function WinningFormula({ view }: { view: WinningFormulaView }) {
   const { paper, live, leak, windowHours } = view;
+  const fences = view.fences ?? [];
   const onTrack = leak === "on track";
   const expWorse = live.expectancyPct < paper.expectancyPct;
   const badge = (
@@ -55,6 +56,19 @@ export function WinningFormula({ view }: { view: WinningFormulaView }) {
         <span className="tabular text-right font-semibold" style={{ color: paper.netUsd >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>{paper.netUsd >= 0 ? "+" : ""}${paper.netUsd.toFixed(0)}</span>
         <span className="tabular text-right font-semibold" style={{ color: live.netUsd >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>{live.netUsd >= 0 ? "+" : ""}${live.netUsd.toFixed(0)}</span>
       </div>
+      {fences.length > 0 && (
+        <div className="space-y-1 border-t pt-2" style={{ borderColor: "var(--border)" }}>
+          <div className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--status-warning, #d99a2b)" }}>
+            ⚠ {fences.length} fence change{fences.length > 1 ? "s" : ""} inside this window — trailing lines mix pre/post-fix eras
+          </div>
+          {fences.map((f, i) => (
+            <div key={i} className="flex items-baseline justify-between gap-2 text-[10px]" style={{ color: "var(--text-muted)" }}>
+              <span className="truncate">{f.label}</span>
+              <span className="tabular whitespace-nowrap">{f.hoursAgo}h ago</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 
@@ -74,6 +88,11 @@ export function WinningFormula({ view }: { view: WinningFormulaView }) {
         <div className="text-[11px] font-medium" style={{ color: onTrack ? "var(--status-good)" : "var(--status-critical)" }}>
           {onTrack ? "✓ Live tracking paper" : `⚠ Biggest leak: ${leak}`}
         </div>
+        {fences.length > 0 && (
+          <div className="text-[10px]" style={{ color: "var(--status-warning, #d99a2b)" }}>
+            ⏱ {fences.length} fence change{fences.length > 1 ? "s" : ""} in window — read as pre/post-fix blend (latest {fences[0]!.hoursAgo}h ago)
+          </div>
+        )}
         <div className="flex items-end gap-6">
           <div>
             <div className="tabular text-lg font-bold" style={{ color: paper.expectancyPct >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>{pct(paper.expectancyPct)}</div>

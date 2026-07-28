@@ -3708,6 +3708,9 @@ export interface WinningFormulaView {
   paper: LaneFormula;
   live: LaneFormula;
   leak: string; // the biggest live leak vs paper, named
+  /** Fence/policy changes inside the rolling window — every trailing line that
+   *  crosses one mixes regime eras and reads STALE (forecast lesson 2026-07-28). */
+  fences: { label: string; at: string; hoursAgo: number }[];
 }
 
 export async function getWinningFormula(windowHours = 24): Promise<WinningFormulaView> {
@@ -3751,7 +3754,28 @@ export async function getWinningFormula(windowHours = 24): Promise<WinningFormul
     else if (live.winPct < paper.winPct - 12) leak = "WIN RATE — live trading the losers (selection)";
     else if (live.avgWinPct < paper.avgWinPct - 8) leak = "CAPTURE — winners banked too early (trail/ladder)";
   }
-  return { windowHours, paper, live, leak };
+  // FENCE TIMESTAMPS (operator 2026-07-28: "Add the fence timestamps to the
+  // Winning Formula panel"): a brand-new live_buy_skipped reason string =
+  // a fence shipped; arm/kill events = regime boundaries. Any metric line
+  // whose window crosses one is measuring the disease and the cure together.
+  const fenceRows = (await db.execute(sql`
+    SELECT fence, first_seen FROM (
+      SELECT substring(details->>'reason' for 44) AS fence, min(created_at) AS first_seen
+      FROM audit_log WHERE action='live_buy_skipped' AND created_at > now() - interval '7 days'
+      GROUP BY 1 HAVING min(created_at) > now() - make_interval(hours => ${windowHours})
+      UNION ALL
+      SELECT CASE WHEN action='live_kill_cleared' THEN 'ARMED (kill cleared)' ELSE 'DISARMED (kill engaged)' END,
+        created_at FROM audit_log
+      WHERE action IN ('live_kill_cleared','live_kill_engaged')
+        AND created_at > now() - make_interval(hours => ${windowHours})
+    ) f ORDER BY first_seen DESC LIMIT 8
+  `)) as unknown as { fence: string; first_seen: Date }[];
+  const fences = fenceRows.map((f) => ({
+    label: String(f.fence),
+    at: new Date(f.first_seen).toISOString(),
+    hoursAgo: Math.round(((Date.now() - new Date(f.first_seen).getTime()) / 3_600_000) * 10) / 10,
+  }));
+  return { windowHours, paper, live, leak, fences };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
