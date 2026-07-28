@@ -123,7 +123,16 @@ export async function sendDigest(to: string[]): Promise<string> {
   const previewDir = resolve(import.meta.dirname, "../../../apps/dashboard/public");
   try {
     mkdirSync(previewDir, { recursive: true });
-    writeFileSync(resolve(previewDir, "digest-preview.html"), html, "utf8");
+    // PREVIEW ONLY: swap hosted image URLs for same-origin copies — this box's
+    // network path to genesisreserve.app is DPI-broken (curl exit 35), so the
+    // operator's local browser can't load the hosted assets even though the
+    // public internet (and every mail client's image proxy) loads them fine —
+    // verified 200/image-png from a cloud fetch 2026-07-28. The EMAIL keeps
+    // the hosted URLs; only the local preview substitutes.
+    const previewHtml = html
+      .replaceAll("https://genesisreserve.app/genesis-og.png", "/genesis-og.png")
+      .replaceAll("https://genesisreserve.app/genesis-logo.png", "/genesis-logo.png");
+    writeFileSync(resolve(previewDir, "digest-preview.html"), previewHtml, "utf8");
   } catch {
     /* preview is best-effort */
   }
