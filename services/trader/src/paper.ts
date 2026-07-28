@@ -2640,8 +2640,85 @@ export async function fastFloorSweep(cfg: HermesConfig): Promise<void> {
 }
 
 /** Mark open positions to market and execute the exit rules. */
+// ── FAMILY-VELOCITY PAPER PROBE (operator RATIFIED 2026-07-28: "Ratify the
+// family-velocity paper probe... we need to be nimble") ─────────────────────
+// The Neuralink class: vertical launches cross the seat band before the 2min
+// watch opens and NEVER trigger — 31 of 7d's 56 fifty-X monsters, including
+// the 134× (family 5.4×→19.1×→134×). Harness (3d, never-triggered pool):
+// escalating family (prior sibling ≥3× within 2h) lifts 10×-odds 8×
+// (3.3% vs 0.4% first-launch) at 47.7% rug — NOT live-tradable raw. This
+// probe boards the cell in PAPER ONLY (book='probe', $3, ≤3 concurrent) to
+// collect real ride texture toward a live-grade cut. Exits: legacy global
+// rails (signature null). Live NEVER sees this class until a fresh harness
+// on collected probes + operator word.
+const FAMVEL_SIZE_USD = 3;
+const FAMVEL_MAX_OPEN = 3;
+let lastFamvelScanMs = 0;
+async function scanFamilyVelocityProbes(cfg: HermesConfig): Promise<void> {
+  if (Date.now() - lastFamvelScanMs < 10_000) return;
+  lastFamvelScanMs = Date.now();
+  try {
+    const [cap] = (await db.execute(sql`
+      SELECT count(*)::int n FROM positions p
+      WHERE p.lane='paper' AND p.status='open'
+        AND EXISTS (SELECT 1 FROM fills f WHERE f.position_id=p.id AND f.reason='famvel_probe')`)) as unknown as { n: number }[];
+    if ((cap?.n ?? 0) >= FAMVEL_MAX_OPEN) return;
+    const cands = (await db.execute(sql`
+      SELECT co.mint, t.symbol,
+        (SELECT ct.price_usd::float FROM candidate_ticks ct WHERE ct.mint=co.mint
+          AND ct.snapped_at > now() - interval '40 seconds' ORDER BY ct.snapped_at DESC LIMIT 1) px,
+        co.peak_multiple::float pk
+      FROM candidate_outcomes co JOIN tokens t USING (mint)
+      WHERE co.triggered_at IS NULL AND co.entered = false AND t.symbol IS NOT NULL
+        AND t.first_seen_at > now() - interval '12 minutes'
+        AND co.peak_multiple >= 2
+        AND NOT EXISTS (SELECT 1 FROM positions p WHERE p.mint = co.mint)
+        AND EXISTS (
+          SELECT 1 FROM tokens t2 JOIN candidate_outcomes co2 ON co2.mint = t2.mint
+          WHERE lower(t2.symbol) = lower(t.symbol)
+            AND t2.first_seen_at >= t.first_seen_at - interval '2 hours'
+            AND t2.first_seen_at < t.first_seen_at
+            AND co2.peak_multiple >= 3)
+      LIMIT 2`)) as unknown as { mint: string; symbol: string | null; px: number | null; pk: number }[];
+    for (const c of cands) {
+      if (c.px == null || !Number.isFinite(c.px) || c.px <= 0) continue;
+      const qty = FAMVEL_SIZE_USD / c.px;
+      let opened: { id: number } | undefined;
+      try {
+        [opened] = await db
+          .insert(positions)
+          .values({
+            signalId: null, mint: c.mint, lane: "paper", tier: "base", book: "probe",
+            signature: null, sizeUsd: String(FAMVEL_SIZE_USD), qtyTokens: String(qty), qtyRemaining: String(qty),
+            entryPriceUsd: String(c.px), peakPriceUsd: String(c.px), realizedPnlUsd: "0",
+          })
+          .returning({ id: positions.id });
+      } catch {
+        continue; // open-claim race — another consumer took the mint
+      }
+      if (!opened) continue;
+      await db.insert(fills).values({
+        positionId: opened.id, side: "buy", qtyTokens: String(qty), priceUsd: String(c.px),
+        feeUsd: "0", reason: "famvel_probe",
+      });
+      await db.execute(sql`
+        UPDATE candidate_outcomes SET entered = true, triggered_at = now(),
+          trigger_reason = 'family-velocity probe (paper) — escalating family, vertical launch'
+        WHERE mint = ${c.mint}`);
+      await audit("famvel_probe_open", {
+        mint: c.mint, symbol: c.symbol, priceUsd: c.px, peakSoFar: c.pk, sizeUsd: FAMVEL_SIZE_USD,
+        reason: "family-velocity probe (RATIFIED 2026-07-28): never-triggered vertical with a ≥3× sibling — paper rides for the record",
+      });
+      console.log(`🚀 FAMVEL PROBE ${c.symbol ?? "?"} ${short(c.mint)} $${FAMVEL_SIZE_USD} @ ${c.pk.toFixed(1)}× flight (escalating family)`);
+    }
+  } catch (err) {
+    console.warn(`famvel probe scan failed (never blocks the desk): ${err instanceof Error ? err.message.slice(0, 80) : err}`);
+  }
+}
+
 export async function managePositions(cfg: HermesConfig): Promise<void> {
   await refreshAutoFarm(cfg); // keep the adaptive farm list current (no-op inside refresh window)
+  await scanFamilyVelocityProbes(cfg);
   const open = await db.select().from(positions).where(and(eq(positions.status, "open"), eq(positions.lane, "paper")));
   // P1: keep the ws pool watcher subscribed to exactly the open book (both
   // lanes — a live twin shares the paper mint). Fail-open: an empty pool
