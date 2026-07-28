@@ -1878,7 +1878,17 @@ export function decideExit(
     // $15.78) — confirmed live by HOLLY's first moon_ratchet close at 9%
     // capture vs the 49% class average. RISER keeps its championship trail.
     if (cfg.MOON_RUNNER_ENABLED && bankedRunner && position.signature !== "RISER") {
-      const MILESTONES = [1.5, 2, 3, 5, 8, 13, 21, 34, 55];
+      // LATE-ARM LADDER (operator RATIFIED 2026-07-28 "Ship it, late-arm the
+      // ladder both lanes" — moon-leash-replay.ts, 447 pos/7d, winners AND
+      // rugs, fire-sale haircut): floors under 1.5×/2× ejected positions on
+      // the pre-leg breath (FRANK: out +$2.49 at minute 1 of a 68×). First
+      // milestone now 3× — late-arm won BOTH cuts: full cohort $2,425 vs
+      // $1,607 current-sim (+51%), monsters $992 vs $893 (+11%), and beat
+      // the wide-leash variant on monsters. Below 3× the banked runner rides
+      // on the other rails (stale-take, drain guard, depth, clock) — the
+      // moon-floor-removal ratification already established this class needs
+      // its breathing room. Leash 0.7 and every other exit unchanged.
+      const MILESTONES = [3, 5, 8, 13, 21, 34, 55];
       let msFloor = 0;
       for (const ms of MILESTONES) if (peakMult >= ms) msFloor = ms * cfg.MOON_RUNNER_RATCHET;
       // MOON FLOOR REMOVAL (ratified 2026-07-25): for MOON-class banked

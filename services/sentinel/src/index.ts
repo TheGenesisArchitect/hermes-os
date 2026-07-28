@@ -77,6 +77,8 @@ interface SentinelState {
   lastDivergencePingMs?: number;
   /** highest ride rung already pinged per open position (moon ride cards) */
   moonRidesPinged?: Record<string, number>;
+  /** last famvel_probe_open audit id already carded */
+  lastFamvelAuditId?: number;
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -239,6 +241,38 @@ async function checkMoonRides(s: SentinelState): Promise<void> {
     s.moonRidesPinged = pinged;
   } catch (err) {
     console.warn(`moon ride check failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+// FAMVEL PROBE CARDS (operator 2026-07-28: "ensure that these reach the
+// baseball cards"). Every family-velocity probe boarding gets its card the
+// moment it opens — the Neuralink class is now visible flow, and the operator
+// sees each vertical the desk boards for the record. Ride rungs (2×/3×/5×…)
+// and close/outcome cards ride the existing rails.
+async function checkFamvelProbes(s: SentinelState): Promise<void> {
+  try {
+    const rows = (await db.execute(sql`
+      SELECT id, details->>'symbol' sym, details->>'mint' mint,
+        (details->>'peakSoFar')::float pk, (details->>'sizeUsd')::float sz
+      FROM audit_log WHERE action='famvel_probe_open' AND id > ${s.lastFamvelAuditId ?? 0}
+      ORDER BY id LIMIT 6`)) as unknown as { id: number; sym: string | null; mint: string; pk: number; sz: number }[];
+    for (const r of rows) {
+      s.lastFamvelAuditId = r.id;
+      await notify(
+        "RUNNER",
+        `FAMVEL BOARDING · ${r.sym ?? r.mint.slice(0, 6)} at ${Number(r.pk).toFixed(1)}× flight`,
+        [
+          `$${Number(r.sz).toFixed(2)} paper probe — escalating family, vertical launch (the Neuralink class)`,
+          "ride cards fire at each rung; outcome lands in the probe book scorecard",
+        ],
+        3,
+        ["rocket"],
+        "http://localhost:3777/",
+      );
+      console.log(`📣 FAMVEL BOARDING ${r.sym ?? "?"} at ${Number(r.pk).toFixed(1)}× — card sent`);
+    }
+  } catch (err) {
+    console.warn(`famvel card check failed: ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -1384,6 +1418,7 @@ while (true) {
     await checkChainTruth(state);
     await checkHarvestWindow(state);
     await checkMoonRides(state);
+    await checkFamvelProbes(state);
     await checkLaneDivergence(state);
     await checkDeployerWalk(state);
     await checkFills(state);
