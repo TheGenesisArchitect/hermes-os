@@ -42,7 +42,12 @@ export function setDrainHandler(fn: (mint: string) => void): void {
 }
 
 const WS_URLS = ["wss://solana-rpc.publicnode.com", "wss://api.mainnet-beta.solana.com"];
-const MAX_SUBS = 15;
+// 15 → 40 (operator 2026-07-28: "we should never sit down if we can't get our
+// money out"). At 15, open positions shared the budget with armed candidates
+// and a big paper book could leave a LIVE seat with no real-time feed at all —
+// CLARITY died with the ws watcher potentially blind. Account subscriptions
+// are cheap; 40 covers the whole open book plus the armed queue.
+const MAX_SUBS = 40;
 const state = new Map<string, PoolState>(); // mint → state
 let ws: WebSocket | null = null;
 let wsUrlIdx = 0;

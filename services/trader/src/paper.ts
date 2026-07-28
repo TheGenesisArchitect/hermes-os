@@ -1653,16 +1653,22 @@ export function decideExit(
   if (
     cfg.DRAIN_GUARD_ENABLED &&
     ageSec <= cfg.DRAIN_GUARD_WINDOW_SEC &&
-    entryLiq != null &&
-    entryLiq > 0 &&
-    market.liquidityUsd != null &&
-    Number.isFinite(market.liquidityUsd) &&
-    market.liquidityUsd < entryLiq * (1 - cfg.DRAIN_GUARD_DROP_FRAC) &&
     price > 0 &&
     entry > 0 &&
     price / entry <= cfg.DRAIN_GUARD_MAX_MARK
   ) {
-    return { reason: "drain_guard_cut", fraction: 1 };
+    // Two depth reads, either one fires: the aggregator (entry-level relative,
+    // lags 10-30s) and the ws pool watcher (the CHAIN's own 30s drop — real
+    // time). CLARITY (2026-07-28, −106% in 60s) died between aggregator
+    // updates: the pool was gone before the lagged read admitted it. The
+    // table's real-time feed is the truth; the aggregator is the fallback.
+    const aggDrain =
+      entryLiq != null && entryLiq > 0 &&
+      market.liquidityUsd != null && Number.isFinite(market.liquidityUsd) &&
+      market.liquidityUsd < entryLiq * (1 - cfg.DRAIN_GUARD_DROP_FRAC);
+    const pulse = poolPulse(position.mint);
+    const wsDrain = pulse != null && pulse.drop30s >= cfg.DRAIN_GUARD_DROP_FRAC;
+    if (aggDrain || wsDrain) return { reason: "drain_guard_cut", fraction: 1 };
   }
 
   // ── RUNNER CLOSE — the model's final leg ──────────────────────────────────
@@ -2629,7 +2635,12 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     // creation observation point). Open positions take priority for the subs.
     const pools = (await db.execute(sql`
       SELECT mint, pool_address FROM (
-        SELECT DISTINCT p.mint, t.pool_address, 0 AS prio FROM positions p
+        SELECT DISTINCT p.mint, t.pool_address,
+          -- LIVE SEATS WATCH FIRST (operator 2026-07-28): a live position's
+          -- pool is NEVER unsubscribed — real capital always has the
+          -- real-time feed; paper opens next, armed candidates last.
+          CASE WHEN p.lane = 'live' THEN -1 ELSE 0 END AS prio
+        FROM positions p
         JOIN tokens t ON t.mint = p.mint
         WHERE p.status = 'open' AND t.pool_address IS NOT NULL
         UNION ALL
@@ -2638,7 +2649,7 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
         WHERE c.triggered_at > now() - interval '10 minutes' AND c.entered = false
           AND (c.stars = 2 OR (c.wallet_winner_hits >= 1 AND c.wallet_winner_hits - coalesce(c.wallet_rug_hits, 0) >= 1))
           AND t.pool_address IS NOT NULL
-      ) u ORDER BY prio LIMIT 15`)) as unknown as {
+      ) u ORDER BY prio LIMIT 40`)) as unknown as {
       mint: string;
       pool_address: string;
     }[];
@@ -3003,7 +3014,12 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
       // itself is the second read — cut now, don't donate another poll to
       // the exit window. No pulse / no drop → the poll confirm stands.
       const pulse = poolPulse(position.mint);
-      const corroborated = pulse != null && pulse.drop30s >= 0.5;
+      // Depth cuts confirm at ≥50% chain drop; drain-guard cuts (first-minutes
+      // kill zone) confirm at the guard's own threshold — the ws read that
+      // fired the cut IS the chain speaking, don't donate another poll.
+      const corroborated =
+        pulse != null &&
+        pulse.drop30s >= (exit.reason === "drain_guard_cut" ? cfg.DRAIN_GUARD_DROP_FRAC : 0.5);
       const c = (depthConfirmCounts.get(position.id) ?? 0) + 1;
       if (!corroborated && c < cfg.DEPTH_COLLAPSE_CONFIRM_TICKS) {
         depthConfirmCounts.set(position.id, c);
