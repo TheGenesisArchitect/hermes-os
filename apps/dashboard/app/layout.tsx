@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SystemHealth } from "@/components/SystemHealth";
+import { QuantDrawer } from "@/components/QuantDrawer";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         <main className="mx-auto max-w-6xl px-6 py-6">{children}</main>
+        <QuantDrawer />
       </body>
     </html>
   );

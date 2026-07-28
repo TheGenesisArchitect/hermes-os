@@ -76,6 +76,19 @@ export async function llmJson<T>(args: OllamaJsonArgs<T>): Promise<T | null> {
   return ollamaJson(args);
 }
 
+/**
+ * Free-prose completion for surfaces that don't want to carry a zod instance
+ * (the dashboard's quant drawer): wraps llmJson with an internal one-field
+ * schema and returns the text, or null when both brains miss.
+ */
+const AnswerSchema = z.object({
+  answer: z.string().describe("Direct, grounded answer in plain prose. Cite only figures you were given; never invent numbers."),
+});
+export async function llmText(system: string, user: string, timeoutMs = 50_000): Promise<string | null> {
+  const out = await llmJson({ system, user, schema: AnswerSchema, timeoutMs });
+  return out?.answer ?? null;
+}
+
 /** Liveness for surfaces: Groq keyed counts as up (probed cheaply), else Ollama. */
 export async function llmUp(timeoutMs = 3_000): Promise<boolean> {
   if (groqKey()) {

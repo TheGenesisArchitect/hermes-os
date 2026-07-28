@@ -102,7 +102,7 @@ export {
 } from "./management/conviction.js";
 export { canonicalVenue } from "./market/venue.js";
 export { ollamaJson, ollamaUp, OLLAMA_MODEL } from "./llm/ollama.js";
-export { llmJson, llmUp, quantProvider, GROQ_MODEL } from "./llm/quant.js";
+export { llmJson, llmText, llmUp, quantProvider, GROQ_MODEL } from "./llm/quant.js";
 export {
   synthesizeMover,
   synthesizeBrief,
