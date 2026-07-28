@@ -1594,6 +1594,7 @@ export function decideExit(
   market: TokenMarket,
   peak: number,
   call: ManagementCall | null = null,
+  entryLiq: number | null = null,
 ): ExitDecision | null {
   const entry = n(position.entryPriceUsd);
   const price = market.priceUsd;
@@ -1616,6 +1617,27 @@ export function decideExit(
     price > 0
   ) {
     return { reason: "depth_collapse_cut", fraction: 1 };
+  }
+
+  // ── FIRST-MINUTES DRAIN GUARD (replay-proven 2026-07-27) ──────────────────
+  // Relative-to-entry depth guard for the position's first minutes — the
+  // adversarial-drain kill zone the absolute floor and the −50%/30s ws cliff
+  // both miss. Fires ONLY with the mark at/under DRAIN_GUARD_MAX_MARK: a pool
+  // draining while price is UP is a harvest (the ladder owns it), not a flee —
+  // that single condition zeroed the moon false-fires in the replay.
+  if (
+    cfg.DRAIN_GUARD_ENABLED &&
+    ageSec <= cfg.DRAIN_GUARD_WINDOW_SEC &&
+    entryLiq != null &&
+    entryLiq > 0 &&
+    market.liquidityUsd != null &&
+    Number.isFinite(market.liquidityUsd) &&
+    market.liquidityUsd < entryLiq * (1 - cfg.DRAIN_GUARD_DROP_FRAC) &&
+    price > 0 &&
+    entry > 0 &&
+    price / entry <= cfg.DRAIN_GUARD_MAX_MARK
+  ) {
+    return { reason: "drain_guard_cut", fraction: 1 };
   }
 
   // ── RUNNER CLOSE — the model's final leg ──────────────────────────────────
@@ -2133,6 +2155,27 @@ const stopConfirmCounts = new Map<number, number>();
 // thin reads (the trusted-read class). A REAL drain persists across polls; a
 // flip read does not. Same discipline as the pre-arm hard stop's wick confirm.
 const depthConfirmCounts = new Map<number, number>();
+// Entry-level pool depth per position — the drain guard's baseline. Fetched
+// once from candidate_ticks (nearest tick at/just before open), null-cached on
+// a miss so a coverage gap never re-queries every poll. Pruned with the guard
+// window: closed/aged positions fall out on the next sweep.
+const entryLiqCache = new Map<number, number | null>();
+async function entryLiquidityFor(position: Position, cfg: HermesConfig): Promise<number | null> {
+  const ageSec = (Date.now() - position.openedAt.getTime()) / 1000;
+  if (!cfg.DRAIN_GUARD_ENABLED || ageSec > cfg.DRAIN_GUARD_WINDOW_SEC + 10) {
+    entryLiqCache.delete(position.id);
+    return null;
+  }
+  if (entryLiqCache.has(position.id)) return entryLiqCache.get(position.id)!;
+  const [t] = (await db.execute(sql`
+    SELECT liquidity_usd::float AS liq FROM candidate_ticks
+    WHERE mint = ${position.mint}
+      AND snapped_at BETWEEN ${position.openedAt}::timestamptz - interval '20 seconds' AND ${position.openedAt}::timestamptz + interval '5 seconds'
+    ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
+  const liq = t?.liq != null && Number.isFinite(Number(t.liq)) && Number(t.liq) > 0 ? Number(t.liq) : null;
+  entryLiqCache.set(position.id, liq);
+  return liq;
+}
 // Consecutive dust-pool reads per position. A dust read is HELD (never booked off
 // its fake price), but once the pool stays dust for PERSISTENT_DUST_TICKS polls
 // the tradeable liquidity is genuinely gone and the position is a corpse — book
@@ -2903,7 +2946,7 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     const ecfg = position.signature
       ? { ...cfg, ...signatureExitOverrides(position.signature as Signature, await learnedProfile(position.signature as Signature)) }
       : cfg;
-    let exit = decideExit(ecfg, position, market, peak, call);
+    let exit = decideExit(ecfg, position, market, peak, call, await entryLiquidityFor(position, ecfg));
     // Pre-arm hard-stop WICK CONFIRMATION: sell only after the read stays below
     // the stop for HARD_STOP_CONFIRM_TICKS consecutive polls. Every historical
     // hard-stop fired on a single below-stop tick and 63% recovered past TP0
@@ -2927,7 +2970,7 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     // sells — one flip read was ejecting live from healthy, growing pools in
     // 6-15s (several "cuts" closed green, impossible against a real drain).
     // A genuine drain persists; the confirm costs one poll (~5s) against it.
-    if (exit?.reason === "depth_collapse_cut" && cfg.DEPTH_COLLAPSE_CONFIRM_TICKS > 1) {
+    if ((exit?.reason === "depth_collapse_cut" || exit?.reason === "drain_guard_cut") && cfg.DEPTH_COLLAPSE_CONFIRM_TICKS > 1) {
       // P1 (2026-07-25): the ws pool watcher is ground truth the aggregator
       // is not. A flip read shows a drain the chain never saw; a REAL drain
       // shows the pool's own SOL falling in the same 30s window. When the

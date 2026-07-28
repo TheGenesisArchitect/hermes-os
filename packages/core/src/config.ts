@@ -652,6 +652,18 @@ const envSchema = z.object({
   // A real drain persists across polls; require this many consecutive
   // sub-threshold reads before selling. Costs ~5s against a true drain.
   DEPTH_COLLAPSE_CONFIRM_TICKS: z.coerce.number().default(2),
+  // FIRST-MINUTES DRAIN GUARD (replay-proven 2026-07-27, first-minute-guard.ts
+  // over 637 positions / 100% tick coverage): a pool that gives back ≥25% of
+  // its ENTRY-level depth inside the first 120s while the mark sits ≤1.10× is
+  // the adversarial drain signature — 64% of full-losses fire it at avg mark
+  // 0.75×, only 9% of winners (at ~1.01×, breakeven cuts), and ZERO moons
+  // (moon triggers all sat at 2.1-2.5× marks, excluded by the mark ceiling).
+  // Relative-to-entry and early, where DEPTH_COLLAPSE_USD is absolute and the
+  // ws fast-drain needs a −50%/30s cliff.
+  DRAIN_GUARD_ENABLED: z.coerce.boolean().default(true),
+  DRAIN_GUARD_WINDOW_SEC: z.coerce.number().default(120),
+  DRAIN_GUARD_DROP_FRAC: z.coerce.number().default(0.25),
+  DRAIN_GUARD_MAX_MARK: z.coerce.number().default(1.1),
   // DEEP-CROWD FLOOR EXCEPTION (ratified 2026-07-25, subfloor-deepcrowd
   // harness): the sub-floor band is NOT homogeneous — wh≥5 / 0-rug-rep crowds
   // run 67% win / 17% rug with 1-in-3 reaching ≥3× (the overnight moon
