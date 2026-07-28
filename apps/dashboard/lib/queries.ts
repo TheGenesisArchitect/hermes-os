@@ -3347,6 +3347,10 @@ export interface InflowBand {
   rugPct: number | null;
   avgPeak: number | null;
   traded: number;
+  /** POSITION-based win rate on closed paper trades — distinct from winPct,
+   *  which grades the candidate LABELS (a band can be 100% labeled-winner and
+   *  still lose money on entries — the famvel probe row, 2026-07-28). */
+  tradeWinPct: number | null;
   realized: number | null;
   avgSize: number | null;
 }
@@ -3365,6 +3369,12 @@ export async function getInflowEdge(hours = 24): Promise<InflowBand[]> {
              round(100.0 * count(*) filter (where o.label='rug') / nullif(count(*),0), 1)::float as rug_pct,
              round(avg(o.peak_multiple)::numeric, 2)::float as avg_peak,
              count(p.id)::int as traded,
+             -- TRADE win% (position P&L), distinct from candidate-label win%:
+             -- the famvel probe row exposed the blend (operator 2026-07-28) —
+             -- probes board only already-≥2× verticals, so label-win% is ~100%
+             -- by construction while the ENTRIES can still lose. Both truths
+             -- now shown side by side.
+             round(100.0 * count(p.id) filter (where p.realized_pnl_usd > 0) / nullif(count(p.id), 0), 1)::float as trade_win_pct,
              round(coalesce(sum(p.realized_pnl_usd), 0)::numeric, 2)::float as realized,
              round(avg(p.size_usd)::numeric, 2)::float as avg_size
       from candidate_outcomes o
@@ -3381,6 +3391,7 @@ export async function getInflowEdge(hours = 24): Promise<InflowBand[]> {
       rugPct: n(r.rug_pct),
       avgPeak: n(r.avg_peak),
       traded: Number(r.traded),
+      tradeWinPct: n(r.trade_win_pct),
       realized: n(r.realized),
       avgSize: n(r.avg_size),
     }));

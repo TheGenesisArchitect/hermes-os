@@ -51,10 +51,11 @@ export function InflowEdge({ bands, hours = 24 }: { bands: InflowBand[]; hours?:
             <tr className="text-left text-xs" style={{ color: "var(--text-muted)" }}>
               <th className="pb-2 pr-3 font-normal">Pool growth at arm</th>
               <th className="pb-2 pr-3 text-right font-normal">Armed</th>
-              <th className="pb-2 pr-3 text-right font-normal">Win %</th>
+              <th className="pb-2 pr-3 text-right font-normal">Cand win %</th>
               <th className="pb-2 pr-3 text-right font-normal">Rug %</th>
               <th className="pb-2 pr-3 text-right font-normal">Avg peak</th>
               <th className="pb-2 pr-3 text-right font-normal">Traded</th>
+              <th className="pb-2 pr-3 text-right font-normal">Trade win %</th>
               <th className="pb-2 pr-3 text-right font-normal">Avg size</th>
               <th className="pb-2 text-right font-normal">Realized</th>
             </tr>
@@ -91,6 +92,9 @@ export function InflowEdge({ bands, hours = 24 }: { bands: InflowBand[]; hours?:
                   </td>
                   <td className="tabular py-2 pr-3 text-right" style={{ color: "var(--text-secondary)" }}>{b.avgPeak === null ? "—" : `${b.avgPeak.toFixed(2)}×`}</td>
                   <td className="tabular py-2 pr-3 text-right text-xs" style={{ color: "var(--text-muted)" }}>{b.traded}</td>
+                  <td className="tabular py-2 pr-3 text-right font-medium" style={{ color: b.tradeWinPct != null && b.tradeWinPct >= 50 ? "var(--status-good)" : "var(--text-secondary)" }}>
+                    {b.tradeWinPct == null ? "—" : `${b.tradeWinPct.toFixed(1)}%`}
+                  </td>
                   <td className="tabular py-2 pr-3 text-right text-xs" style={{ color: "var(--text-muted)" }}>{b.avgSize === null ? "—" : usd(b.avgSize)}</td>
                   <td className="tabular py-2 text-right font-medium" style={{ color: (b.realized ?? 0) >= 0 ? "var(--status-good)" : "var(--status-critical)" }}>
                     {b.realized === null ? "—" : `${b.realized >= 0 ? "+" : ""}${usd(b.realized)}`}
