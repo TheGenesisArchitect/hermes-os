@@ -874,6 +874,14 @@ const envSchema = z.object({
   // strong inflow now sizes down.
   LIQ_FLAT_MAX: z.coerce.number().default(1.30), // < STRONG = not enough real inflow
   LIQ_FLAT_SIZE_MULT: z.coerce.number().default(0.6),
+  // BAND-SIZE FLIP (operator RATIFIED 2026-07-28: "Strong and Good Bands need
+  // to flip their average sizing"): measured 3d, paper GOOD (1.15-1.29×)
+  // averaged $7.94/trade earning 3.6¢/$ while STRONG (≥1.30×) averaged $5.78
+  // earning 12.2¢/$ — the biggest tickets sat on the band earning a third of
+  // the rate. Cause: the winner-rep crowd BYPASS sized below-strong at full
+  // ×1 (and then stacked conviction/hot-family boosts on top). The crowd
+  // earns the ENTRY; the band still prices the SIZE.
+  LIQ_BELOWSTRONG_WINNERREP_MULT: z.coerce.number().default(0.6),
 
   // LIVE INFLOW REQUIREMENT — real capital only mirrors the band that pays.
   // Live has no frictionless forgiveness: it eats slippage, gas and confirm

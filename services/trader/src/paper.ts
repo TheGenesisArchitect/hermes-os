@@ -1397,7 +1397,10 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
         : lg >= cfg.LIQ_INFLOW_STRONG
           ? cfg.LIQ_INFLOW_SIZE_BOOST // the band that pays: 72% win, 0% rug
           : winnerRepCrowd
-            ? 1 // proven crowd below strong — full size, the gate replaced the probe
+            // BAND-SIZE FLIP (ratified 2026-07-28): the crowd earns the entry,
+            // the band prices the size — full ×1 here was why GOOD out-sized
+            // STRONG ($7.94 vs $5.78 avg) while earning 3.6¢/$ vs 12.2¢/$.
+            ? cfg.LIQ_BELOWSTRONG_WINNERREP_MULT
             : cfg.LIQ_FLAT_SIZE_MULT; // (only reachable with the gate disabled)
     // LATE-ENTRY SHRINK — a confirm in the buying-the-top band (2.0-2.5× already
     // run) was 27.5% dead-on-arrival at −13.3% on deployed. Half size; the
