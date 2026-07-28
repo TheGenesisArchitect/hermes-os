@@ -63,6 +63,26 @@ async function universeSnapshot(): Promise<string> {
     q("latest market brief (newsdesk, Groq-brained)", sql`
       SELECT headline, substring(why_it_matters for 400) why_it_matters FROM market_news
       WHERE kind='brief' ORDER BY created_at DESC LIMIT 1`),
+    q("DETERMINISTIC FORECAST INPUTS — computed arithmetic, the ONLY basis for any forward-looking answer. Present as projections conditioned on current rates holding, never as promises. proj_24h = fills_24h × ev_per_fill; compound paths apply daily_return_pct to live equity.", sql`
+      WITH l AS (
+        SELECT count(*)::float fills_24h, coalesce(avg(realized_pnl_usd),0)::float ev,
+          coalesce(sum(realized_pnl_usd),0)::float pnl_24h,
+          coalesce(stddev_pop(realized_pnl_usd),0)::float sd
+        FROM positions WHERE lane='live' AND status='closed' AND closed_at > now() - interval '24 hours'),
+      pc AS (
+        SELECT coalesce(sum(realized_pnl_usd),0)::float core_pnl_24h, count(*)::int core_n
+        FROM positions WHERE lane='paper' AND book='core' AND status='closed' AND closed_at > now() - interval '24 hours'),
+      eq AS (SELECT coalesce((SELECT equity_usd::float FROM pnl_snapshots WHERE lane='live' ORDER BY snapped_at DESC LIMIT 1),0) live_equity)
+      SELECT round(l.fills_24h) fills_last_24h, round(l.ev::numeric,3) ev_per_fill,
+        round(l.pnl_24h::numeric,2) live_pnl_24h, round(eq.live_equity::numeric,2) live_equity,
+        round((l.fills_24h*l.ev)::numeric,2) proj_next_24h_pnl,
+        round((l.fills_24h*l.ev - 1.5*l.sd*sqrt(GREATEST(l.fills_24h,1)))::numeric,2) proj_24h_low,
+        round((l.fills_24h*l.ev + 1.5*l.sd*sqrt(GREATEST(l.fills_24h,1)))::numeric,2) proj_24h_high,
+        CASE WHEN eq.live_equity>0 THEN round((100.0*l.fills_24h*l.ev/eq.live_equity)::numeric,2) END daily_return_pct,
+        CASE WHEN eq.live_equity>0 THEN round((eq.live_equity*power(1+l.fills_24h*l.ev/eq.live_equity,7))::numeric,2) END compound_7d_equity,
+        CASE WHEN eq.live_equity>0 THEN round((eq.live_equity*power(1+l.fills_24h*l.ev/eq.live_equity,30))::numeric,2) END compound_30d_equity,
+        round(pc.core_pnl_24h::numeric,2) paper_core_pnl_24h_leading_indicator, pc.core_n paper_core_n
+      FROM l, pc, eq`),
   ]);
   return parts.join("\n\n");
 }
@@ -72,6 +92,7 @@ const SYSTEM = [
   "Doctrine: base hits keep the wallet alive, MOONS expand the equity curve; protect capital from the adversarial side (rugs, LP pulls, drain plays). Paper reveals, live confirms. Nothing ships without harness evidence and operator ratification.",
   "You are READ-ONLY: you observe and analyze; you cannot trade, arm, disarm, or change anything, and you say so if asked to act.",
   "Answer from the UNIVERSE SNAPSHOT provided — cite its numbers. If the snapshot doesn't contain what's asked, say what's missing rather than inventing. Be sharp, direct, and honest about losses. No hype, no financial advice boilerplate.",
+  "FORECASTS: use ONLY the 'DETERMINISTIC FORECAST INPUTS' block — those projections are arithmetic from measured rates, valid strictly 'if current rates hold'. Present the range (low/base/high), name the assumptions, and flag when the sample is thin (few fills) or the rates just changed (a gate restart or new fence makes trailing rates stale). Never extrapolate beyond what that block computes.",
 ].join(" ");
 
 export async function POST(req: Request) {
