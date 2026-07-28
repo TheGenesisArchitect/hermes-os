@@ -2186,6 +2186,11 @@ const stopConfirmCounts = new Map<number, number>();
 // thin reads (the trusted-read class). A REAL drain persists across polls; a
 // flip read does not. Same discipline as the pre-arm hard stop's wick confirm.
 const depthConfirmCounts = new Map<number, number>();
+// PHANTOM-PRINT GUARD state: reads jumping >PEAK_JUMP_CONFIRM× the standing
+// peak wait here one poll for corroboration before being recorded as the
+// high-water mark (MEOW 2026-07-28: a single 3.35× phantom vs 110 real ticks).
+const PEAK_JUMP_CONFIRM = 1.5;
+const pendingPeaks = new Map<number, number>();
 // Entry-level pool depth per position — the drain guard's baseline. Fetched
 // once from candidate_ticks (nearest tick at/just before open), null-cached on
 // a miss so a coverage gap never re-queries every poll. Pruned with the guard
@@ -2901,8 +2906,33 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     }
     suspectCounts.set(position.id, 0);
 
-    const peak = Math.max(n(position.peakPriceUsd), market.priceUsd);
-    if (peak > n(position.peakPriceUsd)) {
+    // PHANTOM-PRINT GUARD (operator "Let's fix", 2026-07-28 — MEOW autopsy):
+    // one bad aggregator read wrote peak 3.35× against the position's own 110
+    // ticks (≤1.20×) and a dead-flat paper twin — and peak feeds trail floors,
+    // displace, ride cards, and every capture metric. A read jumping more than
+    // PEAK_JUMP_CONFIRM× above the standing peak must repeat on the NEXT poll
+    // to be believed: a real spike holds for one 2s poll; a phantom print
+    // never does. On confirmation the LOWER of the two elevated reads is
+    // recorded (conservative). Marks/ticks and realized P&L are untouched.
+    const prevPeak = n(position.peakPriceUsd);
+    let peak = prevPeak;
+    if (market.priceUsd > prevPeak) {
+      if (market.priceUsd <= prevPeak * PEAK_JUMP_CONFIRM) {
+        peak = market.priceUsd; // ordinary new high — accept immediately
+        pendingPeaks.delete(position.id);
+      } else {
+        const pending = pendingPeaks.get(position.id);
+        if (pending != null) {
+          peak = Math.min(pending, market.priceUsd); // second elevated read — corroborated
+          pendingPeaks.delete(position.id);
+        } else {
+          pendingPeaks.set(position.id, market.priceUsd); // hold one poll
+        }
+      }
+    } else {
+      pendingPeaks.delete(position.id); // read collapsed back — pending was a phantom
+    }
+    if (peak > prevPeak) {
       await db
         .update(positions)
         .set({ peakPriceUsd: String(peak) })
