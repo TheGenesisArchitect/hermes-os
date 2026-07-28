@@ -11,7 +11,7 @@
 //  - Cohort sends are OPERATOR-TRIGGERED; nothing here auto-mails a list.
 import { db, marketNews } from "@hermes/db";
 import { desc, eq } from "drizzle-orm";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 // Sender identity: the ambassador pipeline's own verified Resend identity
@@ -48,14 +48,18 @@ export function renderDigestHtml(r: ReportRow): string {
       </td></tr>`,
     )
     .join("");
+  // Stacked entries, not columns: a 3-col table with nowrap name/ecosystem
+  // crushed the thesis into a word-per-line sliver in Gmail (operator
+  // screenshot 2026-07-28). One full-width cell per entry reads clean at
+  // every viewport.
   const watch = (drafts.watchlist ?? [])
     .map(
       (w) => `
-      <tr>
-        <td style="padding:10px 14px;border-bottom:1px solid #e8ebf1;font-size:13px;font-weight:600;color:#0b1220;white-space:nowrap">${esc(w.name)}</td>
-        <td style="padding:10px 14px;border-bottom:1px solid #e8ebf1;font-size:12px;color:#64708a;white-space:nowrap">${esc(w.ecosystem)}</td>
-        <td style="padding:10px 14px;border-bottom:1px solid #e8ebf1;font-size:13px;line-height:1.5;color:#3c4657">${esc(w.thesis)}</td>
-      </tr>`,
+      <tr><td style="padding:14px 18px;border-bottom:1px solid #e8ebf1">
+        <div style="font-size:14px;color:#0b1220"><span style="font-weight:700">${esc(w.name)}</span>
+          &nbsp;<span style="display:inline-block;background:#eef2f8;color:#5b6b8c;font-size:11px;letter-spacing:.04em;padding:2px 8px;border-radius:10px;vertical-align:middle">${esc(w.ecosystem)}</span></div>
+        <p style="margin:7px 0 0;font-size:13.5px;line-height:1.6;color:#3c4657">${esc(w.thesis)}</p>
+      </td></tr>`,
     )
     .join("");
   return `
@@ -172,10 +176,36 @@ export async function sendDigest(to: string[]): Promise<string> {
   const key = process.env.RESEND_API_KEY ?? "";
   if (!key) return "preview written to :3777/digest-preview.html — RESEND_API_KEY not set, no send";
   if (!to.length) return "preview written — no recipients given";
+  // CID INLINE IMAGES (operator screenshot 2026-07-28: hosted images did not
+  // render in the mail client). The assets travel INSIDE the email as inline
+  // attachments — rendering no longer depends on remote fetches, image
+  // proxies, or this network's DPI quirks. Falls back to hosted URLs only if
+  // the local asset files are missing.
+  const assetDir = resolve(import.meta.dirname, "../../../apps/dashboard/public");
+  let emailHtml = html;
+  const attachments: { filename: string; content: string; content_id: string }[] = [];
+  for (const [file, cid, url] of [
+    ["genesis-logo.png", "genesis-logo", LOGO],
+    ["genesis-og.png", "genesis-og", HERO],
+  ] as const) {
+    try {
+      const content = readFileSync(resolve(assetDir, file)).toString("base64");
+      attachments.push({ filename: file, content, content_id: cid });
+      emailHtml = emailHtml.replaceAll(url, `cid:${cid}`);
+    } catch {
+      /* asset missing — hosted URL stays for this image */
+    }
+  }
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body: JSON.stringify({ from: fromAddr(), to, subject: `The DeFi Frontier — ${report.headline}`, html }),
+    body: JSON.stringify({
+      from: fromAddr(),
+      to,
+      subject: `The DeFi Frontier — ${report.headline}`,
+      html: emailHtml,
+      ...(attachments.length ? { attachments } : {}),
+    }),
   });
   const body = await res.text();
   return res.ok ? `sent to ${to.join(", ")} (${body.slice(0, 60)})` : `RESEND ERROR ${res.status}: ${body.slice(0, 160)}`;
