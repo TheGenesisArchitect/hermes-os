@@ -13,6 +13,11 @@
 // tables and audit rows, never positions.
 import { z } from "zod/v4";
 import { ollamaJson, ollamaUp, type OllamaJsonArgs } from "./ollama.js";
+// resilientFetch, not raw fetch: this host's DPI resets undici on some TLS
+// endpoints (the rpc-pool disease) — from the DASHBOARD runtime the Groq call
+// hung to its 50s timeout while plain curl answered in <1s (quant drawer 503,
+// 2026-07-28). resilientFetch fails over to curl per-host, transparently.
+import { resilientFetch } from "../net.js";
 
 // Env is read LAZILY at call time, not module scope: dotenv loads after these
 // modules are imported (the OLLAMA_MODEL const has silently ignored .env
@@ -29,14 +34,12 @@ export function quantProvider(): "groq" | "ollama" {
 }
 
 async function groqJson<T>(args: OllamaJsonArgs<T>): Promise<T | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), args.timeoutMs ?? 45_000);
   try {
     const jsonSchema = z.toJSONSchema(args.schema, { target: "draft-7" });
-    const res = await fetch(`${groqUrl()}/chat/completions`, {
+    const res = await resilientFetch(`${groqUrl()}/chat/completions`, {
       method: "POST",
+      timeoutMs: args.timeoutMs ?? 45_000,
       headers: { "content-type": "application/json", authorization: `Bearer ${groqKey()}` },
-      signal: controller.signal,
       body: JSON.stringify({
         model: groqModel(),
         temperature: args.temperature ?? 0.4,
@@ -58,8 +61,6 @@ async function groqJson<T>(args: OllamaJsonArgs<T>): Promise<T | null> {
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -92,18 +93,14 @@ export async function llmText(system: string, user: string, timeoutMs = 50_000):
 /** Liveness for surfaces: Groq keyed counts as up (probed cheaply), else Ollama. */
 export async function llmUp(timeoutMs = 3_000): Promise<boolean> {
   if (groqKey()) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`${groqUrl()}/models`, {
+      const res = await resilientFetch(`${groqUrl()}/models`, {
+        timeoutMs,
         headers: { authorization: `Bearer ${groqKey()}` },
-        signal: controller.signal,
       });
       if (res.ok) return true;
     } catch {
       /* fall through to ollama */
-    } finally {
-      clearTimeout(timeout);
     }
   }
   return ollamaUp(timeoutMs);
