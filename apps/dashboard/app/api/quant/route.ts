@@ -63,6 +63,14 @@ async function universeSnapshot(): Promise<string> {
     q("latest market brief (newsdesk, Groq-brained)", sql`
       SELECT headline, substring(why_it_matters for 400) why_it_matters FROM market_news
       WHERE kind='brief' ORDER BY created_at DESC LIMIT 1`),
+    q("FENCE/POLICY CHANGE TIMESTAMPS — any trailing-rate metric or forecast computed over a window that CROSSES one of these timestamps is STALE (the cohort mix changed at that moment). Flag staleness explicitly whenever the 24h forecast window includes one.", sql`
+      SELECT substring(details->>'reason' for 44) fence, min(created_at) first_seen
+      FROM audit_log WHERE action='live_buy_skipped' AND created_at > now() - interval '7 days'
+      GROUP BY 1 HAVING min(created_at) > now() - interval '48 hours'
+      UNION ALL
+      SELECT 'arm/kill event: ' || action, created_at FROM audit_log
+      WHERE action IN ('live_kill_cleared','live_kill_engaged') AND created_at > now() - interval '48 hours'
+      ORDER BY first_seen DESC LIMIT 12`),
     q("DETERMINISTIC FORECAST INPUTS — computed arithmetic, the ONLY basis for any forward-looking answer. Present as projections conditioned on current rates holding, never as promises. proj_24h = fills_24h × ev_per_fill; compound paths apply daily_return_pct to live equity.", sql`
       WITH l AS (
         SELECT count(*)::float fills_24h, coalesce(avg(realized_pnl_usd),0)::float ev,

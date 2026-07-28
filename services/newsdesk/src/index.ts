@@ -4,12 +4,12 @@
 import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
 loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
-import { resolve } from "node:path";
 // ONE NEWSDESK ONLY — it ran lock-less and sat dead 87.8h unnoticed (2026-07-23).
 import { acquireSingletonLock } from "@hermes/core";
 acquireSingletonLock(resolve(import.meta.dirname, "../../../.hermes-newsdesk.pid"), "newsdesk");
 import { generate } from "./generate.js";
 import { generateSignals } from "./signals.js";
+import { runFrontier } from "./frontier.js";
 
 // News desk daemon — a slow, off-critical-path loop. Default 15 min so it never
 // competes with the trader for CPU/RAM (qwen is heavy) or DexScreener rate budget.
@@ -33,6 +33,13 @@ async function main() {
       await generate();
     } catch (err) {
       console.error("newsdesk cycle error (continuing):", err);
+    }
+    // NEW FRONTIER lane — outside-Solana ingestion + hourly professional
+    // report. Fail-to-skip: the frontier must never block the home desk.
+    try {
+      await runFrontier();
+    } catch (err) {
+      console.error("frontier cycle error (continuing):", err);
     }
     await new Promise((r) => setTimeout(r, INTERVAL_MS));
   }

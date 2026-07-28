@@ -104,6 +104,15 @@ export { canonicalVenue } from "./market/venue.js";
 export { ollamaJson, ollamaUp, OLLAMA_MODEL } from "./llm/ollama.js";
 export { llmJson, llmText, llmUp, quantProvider, GROQ_MODEL } from "./llm/quant.js";
 export {
+  FRONTIER_FEEDS,
+  fetchFeed,
+  classifyFrontier,
+  synthesizeFrontierReport,
+  type FeedItem,
+  type FrontierClassified,
+  type FrontierReport,
+} from "./news/frontier.js";
+export {
   synthesizeMover,
   synthesizeBrief,
   classifyCategory,
