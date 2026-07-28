@@ -262,6 +262,9 @@ async function liveBuyGate(cfg: HermesConfig, mint: string, routed = false): Pro
         gross: sql<number>`coalesce(sum(${positions.sizeUsd}::float), 0)`,
       })
       .from(positions);
+    // BOOK SPLIT (2026-07-28): the regime signal reads the CORE book only —
+    // probe churn (net ~$0 by design, 70% of paper's at-bats) must never
+    // stand live down or up; live models the live-shape wallet.
     const scoped =
       mirrorVenues.length > 0
         ? base
@@ -269,6 +272,7 @@ async function liveBuyGate(cfg: HermesConfig, mint: string, routed = false): Pro
             .where(
               and(
                 eq(positions.lane, "paper"),
+                eq(positions.book, "core"),
                 eq(positions.status, "closed"),
                 gte(positions.closedAt, sql`now() - make_interval(mins => ${cfg.LIVE_REGIME_WINDOW_MIN})`),
                 inArray(tokens.dex, mirrorVenues),
@@ -277,6 +281,7 @@ async function liveBuyGate(cfg: HermesConfig, mint: string, routed = false): Pro
         : base.where(
             and(
               eq(positions.lane, "paper"),
+              eq(positions.book, "core"),
               eq(positions.status, "closed"),
               gte(positions.closedAt, sql`now() - make_interval(mins => ${cfg.LIVE_REGIME_WINDOW_MIN})`),
             ),

@@ -955,6 +955,19 @@ async function openFromSignal(
   // duplicate. Live needs the claim taken BEFORE the swap, which is a real
   // refactor; it duplicated 1 signal in 24h against paper's 14, so this closes
   // the measured bleed without putting capital at risk.
+  // BOOK SPLIT (operator 2026-07-28 "Build it"): tag the position core|probe
+  // at open. CORE = live-shape (crowd-net, in-envelope inflow, seat-range
+  // trigger, not RUG_RISK) — the wallet live models. Everything else is the
+  // PROBE book: the sensor lane, judged on information yield, never P&L.
+  const psLg = sig?.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null;
+  const paperBook =
+    sig?.walletWinnerHits != null && sig?.walletRugHits != null &&
+    sig.walletWinnerHits >= 1 && sig.walletWinnerHits - sig.walletRugHits >= 1 &&
+    psLg != null && psLg >= 1.15 && psLg <= 2.05 &&
+    (triggerMult == null || !Number.isFinite(triggerMult) || triggerMult <= 2.05) &&
+    !(typeof sig?.signature === "string" && sig.signature.startsWith("RUG_RISK"))
+      ? "core"
+      : "probe";
   let position: typeof positions.$inferSelect | undefined;
   try {
     [position] = await db
@@ -964,6 +977,7 @@ async function openFromSignal(
       mint: signal.mint,
       lane: "paper",
       tier: lane,
+      book: paperBook,
       triggerMult: triggerMult !== null && Number.isFinite(triggerMult) ? String(triggerMult) : null,
       sizeUsd: String(finalSizeUsd),
       qualityMult: String(qualityMult),

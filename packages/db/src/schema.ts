@@ -67,6 +67,11 @@ export const positions = pgTable("positions", {
     .references(() => tokens.mint),
   lane: text("lane").notNull().default("paper"), // paper | live
   tier: text("tier").notNull().default("base"), // capacity lane: moonshot | core | base — assigned at entry from the convexity fingerprint
+  // BOOK SPLIT (operator 2026-07-28 "Build it"): core = live-shape flow (the
+  // wallet live models), probe = exploration (judged on information yield,
+  // never P&L). Set at open from the live-shape test; live rows are always
+  // core. Every surface live models reads book='core' only.
+  book: text("book").notNull().default("core"), // core | probe
   // Recorder trigger multiple at entry (market-PROVEN multiple vs ref). Trail
   // zones use entryRelativeMult × this so a token entered after proving 4.9x
   // gets the runner leash immediately instead of the tight spike-zone trail

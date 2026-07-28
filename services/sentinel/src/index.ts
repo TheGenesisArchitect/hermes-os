@@ -892,10 +892,13 @@ const money = (v: number): string => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFi
 const pct = (v: number): string => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}%`;
 
 async function laneStats(lane: string, minutes: number): Promise<LaneStats> {
+  // BOOK SPLIT (2026-07-28): every card the operator reads models the CORE
+  // book for paper — probe churn reports nowhere it can masquerade as the
+  // wallet live mirrors. Live rows are all core by definition.
   const rows = (await db.execute(sql`
     select coalesce(p.realized_pnl_usd, 0)::float as pnl, coalesce(p.size_usd,0)::float as size, t.symbol
     from positions p join tokens t on t.mint = p.mint
-    where p.lane = ${lane} and p.status = 'closed'
+    where p.lane = ${lane} and p.status = 'closed' and p.book = 'core'
       and p.closed_at > now() - make_interval(mins => ${minutes})
   `)) as unknown as { pnl: number; size: number; symbol: string | null }[];
   const [eq] = (await db.execute(sql`
