@@ -115,6 +115,39 @@ export async function latestFrontierReport(): Promise<ReportRow | null> {
   return row ?? null;
 }
 
+/** AMBASSADOR COHORT (operator "Wire the Supabase ambassador list"): reads
+ *  campaign_ambassadors (falls through to waitlist) via the Supabase service
+ *  key. RLS correctly hides these tables from the anon key — the service key
+ *  lives ONLY in the Supabase dashboard (Settings → API → service_role) and
+ *  must be pasted into .env as AMBASSADOR_SUPABASE_SERVICE_KEY. */
+export async function fetchCohortEmails(): Promise<{ emails: string[]; source: string } | { error: string }> {
+  const url = (process.env.AMBASSADOR_SUPABASE_URL ?? "").replace(/\/$/, "");
+  const key = process.env.AMBASSADOR_SUPABASE_SERVICE_KEY ?? "";
+  if (!url) return { error: "AMBASSADOR_SUPABASE_URL not set" };
+  if (!key) return { error: "AMBASSADOR_SUPABASE_SERVICE_KEY not set — paste the service_role key from the Supabase dashboard" };
+  for (const table of ["campaign_ambassadors", "waitlist"]) {
+    try {
+      const res = await fetch(`${url}/rest/v1/${table}?select=*&limit=500`, {
+        headers: { apikey: key, authorization: `Bearer ${key}` },
+      });
+      if (!res.ok) continue;
+      const rows = (await res.json()) as Record<string, unknown>[];
+      const emails = [
+        ...new Set(
+          rows
+            .map((r) => String(r.email ?? r.contact_email ?? r.user_email ?? ""))
+            .map((e) => e.trim().toLowerCase())
+            .filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)),
+        ),
+      ];
+      if (emails.length) return { emails, source: table };
+    } catch {
+      /* try next table */
+    }
+  }
+  return { error: "no readable emails in campaign_ambassadors or waitlist (service key valid? tables empty?)" };
+}
+
 /** Send via Resend when keyed; always writes the dashboard preview. Returns a status line. */
 export async function sendDigest(to: string[]): Promise<string> {
   const report = await latestFrontierReport();
