@@ -1124,21 +1124,21 @@ export async function maybeLiveBuy(
       // counterfactual watch can split PRECISION vs RECOVERED cohorts.
       if (sig.walletStrictHits === 0) {
         recoveredTier = true;
-        // RECOVERED×DAMM-V2 DEMOTION (operator 2026-07-27 "Demote it"): this
-        // exact profile is the instant-LP-pull farm — 16 of 21 unsellables and
-        // −$34.58/4d, and it printed a fresh −$2.50 writeoff 24s after fill
-        // THROUGH every fence (probe passed honestly; the pull came after
-        // entry, which no entry-time check can see). Paper keeps taking the
-        // cohort so the counterfactual keeps measuring; live reopens on
-        // operator word after ~30 clean live-shape fills. Other venues'
-        // RECOVERED flow and all strict-winner flow are untouched.
-        if ((await venueForMint(mint)) === "meteora-damm-v2") {
-          await audit("live_buy_skipped", {
-            mint,
-            reason: "RECOVERED tier on meteora-damm-v2 — paper-only until proven (16/21 unsellables, −$34.58/4d, instant-pull farm profile; reopens on ~30 clean fills + operator word)",
-          });
-          return;
-        }
+        // RECOVERED-TIER DEMOTION, VENUE-WIDE (operator "Let's fix",
+        // 2026-07-28; originally damm-v2-only 07-27): the profile is the
+        // drain-farm door wherever it opens — after the damm-v2 demotion the
+        // same fingerprint (RECOVERED + sub-floor RUG_RISK ticket) printed
+        // trustmebro −$2.65 and HUTCH −$2.58 on PUMPSWAP, making it 4 of the
+        // last 5 live full losses. Paper keeps taking the cohort so the
+        // counterfactual keeps measuring (CF is time-of-day sensitive: +$29
+        // in quiet hours, drains in active hours — cut by hour at reopen).
+        // Reopens on ~30 clean live-shape fills + operator word. Strict-winner
+        // flow, sensor cells, F3 deep-crowd tickets, and moon-class untouched.
+        await audit("live_buy_skipped", {
+          mint,
+          reason: "RECOVERED tier — paper-only on ALL venues until proven (4 of last 5 live full losses; drain-farm profile; reopens on ~30 clean fills + operator word)",
+        });
+        return;
         await audit("live_recovered_tier", {
           mint,
           walletWinnerHits: wh ?? null,
