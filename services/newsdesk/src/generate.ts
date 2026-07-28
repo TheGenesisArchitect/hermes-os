@@ -4,7 +4,9 @@ import {
   classifyCategory,
   synthesizeMover,
   synthesizeBrief,
-  ollamaUp,
+  llmUp,
+  quantProvider,
+  GROQ_MODEL,
   OLLAMA_MODEL,
   type ThemeStat,
   type NewsCategory,
@@ -26,13 +28,13 @@ const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000);
  * null, so a slow/offline qwen never throws — it just produces less news.
  */
 export async function generate(): Promise<{ classified: number; movers: number; brief: boolean }> {
-  if (!(await ollamaUp())) {
-    console.log("📰 newsdesk: Ollama offline — skipping cycle (news desk degrades, never blocks)");
+  if (!(await llmUp())) {
+    console.log("📰 newsdesk: no LLM reachable (Groq + Ollama both down) — skipping cycle (news desk degrades, never blocks)");
     return { classified: 0, movers: 0, brief: false };
   }
   const recentStart = hoursAgo(WINDOW_HOURS);
   const priorStart = hoursAgo(WINDOW_HOURS * 2);
-  console.log(`📰 newsdesk cycle — model=${OLLAMA_MODEL}, window=${WINDOW_HOURS}h`);
+  console.log(`📰 newsdesk cycle — brain=${quantProvider()} (${quantProvider() === "groq" ? GROQ_MODEL : OLLAMA_MODEL}), window=${WINDOW_HOURS}h`);
 
   // 1) Classify breadth: give recent closed candidates a controlled category so
   //    the theme aggregates have coverage. Bounded per cycle; accumulates over runs.

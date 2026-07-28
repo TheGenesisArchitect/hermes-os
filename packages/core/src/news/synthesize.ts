@@ -11,7 +11,9 @@
 //     public-facing content and a confabulated claim repackaged into a post is a
 //     credibility hit. "Why it matters" is pattern-analytical, never about the coin.
 import { z } from "zod/v4";
-import { ollamaJson } from "../llm/ollama.js";
+// Routed through the Genesis Quant client: Groq 70B when keyed, local Ollama
+// fallback — same schema-in / validated-or-null-out contract either way.
+import { llmJson } from "../llm/quant.js";
 
 /** Controlled top-level narrative buckets. Grow this list by periodic review of
  *  the free-text `narrative` field — do NOT let the model invent enum members. */
@@ -89,7 +91,7 @@ export async function synthesizeMover(input: MoverInput, model?: string): Promis
   ]
     .filter(Boolean)
     .join("\n");
-  return ollamaJson({ system: GROUNDING, user, schema: MoverStory, model, temperature: 0.4 });
+  return llmJson({ system: GROUNDING, user, schema: MoverStory, model, temperature: 0.4 });
 }
 
 // ── Cheap category classification (breadth, for emerging-theme aggregation) ──
@@ -107,7 +109,7 @@ export async function classifyCategory(
   model?: string,
 ): Promise<CategoryOnly | null> {
   const user = `Classify this Solana token's narrative by its name only. symbol="${token.symbol}"${token.name ? `, name="${token.name}"` : ""}. Return the category enum + a short narrative phrase. No other analysis.`;
-  return ollamaJson({ system: GROUNDING, user, schema: CategoryOnly, model, temperature: 0.2, timeoutMs: 30_000 });
+  return llmJson({ system: GROUNDING, user, schema: CategoryOnly, model, temperature: 0.2, timeoutMs: 30_000 });
 }
 
 // ── Market brief (theme/regime digest — the headline content) ────────────────
@@ -164,5 +166,5 @@ export async function synthesizeBrief(input: BriefInput, model?: string): Promis
     "",
     "Write the market brief. Lead with the strongest emerging pattern. Ground everything in these aggregates only.",
   ].join("\n");
-  return ollamaJson({ system: GROUNDING, user, schema: MarketBrief, model, temperature: 0.5 });
+  return llmJson({ system: GROUNDING, user, schema: MarketBrief, model, temperature: 0.5 });
 }
