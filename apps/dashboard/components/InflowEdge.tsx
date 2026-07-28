@@ -62,7 +62,13 @@ export function InflowEdge({ bands, hours = 24 }: { bands: InflowBand[]; hours?:
           <tbody>
             {bands.map((b) => {
               const label = b.band.slice(2).trim();
-              const isStrong = b.band.startsWith("a") || b.band.startsWith("b");
+              // Band a ONLY is boosted (×1.5 at ≥1.30×) — tagging band b too was
+              // a stale label from before the 2026-07-20 threshold raise, and it
+              // masked the band-size inversion the operator caught 2026-07-28.
+              // Below-strong now sizes ×0.6 even with a winner-rep crowd
+              // (LIQ_BELOWSTRONG_WINNERREP_MULT, f2ebaf2).
+              const isStrong = b.band.startsWith("a");
+              const isBelowStrong = b.band.startsWith("b") || b.band.startsWith("c");
               const isFlat = b.band.startsWith("d");
               return (
                 <tr key={b.band} className="border-t" style={{ borderColor: "var(--gridline)" }}>
@@ -72,7 +78,8 @@ export function InflowEdge({ bands, hours = 24 }: { bands: InflowBand[]; hours?:
                       style={{ background: isStrong ? "var(--status-good)" : isFlat ? "var(--status-critical)" : "var(--text-muted)" }}
                     />
                     <span style={{ color: "var(--text-primary)" }}>{label}</span>
-                    {isStrong ? <span className="ml-1.5 text-[10px]" style={{ color: "var(--status-good)" }}>💧 boosted</span> : null}
+                    {isStrong ? <span className="ml-1.5 text-[10px]" style={{ color: "var(--status-good)" }}>💧 boosted ×1.5</span> : null}
+                    {isBelowStrong ? <span className="ml-1.5 text-[10px]" style={{ color: "var(--text-muted)" }}>sized ×0.6</span> : null}
                     {isFlat ? <span className="ml-1.5 text-[10px]" style={{ color: "var(--status-critical)" }}>shrunk</span> : null}
                   </td>
                   <td className="tabular py-2 pr-3 text-right" style={{ color: "var(--text-secondary)" }}>{b.armed}</td>
