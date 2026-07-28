@@ -14,8 +14,13 @@ import { desc, eq } from "drizzle-orm";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-const FROM = "Genesis Research Desk <info@genesisreserve.io>";
-const LOGO = "https://genesisreserve.io/genesis-logo.png";
+// Sender identity: the ambassador pipeline's own verified Resend identity
+// (RESEND_FROM, @genesisreserve.app — 36 days of proven cohort deliverability).
+// Falls back to the .io identity only if the env is absent.
+const fromAddr = () => process.env.RESEND_FROM ?? "Genesis Research Desk <info@genesisreserve.io>";
+const LOGO = "https://genesisreserve.app/genesis-logo.png";
+const HERO = "https://genesisreserve.app/genesis-og.png";
+const CTA_URL = "https://genesisreserve.app";
 
 interface ReportRow {
   headline: string;
@@ -61,9 +66,12 @@ export function renderDigestHtml(r: ReportRow): string {
         <td><img src="${LOGO}" alt="Genesis Reserve" width="44" height="44" style="display:block;border-radius:8px"/></td>
         <td style="padding-left:14px">
           <div style="color:#ffffff;font-size:17px;font-weight:700;letter-spacing:.03em">GENESIS RESEARCH DESK</div>
-          <div style="color:#8fa3c8;font-size:12px;letter-spacing:.06em">NEW FRONTIER REPORT · ${esc(date)}</div>
+          <div style="color:#8fa3c8;font-size:12px;letter-spacing:.06em">THE DEFI FRONTIER · ${esc(date)}</div>
         </td>
       </tr></table>
+    </td></tr>
+    <tr><td>
+      <a href="${CTA_URL}" style="display:block"><img src="${HERO}" alt="Genesis Reserve — The DeFi Frontier" width="640" style="display:block;width:100%;height:auto"/></a>
     </td></tr>
     <tr><td style="padding:28px 32px 4px">
       <h1 style="margin:0;font-size:21px;line-height:1.35;color:#0b1220">${esc(r.headline)}</h1>
@@ -78,6 +86,9 @@ export function renderDigestHtml(r: ReportRow): string {
            <tr><td style="padding:6px 32px 8px"><table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid #e8ebf1;border-radius:8px;overflow:hidden">${watch}</table></td></tr>`
         : ""
     }
+    <tr><td style="padding:26px 32px 6px" align="center">
+      <a href="${CTA_URL}" style="display:inline-block;background:#0b1220;color:#ffffff;font-size:14px;font-weight:600;letter-spacing:.03em;padding:12px 28px;border-radius:8px;text-decoration:none">Explore Genesis Reserve →</a>
+    </td></tr>
     <tr><td style="padding:22px 32px 28px">
       <p style="margin:0;font-size:11.5px;line-height:1.6;color:#8b96ab;border-top:1px solid #e8ebf1;padding-top:16px">
         Prepared by the Genesis Research Desk for the Ambassador Cohort. This report is market research and education only —
@@ -122,7 +133,7 @@ export async function sendDigest(to: string[]): Promise<string> {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-    body: JSON.stringify({ from: FROM, to, subject: `Genesis Research Desk — ${report.headline}`, html }),
+    body: JSON.stringify({ from: fromAddr(), to, subject: `The DeFi Frontier — ${report.headline}`, html }),
   });
   const body = await res.text();
   return res.ok ? `sent to ${to.join(", ")} (${body.slice(0, 60)})` : `RESEND ERROR ${res.status}: ${body.slice(0, 160)}`;
