@@ -1,4 +1,9 @@
-import "dotenv/config";
+// Root .env, resolved explicitly — bare "dotenv/config" reads cwd
+// (services/newsdesk), where no .env lives; the desk ran on pure defaults
+// its whole life until the Groq key came up empty (2026-07-28).
+import { config as loadEnv } from "dotenv";
+import { resolve } from "node:path";
+loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
 import { resolve } from "node:path";
 // ONE NEWSDESK ONLY — it ran lock-less and sat dead 87.8h unnoticed (2026-07-23).
 import { acquireSingletonLock } from "@hermes/core";

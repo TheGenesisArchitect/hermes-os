@@ -14,13 +14,18 @@
 import { z } from "zod/v4";
 import { ollamaJson, ollamaUp, type OllamaJsonArgs } from "./ollama.js";
 
-const GROQ_URL = process.env.GROQ_URL ?? "https://api.groq.com/openai/v1";
-const GROQ_KEY = process.env.GROQ_API_KEY ?? "";
-export const GROQ_MODEL = process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
+// Env is read LAZILY at call time, not module scope: dotenv loads after these
+// modules are imported (the OLLAMA_MODEL const has silently ignored .env
+// overrides forever for exactly this reason — the 'qwen2.5:3b vs hermes3:3b'
+// log quirk, diagnosed 2026-07-28 when GROQ_API_KEY came up empty).
+const groqUrl = () => process.env.GROQ_URL ?? "https://api.groq.com/openai/v1";
+const groqKey = () => process.env.GROQ_API_KEY ?? "";
+export const GROQ_MODEL = "llama-3.3-70b-versatile";
+const groqModel = () => process.env.GROQ_MODEL ?? GROQ_MODEL;
 
 /** Which brain is answering — for log lines and the health panel. */
 export function quantProvider(): "groq" | "ollama" {
-  return GROQ_KEY ? "groq" : "ollama";
+  return groqKey() ? "groq" : "ollama";
 }
 
 async function groqJson<T>(args: OllamaJsonArgs<T>): Promise<T | null> {
@@ -28,12 +33,12 @@ async function groqJson<T>(args: OllamaJsonArgs<T>): Promise<T | null> {
   const timeout = setTimeout(() => controller.abort(), args.timeoutMs ?? 45_000);
   try {
     const jsonSchema = z.toJSONSchema(args.schema, { target: "draft-7" });
-    const res = await fetch(`${GROQ_URL}/chat/completions`, {
+    const res = await fetch(`${groqUrl()}/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${GROQ_KEY}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${groqKey()}` },
       signal: controller.signal,
       body: JSON.stringify({
-        model: GROQ_MODEL,
+        model: groqModel(),
         temperature: args.temperature ?? 0.4,
         response_format: { type: "json_object" },
         messages: [
@@ -64,7 +69,7 @@ async function groqJson<T>(args: OllamaJsonArgs<T>): Promise<T | null> {
  * arg is honored only on the Ollama path — Groq's model is GROQ_MODEL.
  */
 export async function llmJson<T>(args: OllamaJsonArgs<T>): Promise<T | null> {
-  if (GROQ_KEY) {
+  if (groqKey()) {
     const viaGroq = await groqJson(args);
     if (viaGroq != null) return viaGroq;
   }
@@ -73,12 +78,12 @@ export async function llmJson<T>(args: OllamaJsonArgs<T>): Promise<T | null> {
 
 /** Liveness for surfaces: Groq keyed counts as up (probed cheaply), else Ollama. */
 export async function llmUp(timeoutMs = 3_000): Promise<boolean> {
-  if (GROQ_KEY) {
+  if (groqKey()) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`${GROQ_URL}/models`, {
-        headers: { authorization: `Bearer ${GROQ_KEY}` },
+      const res = await fetch(`${groqUrl()}/models`, {
+        headers: { authorization: `Bearer ${groqKey()}` },
         signal: controller.signal,
       });
       if (res.ok) return true;
