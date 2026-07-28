@@ -2198,14 +2198,26 @@ async function entryLiquidityFor(position: Position, cfg: HermesConfig): Promise
     return null;
   }
   if (entryLiqCache.has(position.id)) return entryLiqCache.get(position.id)!;
-  const [t] = (await db.execute(sql`
-    SELECT liquidity_usd::float AS liq FROM candidate_ticks
-    WHERE mint = ${position.mint}
-      AND snapped_at BETWEEN ${position.openedAt}::timestamptz - interval '20 seconds' AND ${position.openedAt}::timestamptz + interval '5 seconds'
-    ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
-  const liq = t?.liq != null && Number.isFinite(Number(t.liq)) && Number(t.liq) > 0 ? Number(t.liq) : null;
-  entryLiqCache.set(position.id, liq);
-  return liq;
+  // Date params through the drizzle sql template serialize via toString()
+  // ("Tue Jul 28 2026..."), which Postgres rejects as timestamptz — 2026-07-28
+  // incident: this exact query threw EVERY manage tick that held a fresh
+  // position, wedging the whole exit loop overnight. ISO string + fail-OPEN:
+  // a telemetry read must never take the book's management down with it.
+  try {
+    const openedIso = position.openedAt.toISOString();
+    const [t] = (await db.execute(sql`
+      SELECT liquidity_usd::float AS liq FROM candidate_ticks
+      WHERE mint = ${position.mint}
+        AND snapped_at BETWEEN ${openedIso}::timestamptz - interval '20 seconds' AND ${openedIso}::timestamptz + interval '5 seconds'
+      ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
+    const liq = t?.liq != null && Number.isFinite(Number(t.liq)) && Number(t.liq) > 0 ? Number(t.liq) : null;
+    entryLiqCache.set(position.id, liq);
+    return liq;
+  } catch (err) {
+    console.warn(`entry-liq read failed (${short(position.mint)}) — drain guard falls back to ws pulse: ${err instanceof Error ? err.message.slice(0, 80) : err}`);
+    entryLiqCache.set(position.id, null);
+    return null;
+  }
 }
 // Consecutive dust-pool reads per position. A dust read is HELD (never booked off
 // its fake price), but once the pool stays dust for PERSISTENT_DUST_TICKS polls
