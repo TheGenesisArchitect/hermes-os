@@ -3775,6 +3775,13 @@ export async function getWinningFormula(windowHours = 24): Promise<WinningFormul
       FROM audit_log WHERE action='live_buy_skipped' AND created_at > now() - interval '7 days'
       GROUP BY 1 HAVING min(created_at) > now() - make_interval(hours => ${windowHours})
       UNION ALL
+      -- NEW EXIT MECHANISMS are fences too (operator 2026-07-29: basis-first
+      -- changed exit behavior both lanes and the strip was blind to it) — a
+      -- brand-new exit_reason's first appearance timestamps the regime change.
+      SELECT 'new exit: ' || exit_reason, min(closed_at)
+      FROM positions WHERE exit_reason IS NOT NULL AND closed_at > now() - interval '7 days'
+      GROUP BY exit_reason HAVING min(closed_at) > now() - make_interval(hours => ${windowHours})
+      UNION ALL
       SELECT CASE WHEN action='live_kill_cleared' THEN 'ARMED (kill cleared)' ELSE 'DISARMED (kill engaged)' END,
         created_at FROM audit_log
       WHERE action IN ('live_kill_cleared','live_kill_engaged')

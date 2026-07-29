@@ -68,6 +68,10 @@ async function universeSnapshot(): Promise<string> {
       FROM audit_log WHERE action='live_buy_skipped' AND created_at > now() - interval '7 days'
       GROUP BY 1 HAVING min(created_at) > now() - interval '48 hours'
       UNION ALL
+      SELECT 'new exit: ' || exit_reason, min(closed_at) FROM positions
+      WHERE exit_reason IS NOT NULL AND closed_at > now() - interval '7 days'
+      GROUP BY exit_reason HAVING min(closed_at) > now() - interval '48 hours'
+      UNION ALL
       SELECT 'arm/kill event: ' || action, created_at FROM audit_log
       WHERE action IN ('live_kill_cleared','live_kill_engaged') AND created_at > now() - interval '48 hours'
       ORDER BY first_seen DESC LIMIT 12`),
