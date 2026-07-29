@@ -927,12 +927,19 @@ const envSchema = z.object({
   // both lanes (m·steady −$86 paper, WORSE post-ladder) — paper workshop.
   // Empty string disables the allowlist (all routed signatures trade).
   LIVE_SIGNATURE_ALLOWLIST: z.string().default("BASE,RISER,MOON_FAST,MOON_VIOLENT"),
-  // THE RECOVERY CLIFF (measured 2026-07-29, 130 live protective exits):
-  // fire with pool >$12k → 95% recovery; <$5k → ~0%. The drain guard trips at
-  // −25% of entry depth, so unlocked-LP seats need entry pools whose trigger
-  // point stays above the cliff: entryLiq × 0.75 ≥ $12k → $16k floor.
-  // Locked/burned-LP pools are exempt — there is no pull to race.
-  LIVE_UNLOCKED_LP_MIN_POOL_USD: z.coerce.number().default(16_000),
+  // THE RECOVERY CLIFF — RE-MEASURED IN $2k BINS (operator "Ship the $13k
+  // floor", 2026-07-29). The original $16k came from a coarse study (>$12k =
+  // 95%) plus a −25% drain assumption stacked on top. The fine curve over 152
+  // live protective exits shows the plateau starts at $12k and runs FLAT:
+  //   <$8k 3% (n=30) · $10-12k 64% (n=9) · $12-14k 102% (n=12) ·
+  //   $14-16k 90% (n=32) · $16-20k 88% (n=40) · >$20k 93% (n=28)
+  // The $14-16k band — the largest sample — recovers identically to the bands
+  // above it, so the old floor was one bucket too conservative and turned away
+  // the machine window's ONLY tradable-genome pitches (BASE at $14.1k/$15.7k/
+  // $15.8k, all inside the 90% band). $13k entry keeps exits landing in the
+  // plateau; the alarm-point arithmetic is explicit rather than hidden.
+  // Locked/burned-LP pools remain exempt — there is no pull to race.
+  LIVE_UNLOCKED_LP_MIN_POOL_USD: z.coerce.number().default(13_000),
   // THE SNIPER (chain-test PASSED 2026-07-29, all 5 steps, ~$0.30): every
   // live fill chambers a durable-nonce pre-signed full exit; protective
   // fires submit the stored bytes — zero build work at fire time. Fallback
