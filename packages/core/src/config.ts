@@ -688,7 +688,18 @@ const envSchema = z.object({
   // Tickets are the confirmation instrument; half-clip promotion waits for
   // the live cohort itself to hold ≥55% over its first ~30 fills. The depth
   // floor and ceiling still govern; the mid-crowd rug den stays refused.
-  SUBFLOOR_TICKET_ENABLED: z.coerce.boolean().default(true),
+  // CLOSED (operator "Close the sub-floor door", 2026-07-29). The door was
+  // ratified 07-25 to recover a copy-gap cell; four days of live receipts
+  // priced it. Live by inflow band, 7d:
+  //   MILD 1.05-1.20 (this door) n=127 · 43% win · −$62.94 · 25 full losses (20%)
+  //   good 1.20-1.30             n= 81 · 49% win · −$36.75 · 13 (16%)
+  //   strong ≥1.30               n= 25 · 52% win · −$11.04 ·  3 (12%)
+  // Full-loss rate rises cleanly as inflow falls, and this band was 54% of
+  // live's volume carrying 57% of its losses — the wallet was taking five
+  // times more of its worst band than its best. mask (inflow 1.116×, 5W/0R
+  // crowd) was the specimen: entered below the floor, rugged 60s later,
+  // −$2.54 unsellable. Paper keeps trading the cell as the sensor.
+  SUBFLOOR_TICKET_ENABLED: z.coerce.boolean().default(false),
   SUBFLOOR_TICKET_MIN_WH: z.coerce.number().default(2),
   // AUTO-HARVEST (ratified 2026-07-25, golden study: basket_harvest exits
   // banked +$2,073.96/57 sweeps Jul 16-18 — the golden engine). Armed but
