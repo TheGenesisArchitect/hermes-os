@@ -914,6 +914,12 @@ const envSchema = z.object({
   // point stays above the cliff: entryLiq × 0.75 ≥ $12k → $16k floor.
   // Locked/burned-LP pools are exempt — there is no pull to race.
   LIVE_UNLOCKED_LP_MIN_POOL_USD: z.coerce.number().default(16_000),
+  // THE SNIPER (chain-test PASSED 2026-07-29, all 5 steps, ~$0.30): every
+  // live fill chambers a durable-nonce pre-signed full exit; protective
+  // fires submit the stored bytes — zero build work at fire time. Fallback
+  // (live-quote flee) always armed behind it. Off until the memecoin drill
+  // and the operator's re-arm word.
+  LIVE_PRESIGNED_EXITS: z.coerce.boolean().default(false),
 
   // LIVE INFLOW REQUIREMENT — real capital only mirrors the band that pays.
   // Live has no frictionless forgiveness: it eats slippage, gas and confirm

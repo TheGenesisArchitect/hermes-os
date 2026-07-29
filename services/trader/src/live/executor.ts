@@ -42,6 +42,7 @@ import { JupiterHostedProvider, WSOL_MINT } from "./swap/jupiterHosted.js";
 import { PumpSwapProvider } from "./swap/pumpswap.js";
 import { swapRouter } from "./swap/router.js";
 import { liveWallet } from "./wallet.js";
+import { chamberExit, fireChambered, releaseChamber, chamberAgeMs } from "./presigned.js";
 
 // Exit pre-check probes — dedicated verifying providers (NOT the full router,
 // whose build-only PumpPortal would optimistically "pass" an unsellable token).
@@ -537,6 +538,33 @@ async function executeSwap(
   // fallback can go slightly negative (priority fee > proceeds), which would book
   // a negative fill price. Floor at 0: proceeds are gross-of-fee (fee is expensed
   // separately in the caller's pnl), so a rug sell books proceeds $0, not −$fee.
+  return { signature, outUi: Math.max(0, outUi), feeSol: n(info?.meta?.fee) / 1e9, landMs };
+}
+
+/** Read a SETTLED swap's real fill from its tx meta — mirrors executeSwap's
+ *  tail for transactions we didn't build at send time (the sniper's rounds). */
+async function parseSettledSwap(
+  cfg: HermesConfig,
+  signature: string,
+  outputMint: string,
+  landMs: number,
+): Promise<{ signature: string; outUi: number; feeSol: number; landMs: number }> {
+  const wallet = liveWallet();
+  const rpc = rpcPool(cfg);
+  const info = await rpc.read((c) => c.getTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: "confirmed" }));
+  const owner = wallet!.publicKey.toBase58();
+  let outUi = 0;
+  if (info?.meta) {
+    const post = info.meta.postTokenBalances?.filter((b) => b.mint === outputMint && b.owner === owner) ?? [];
+    const pre = info.meta.preTokenBalances?.filter((b) => b.mint === outputMint && b.owner === owner) ?? [];
+    outUi = post.reduce((s, b) => s + (b.uiTokenAmount.uiAmount ?? 0), 0) - pre.reduce((s, b) => s + (b.uiTokenAmount.uiAmount ?? 0), 0);
+    if (outputMint === WSOL_MINT && outUi <= 0 && info.meta.postBalances && info.meta.preBalances) {
+      const msg = info.transaction.message as unknown as { staticAccountKeys?: { toBase58(): string }[]; accountKeys?: { toBase58(): string }[] };
+      const keys = (msg.staticAccountKeys ?? msg.accountKeys ?? []).map((k) => k.toBase58());
+      const idx = keys.indexOf(owner);
+      if (idx >= 0) outUi = (n(info.meta.postBalances[idx]) - n(info.meta.preBalances[idx]) + n(info.meta.fee)) / 1e9;
+    }
+  }
   return { signature, outUi: Math.max(0, outUi), feeSol: n(info?.meta?.fee) / 1e9, landMs };
 }
 
@@ -1658,6 +1686,14 @@ export async function maybeLiveBuy(
       latencyMs: { gates: tGates - t0, quote: tQuote - tGates, swapAndConfirm: Date.now() - tQuote, total: Date.now() - t0 },
     });
     console.log(`💰 LIVE OPEN ${symbol ?? "?"} ${short(mint)} $${usd.toFixed(2)} (conv ×${convictionMult.toFixed(2)}, anti ×${antiMult.toFixed(2)}, ${res.outUi} tokens, tx ${res.signature.slice(0, 8)}…)`);
+    // CHAMBER-ON-FILL (the sniper): pre-sign this position's escape while
+    // nothing is burning. Non-blocking; a chamber failure just means the
+    // fallback flee path stands alone as before.
+    if (cfg.LIVE_PRESIGNED_EXITS && position) {
+      void chamberExit(cfg, position.id, mint).then((okc) => {
+        if (okc) void audit("live_presigned_chambered", { mint, positionId: position.id });
+      });
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await audit("live_buy_failed", { mint, error: msg }).catch(() => {});
@@ -1924,6 +1960,24 @@ async function liveSellPosition(
       exclude: sellExclude.get(position.id),
     });
     usedProvider = quote.provider;
+    // ── THE SNIPER FIRE-HOOK (chain-tested 2026-07-29) ──────────────────────
+    // Protective FULL exit with a chambered round: submit the pre-signed
+    // bytes — zero build work. A miss (or no round) falls through to the
+    // live-quote path below; the sniper can only be faster, never worse.
+    let res: Awaited<ReturnType<typeof executeSwap>> | null = null;
+    if (cfg.LIVE_PRESIGNED_EXITS && isProtective && rawSell === raw) {
+      const fired = await fireChambered(cfg, position.id);
+      if (fired) {
+        usedProvider = `sniper:${fired.provider}`;
+        res = await parseSettledSwap(cfg, fired.signature, WSOL_MINT, fired.landMs);
+        await audit("live_presigned_fired", {
+          mint: position.mint, positionId: position.id, landMs: fired.landMs, provider: fired.provider, reason,
+        });
+      } else {
+        await audit("live_presigned_fallback", { mint: position.mint, positionId: position.id, reason });
+      }
+    }
+    if (!res) {
     // PROTECTIVE PRIORITY ESCALATION (operator "fix the bleeding", 2026-07-27):
     // hard stops booked −65% avg depth vs the −28% design — the flee tx was
     // losing the block race while the pool drained. A protective exit bids 3×
@@ -1938,7 +1992,8 @@ async function liveSellPosition(
     // 2026-07-29): Wanjan died with a user_cut and two runner_timeouts queued
     // behind 6001 sim-fails — a commanded cut must never wait on a simulation,
     // and every sell is time-sensitive by nature. Buys keep the preflight.
-    const res = await executeSwap(cfg, b64, WSOL_MINT, { skipSim: true });
+    res = await executeSwap(cfg, b64, WSOL_MINT, { skipSim: true });
+    }
     const sol = (await solPriceUsd(cfg)) ?? 0;
     const proceedsUsd = res.outUi * sol;
     const qtyUiSold = Number(rawSell) / 10 ** decimals;
@@ -1948,6 +2003,12 @@ async function liveSellPosition(
     const pnl = proceedsUsd - costBasis - feeUsd;
     const closing = rawSell === raw;
     const remainingUi = Number(raw - rawSell) / 10 ** decimals;
+    // Sniper bookkeeping: a closed position frees its nonce; a partial sell
+    // (TP banked) re-chambers for the new remaining quantity.
+    if (cfg.LIVE_PRESIGNED_EXITS) {
+      if (closing) releaseChamber(position.id);
+      else void chamberExit(cfg, position.id, position.mint);
+    }
 
     const [lsFill] = await db.insert(fills).values({
       positionId: position.id,
@@ -2097,6 +2158,7 @@ async function liveSellPosition(
         .set({ status: "closed", closedAt: new Date(), exitReason: "live_unsellable", realizedPnlUsd: String(n(position.realizedPnlUsd) - remCost), qtyRemaining: "0" })
         .where(and(eq(positions.id, position.id), eq(positions.status, "open")));
       await audit("live_unsellable_writeoff", { positionId: position.id, mint: position.mint, ageMin: Math.round(ageMin), bookedLoss: -remCost, error: msg });
+      releaseChamber(position.id); // writeoff frees the nonce too
       console.error(`🪦 LIVE WRITE-OFF ${short(position.mint)} — unsellable after ${ageMin.toFixed(0)}min, booked −$${remCost.toFixed(2)}`);
       sellBackoff.delete(position.id); // terminal — nothing left to retry
     }
@@ -2702,6 +2764,31 @@ export async function snapshotLiveEquity(cfg: HermesConfig): Promise<void> {
   } catch (err) {
     console.error(`live equity snapshot: ${err instanceof Error ? err.message : err}`);
   }
+}
+
+// SNIPER REFRESH LOOP: re-chamber stale rounds (>4min) and chamber any open
+// live position that lost its round (restart wipes the in-memory chambers —
+// this loop re-arms them within 90s of boot). Guarded by the flag; never
+// throws into the tick.
+let sniperLoopStarted = false;
+export function startSniperRefresh(cfg: HermesConfig): void {
+  if (sniperLoopStarted || !cfg.LIVE_PRESIGNED_EXITS) return;
+  sniperLoopStarted = true;
+  setInterval(() => {
+    void (async () => {
+      try {
+        const open = (await db.execute(sql`
+          SELECT id, mint FROM positions WHERE lane='live' AND status='open'`)) as unknown as { id: number; mint: string }[];
+        for (const p of open) {
+          const age = chamberAgeMs(p.id);
+          if (age == null || age > 4 * 60_000) await chamberExit(cfg, p.id, p.mint);
+        }
+      } catch (err) {
+        console.warn(`sniper refresh tick failed: ${err instanceof Error ? err.message.slice(0, 60) : err}`);
+      }
+    })();
+  }, 90_000);
+  console.log("🎯 sniper refresh loop armed (90s cadence, re-chambers stale/lost rounds)");
 }
 
 /** One-line status for the boot banner. */

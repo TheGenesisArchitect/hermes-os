@@ -15,7 +15,7 @@ import { setDrainHandler } from "./slotWatch.js";
 let latestEff = loadConfig();
 setDrainHandler((mint) => void fastDrainExit(latestEff, mint));
 import { readEffectiveConfig, refreshAdaptivePolicy } from "./adaptive.js";
-import { guardLiveBook, liveLaneStatus, processLiveCloseRequests, processLiveRequeues, processWalletSends, snapshotLiveEquity, sweepLiveBook } from "./live/executor.js";
+import { guardLiveBook, liveLaneStatus, processLiveCloseRequests, processLiveRequeues, processWalletSends, snapshotLiveEquity, startSniperRefresh, sweepLiveBook } from "./live/executor.js";
 
 async function killSwitchEngaged(): Promise<boolean> {
   const [row] = await db.select().from(config).where(eq(config.key, "kill_switch"));
@@ -53,6 +53,7 @@ console.log(
   `exits: ratcheting profit-trail (arm ${cfg.PROFIT_LOCK_ARM_MULT}x, floor ${cfg.PROFIT_LOCK_FLOOR_MULT}x, trail ${cfg.TRAIL_TIGHT_PCT}/${cfg.TRAIL_MID_PCT}/${cfg.TRAIL_WIDE_PCT}% by run, +${cfg.TRAIL_RIDE_BONUS_PCT}% on RIDE), pre-profit hard -${cfg.HARD_STOP_PCT}%, no moonshot cap, max hold ${cfg.MAX_HOLD_HOURS}h`,
 );
 console.log(liveLaneStatus(cfg));
+startSniperRefresh(cfg);
 if (cfg.LIVE_TRADING_ENABLED) {
   console.warn(
     "⚠️  LIVE LANE ENABLED — real capital. Confirm docs/GO_LIVE_GATE.md gates G1–G6 all PASS before funding.",
