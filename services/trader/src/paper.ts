@@ -2219,13 +2219,16 @@ export async function checkAutoHarvest(cfg: HermesConfig): Promise<void> {
       utcHour: new Date().getUTCHours(),
     });
   }
-  // NIGHT SHIFT: 18:00–06:00 UTC the backstop works the summons's job — the
-  // operator's 39 morning taps ARE the 34% capture; the machine now taps at
-  // night at a slightly lower bar (3 greens / $6), same certified sweep.
-  const hourUtc = new Date().getUTCHours();
-  const night = hourUtc >= 18 || hourUtc < 6;
-  const minGreen = night ? cfg.AUTO_HARVEST_NIGHT_MIN_GREEN : cfg.AUTO_HARVEST_MIN_GREEN;
-  const minUsd = night ? cfg.AUTO_HARVEST_NIGHT_MIN_USD : cfg.AUTO_HARVEST_MIN_USD;
+  // ALL-HOURS HARVEST (operator 2026-07-29: "The elephant stampeding all over
+  // the data is Capture... if we are not capturing 30-40% of each window,
+  // it's our system"). The night shift lasted one hour before the evidence
+  // promoted it: the harvest is the 95%-capture instrument and the ONLY
+  // mechanism that kept human hours — 39 operator taps = the 34% morning,
+  // one backstop fire in 14d = the 2% evening. The backstop now works EVERY
+  // window at the night bar (3 greens / $6); the operator's taps remain
+  // welcome and idempotent on top (harvest_now is a flag, not a queue).
+  const minGreen = cfg.AUTO_HARVEST_NIGHT_MIN_GREEN;
+  const minUsd = cfg.AUTO_HARVEST_NIGHT_MIN_USD;
   if (greens.length >= minGreen && unrealized >= minUsd) {
     lastAutoHarvestMs = Date.now();
     await db

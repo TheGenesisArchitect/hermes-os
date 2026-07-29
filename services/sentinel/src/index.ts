@@ -79,6 +79,8 @@ interface SentinelState {
   moonRidesPinged?: Record<string, number>;
   /** last famvel_probe_open audit id already carded */
   lastFamvelAuditId?: number;
+  /** last 4h UTC window already scored by the capture tripwire (epoch ms of window start) */
+  lastCaptureWindowMs?: number;
 }
 
 async function loadState(): Promise<SentinelState> {
@@ -241,6 +243,62 @@ async function checkMoonRides(s: SentinelState): Promise<void> {
     s.moonRidesPinged = pinged;
   } catch (err) {
     console.warn(`moon ride check failed: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+// CAPTURE TRIPWIRE (operator 2026-07-29: "if we are not capturing 30-40% of
+// each window, it's our system"). Ten minutes after every 4h UTC window
+// closes, score it: realized ÷ offered on the paper core book + live. Below
+// 30% with real offer on the table → a card naming the window, the number,
+// and the top leak mechanism — the bar enforced by machine, every window.
+const CAPTURE_BAR_PCT = 30;
+const CAPTURE_MIN_OFFER_USD = 150;
+async function checkWindowCapture(s: SentinelState): Promise<void> {
+  const now = Date.now();
+  const windowMs = 4 * 3600_000;
+  const currentWindowStart = Math.floor(now / windowMs) * windowMs;
+  const prevWindowStart = currentWindowStart - windowMs;
+  if ((s.lastCaptureWindowMs ?? 0) >= prevWindowStart) return; // already scored
+  if (now - currentWindowStart < 10 * 60_000) return; // 10-min settle grace
+  s.lastCaptureWindowMs = prevWindowStart;
+  try {
+    const from = new Date(prevWindowStart).toISOString();
+    const to = new Date(currentWindowStart).toISOString();
+    const [row] = (await db.execute(sql`
+      SELECT round(sum(p.realized_pnl_usd)::numeric,2) realized,
+        round(sum(GREATEST(p.size_usd*(p.peak_price_usd/NULLIF(p.entry_price_usd,0)-1),0))::numeric,0) offered
+      FROM positions p WHERE p.status='closed' AND (p.lane='live' OR p.book='core')
+        AND p.closed_at >= ${from}::timestamptz AND p.closed_at < ${to}::timestamptz`)) as unknown as
+      { realized: number | null; offered: number | null }[];
+    const offered = Number(row?.offered ?? 0);
+    const realized = Number(row?.realized ?? 0);
+    if (offered < CAPTURE_MIN_OFFER_USD) return;
+    const pct = Math.round((100 * realized) / offered);
+    if (pct >= CAPTURE_BAR_PCT) {
+      console.log(`🎯 window capture ${pct}% (${from.slice(11, 16)}Z window) — bar met`);
+      return;
+    }
+    const [leak] = (await db.execute(sql`
+      SELECT p.exit_reason, round(sum(GREATEST(p.size_usd*(p.peak_price_usd/NULLIF(p.entry_price_usd,0)-1),0) - p.realized_pnl_usd)::numeric,0) leaked
+      FROM positions p WHERE p.status='closed' AND (p.lane='live' OR p.book='core')
+        AND p.closed_at >= ${from}::timestamptz AND p.closed_at < ${to}::timestamptz
+      GROUP BY 1 ORDER BY leaked DESC LIMIT 1`)) as unknown as { exit_reason: string; leaked: number }[];
+    const hourEt = ((prevWindowStart / 3600_000) % 24 - 4 + 24) % 24;
+    await notify(
+      "OPS",
+      `CAPTURE MISS — ${pct}% of $${offered} (window ${String(hourEt).padStart(2, "0")}00 ET)`,
+      [
+        `bar is ${CAPTURE_BAR_PCT}% — realized $${realized.toFixed(2)} of $${offered} offered`,
+        leak ? `top leak: ${leak.exit_reason} left $${leak.leaked}` : "no dominant leak mechanism",
+        "it's our system — the window's exit scorecard is the next dissection",
+      ],
+      4,
+      ["dart"],
+      "http://localhost:3777/",
+    );
+    console.log(`📣 CAPTURE MISS ${pct}% of $${offered} — card sent`);
+  } catch (err) {
+    console.warn(`capture tripwire failed: ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -1419,6 +1477,7 @@ while (true) {
     await checkHarvestWindow(state);
     await checkMoonRides(state);
     await checkFamvelProbes(state);
+    await checkWindowCapture(state);
     await checkLaneDivergence(state);
     await checkDeployerWalk(state);
     await checkFills(state);
