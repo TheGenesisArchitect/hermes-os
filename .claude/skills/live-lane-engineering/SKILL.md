@@ -55,8 +55,9 @@ build, zero sign at fire time.
 - One **durable nonce account** per live slot (rent ≈0.0015 SOL each), created
   lazily, pubkeys persisted in `config` key `presigned_nonces`.
 - On every live fill: quote+build the FULL-EXIT sell (fraction 1) with
-  `minOut ≈ 0.40 × cost basis` (the −45% standard embedded on-chain — a fill
-  worse than the standard fails atomically and falls back), rebuild the
+  `minOut ≈ 0.55 × cost basis` (the −45% standard embedded on-chain: 0.40 was
+  a −60% floor — corrected 2026-07-29; a fill worse than the standard fails
+  atomically and the live-quote fallback path decides), rebuild the
   message with `advanceNonce` as ix[0] and `recentBlockhash = nonce value`,
   sign, store `{positionId → signedTx}`.
 - Refresh triggers: qtyRemaining changed (TP banked) · provider route changed ·
