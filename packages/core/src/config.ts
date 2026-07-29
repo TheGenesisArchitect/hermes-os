@@ -920,6 +920,19 @@ const envSchema = z.object({
   // (live-quote flee) always armed behind it. Off until the memecoin drill
   // and the operator's re-arm word.
   LIVE_PRESIGNED_EXITS: z.coerce.boolean().default(false),
+  // BASIS-FIRST TP0 (operator "Build the basis-first TP0 rule", 2026-07-29).
+  // The stage report card: paper banks a rung on 75% of trades (+$1.59 avg),
+  // live on 38% (−$1.03 when it doesn't) — the whole mirror gap concentrates
+  // at "reach rung one". On UNLOCKED-LP pools (97% of catastrophic losses),
+  // pre-bank, within the pool-deep window: first touch of ARM_MULT sells
+  // exactly enough to cover cost basis (fraction 1/mark, capped 0.92) — the
+  // Wallet Crucible law made deliberate. The remainder is house money and
+  // rides the full late-armed ladder. Locked-LP pools skip this rung: no
+  // pull to insure against, let the natural ladder work. Both lanes (mirror
+  // canon). Missing LP data counts as unlocked — insure by default.
+  BASIS_FIRST_ENABLED: z.coerce.boolean().default(true),
+  BASIS_FIRST_ARM_MULT: z.coerce.number().default(1.1),
+  BASIS_FIRST_WINDOW_SEC: z.coerce.number().default(240),
 
   // LIVE INFLOW REQUIREMENT — real capital only mirrors the band that pays.
   // Live has no frictionless forgiveness: it eats slippage, gas and confirm

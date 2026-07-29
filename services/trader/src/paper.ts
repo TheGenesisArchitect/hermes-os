@@ -1623,6 +1623,7 @@ export function decideExit(
   peak: number,
   call: ManagementCall | null = null,
   entryLiq: number | null = null,
+  unlockedLp = true, // missing data = insure by default
 ): ExitDecision | null {
   const entry = n(position.entryPriceUsd);
   const price = market.priceUsd;
@@ -1656,6 +1657,26 @@ export function decideExit(
   // fire first naturally; deeper covers are capped by the standard.
   const floorBanked =
     n(position.qtyTokens) > 0 && 1 - n(position.qtyRemaining) / n(position.qtyTokens) > 1e-6;
+
+  // ── BASIS-FIRST TP0 (operator build order 2026-07-29) ─────────────────────
+  // The stage report card's verdict: everything downstream of "banked a rung"
+  // is echo — paper rungs 75% of trades (+$1.59 avg), live 38% (−$1.03
+  // without). On unlocked-LP pools the first rung becomes DELIBERATE: first
+  // touch of ARM_MULT inside the pool-deep window sells 1/mark of the
+  // position — cost basis covered, the trade is house money, the remainder
+  // rides the late-armed ladder with nothing left to lose. Locked pools skip
+  // it: no pull to insure against.
+  if (
+    cfg.BASIS_FIRST_ENABLED &&
+    unlockedLp &&
+    !floorBanked &&
+    entry > 0 &&
+    price > 0 &&
+    ageSec <= cfg.BASIS_FIRST_WINDOW_SEC &&
+    price >= entry * cfg.BASIS_FIRST_ARM_MULT
+  ) {
+    return { reason: "basis_first", fraction: Math.min(entry / price, 0.92) };
+  }
   if (
     cfg.STANDARD_FLOOR_ARM_MULT > 0 &&
     !floorBanked &&
@@ -2228,6 +2249,24 @@ const pendingPeaks = new Map<number, number>();
 // a miss so a coverage gap never re-queries every poll. Pruned with the guard
 // window: closed/aged positions fall out on the next sweep.
 const entryLiqCache = new Map<number, number | null>();
+// LP-state per mint for the basis-first rung — read once from the scout's own
+// rugcheck evidence, cached forever (LP lock state doesn't change mid-trade in
+// a way we could see anyway). Missing data counts as UNLOCKED: insure by default.
+const lpUnlockedCache = new Map<string, boolean>();
+async function lpUnlockedFor(mint: string): Promise<boolean> {
+  const hit = lpUnlockedCache.get(mint);
+  if (hit !== undefined) return hit;
+  try {
+    const [row] = (await db.execute(sql`
+      SELECT bool_or(evidence::text ILIKE '%LP Unlocked%') unlocked
+      FROM safety_checks WHERE mint = ${mint} AND check_name = 'rugcheck'`)) as unknown as { unlocked: boolean | null }[];
+    const unlocked = row?.unlocked ?? true; // no read → assume unlocked
+    lpUnlockedCache.set(mint, unlocked);
+    return unlocked;
+  } catch {
+    return true;
+  }
+}
 async function entryLiquidityFor(position: Position, cfg: HermesConfig): Promise<number | null> {
   const ageSec = (Date.now() - position.openedAt.getTime()) / 1000;
   if (!cfg.DRAIN_GUARD_ENABLED || ageSec > cfg.DRAIN_GUARD_WINDOW_SEC + 10) {
@@ -3133,7 +3172,7 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     const ecfg = position.signature
       ? { ...cfg, ...signatureExitOverrides(position.signature as Signature, await learnedProfile(position.signature as Signature)) }
       : cfg;
-    let exit = decideExit(ecfg, position, market, peak, call, await entryLiquidityFor(position, ecfg));
+    let exit = decideExit(ecfg, position, market, peak, call, await entryLiquidityFor(position, ecfg), await lpUnlockedFor(position.mint));
     // Pre-arm hard-stop WICK CONFIRMATION: sell only after the read stays below
     // the stop for HARD_STOP_CONFIRM_TICKS consecutive polls. Every historical
     // hard-stop fired on a single below-stop tick and 63% recovered past TP0
