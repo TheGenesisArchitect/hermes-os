@@ -1,0 +1,248 @@
+<title>Genesis Capital Engine — Progress Briefing · July 26–28</title>
+<style>
+  /* Deliberately single-theme: this briefing lives in the desk's world — dark,
+     ledger-lit, numbers first. Palette validated (dataviz six checks, dark). */
+  :root {
+    --ground: #0A1018; --panel: #131C2A; --panel-2: #182335;
+    --ink: #E9EEF6; --muted: #93A0B4; --faint: #5C6B82;
+    --brass: #C9A550; --paper: #5390CE; --live: #B0801F;
+    --good: #46C08A; --crit: #E1655F; --warn: #D99A2B;
+    --rule: #24324A;
+  }
+  html { background: var(--ground); }
+  body { background: var(--ground); color: var(--ink); font-family: "Segoe UI", -apple-system, sans-serif;
+         line-height: 1.65; margin: 0; padding: 48px 20px 80px; }
+  .sheet { max-width: 860px; margin: 0 auto; }
+  .serif { font-family: "Palatino Linotype", Palatino, Georgia, serif; }
+  .num { font-variant-numeric: tabular-nums; font-family: Consolas, "Segoe UI", monospace; }
+  .eyebrow { font-size: 11px; letter-spacing: .22em; color: var(--brass); text-transform: uppercase; }
+  h1 { font-family: "Palatino Linotype", Palatino, Georgia, serif; font-size: 40px; line-height: 1.15;
+       margin: 10px 0 6px; font-weight: 600; text-wrap: balance; }
+  h2 { font-family: "Palatino Linotype", Palatino, Georgia, serif; font-size: 23px; margin: 0 0 4px; font-weight: 600; }
+  h3 { font-size: 14px; margin: 0 0 6px; }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  section { margin-top: 52px; }
+  .rule2 { border-top: 1px solid var(--brass); border-bottom: 1px solid var(--rule); height: 3px; margin: 22px 0 0; }
+  .subtitle { color: var(--muted); font-size: 15px; max-width: 62ch; }
+  .lane-sim { color: var(--paper); } .lane-live { color: var(--live); }
+  .chip { display: inline-block; font-size: 10px; letter-spacing: .12em; padding: 2px 8px; border-radius: 3px;
+          text-transform: uppercase; font-weight: 600; vertical-align: middle; }
+  .chip.sim { background: rgba(83,144,206,.16); color: var(--paper); }
+  .chip.live { background: rgba(176,128,31,.2); color: #D9AE55; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-top: 26px; }
+  .kpi { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; }
+  .kpi .v { font-size: 27px; font-weight: 700; letter-spacing: -.01em; }
+  .kpi .l { font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint);
+       font-weight: 600; padding: 8px 12px; border-bottom: 1px solid var(--rule); }
+  td { padding: 9px 12px; border-bottom: 1px solid rgba(36,50,74,.55); vertical-align: top; }
+  th.r, td.r { text-align: right; }
+  .tablewrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; }
+  .timeline { border-left: 2px solid var(--rule); margin: 18px 0 0 6px; padding-left: 22px; display: flex;
+              flex-direction: column; gap: 16px; }
+  .t-item { position: relative; }
+  .t-item::before { content: ""; position: absolute; left: -28px; top: 7px; width: 9px; height: 9px;
+                    border-radius: 50%; background: var(--brass); }
+  .t-item .when { font-size: 11px; color: var(--faint); letter-spacing: .06em; text-transform: uppercase; }
+  .t-item .what { font-weight: 600; }
+  .t-item .why { color: var(--muted); font-size: 13.5px; max-width: 66ch; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 18px; }
+  .col { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 18px; }
+  .col h3 { color: var(--brass); letter-spacing: .1em; text-transform: uppercase; font-size: 11.5px; }
+  .col ul { margin: 8px 0 0; padding-left: 16px; color: var(--muted); font-size: 13.5px; }
+  .col li { margin-bottom: 6px; } .col li b { color: var(--ink); font-weight: 600; }
+  .chart { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 18px 18px 8px; margin-top: 18px; }
+  .legend { display: flex; gap: 18px; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                         margin-right: 6px; vertical-align: -1px; }
+  .legend .p::before { background: var(--paper); } .legend .l::before { background: var(--live); }
+  .banner { border: 1px solid var(--warn); background: rgba(217,154,43,.08); border-radius: 6px;
+            padding: 12px 16px; font-size: 13px; color: #E8C57E; margin: 18px 0; }
+  .quote { border-left: 3px solid var(--brass); padding: 4px 0 4px 18px; margin: 24px 0; font-family: "Palatino Linotype", Georgia, serif;
+           font-size: 19px; line-height: 1.5; color: var(--ink); font-style: italic; }
+  footer { margin-top: 64px; border-top: 1px solid var(--rule); padding-top: 18px; font-size: 11.5px;
+           color: var(--faint); line-height: 1.7; }
+  a { color: var(--brass); }
+</style>
+
+<div class="sheet">
+  <header>
+    <div class="eyebrow">The DeFi Frontier · Desk Report · For Contributors &amp; Investors</div>
+    <h1>Genesis Capital Engine<br/>Three Days That Rebuilt the Machine</h1>
+    <p class="subtitle serif">July 26–28, 2026 · Prepared by the Genesis Research Desk with Genesis Quant ·
+      All simulated results are labeled <span class="chip sim">SIM</span>, all real-capital results <span class="chip live">LIVE</span></p>
+    <div class="rule2"></div>
+  </header>
+
+  <div class="kpis">
+    <div class="kpi"><div class="v lane-sim num">+$364</div>
+      <div class="l"><span class="chip sim">SIM</span> paper lane, 3-day net — core book +$246.31 · discovery probes +$117.84</div></div>
+    <div class="kpi"><div class="v lane-sim num">66% · 9.8¢</div>
+      <div class="l"><span class="chip sim">SIM</span> core-book win rate · realized cents per deployed dollar (267 trades)</div></div>
+    <div class="kpi"><div class="v lane-live num">−$52.77</div>
+      <div class="l"><span class="chip live">LIVE</span> 3-day net — the tuition ledger: every loss class was named, dissected, and fenced</div></div>
+    <div class="kpi"><div class="v num" style="color:var(--good)">30+ / 12 / 0</div>
+      <div class="l">ratified ships · named discoveries · <b>unsellable positions since the fences went up</b></div></div>
+  </div>
+
+  <div class="chart">
+    <div class="legend"><span class="p">Paper (simulated)</span><span class="l">Live (real capital)</span></div>
+    <svg viewBox="0 0 780 190" width="100%" role="img" aria-label="Daily net P&L, paper simulated vs live, July 26 to 28">
+      <line x1="40" y1="140" x2="770" y2="140" stroke="#24324A" stroke-width="1"/>
+      <!-- Jul 26: paper +123.82, live −27.36 -->
+      <rect x="90"  y="46"  width="70" height="93" rx="4" fill="#5390CE"/>
+      <rect x="164" y="141" width="70" height="21" rx="4" fill="#B0801F"/>
+      <text x="125" y="38"  fill="#E9EEF6" font-size="13" text-anchor="middle" font-family="Consolas">+$123.82</text>
+      <text x="199" y="176" fill="#93A0B4" font-size="12" text-anchor="middle" font-family="Consolas">−$27.36</text>
+      <text x="162" y="188" fill="#5C6B82" font-size="11" text-anchor="middle">Jul 26</text>
+      <!-- Jul 27: paper +36.68, live −13.37 -->
+      <rect x="330" y="112" width="70" height="27" rx="4" fill="#5390CE"/>
+      <rect x="404" y="141" width="70" height="10" rx="4" fill="#B0801F"/>
+      <text x="365" y="104" fill="#E9EEF6" font-size="13" text-anchor="middle" font-family="Consolas">+$36.68</text>
+      <text x="439" y="165" fill="#93A0B4" font-size="12" text-anchor="middle" font-family="Consolas">−$13.37</text>
+      <text x="402" y="188" fill="#5C6B82" font-size="11" text-anchor="middle">Jul 27</text>
+      <!-- Jul 28 (incl. tonight): paper +203.64, live −12.04 -->
+      <rect x="570" y="0"   width="70" height="139" rx="4" fill="#5390CE"/>
+      <rect x="644" y="141" width="70" height="9"  rx="4" fill="#B0801F"/>
+      <text x="605" y="14" fill="#0A1018" font-size="13" text-anchor="middle" font-family="Consolas" font-weight="bold">+$203.64</text>
+      <text x="679" y="164" fill="#93A0B4" font-size="12" text-anchor="middle" font-family="Consolas">−$12.04</text>
+      <text x="642" y="188" fill="#5C6B82" font-size="11" text-anchor="middle">Jul 28*</text>
+    </svg>
+    <p style="font-size:11.5px;color:var(--faint);margin:6px 0 8px">*Jul 28 includes tonight's session in progress. Paper daily = core + probe books
+      (<span class="chip sim">SIM</span>). Live bars are real chain-settled P&amp;L. Table: Jul 26 — SIM +123.82 / LIVE −27.36 · Jul 27 — SIM +36.68 / LIVE −13.37 · Jul 28 — SIM +203.64 / LIVE −12.04.</p>
+  </div>
+
+  <section>
+    <div class="eyebrow">Part I</div>
+    <h2>The Discoveries — what the data confessed under interrogation</h2>
+    <p class="subtitle">Every improvement this week began as a named anomaly with receipts. The desk's rule: findings as tables first,
+      harness on full data, ship only on ratification.</p>
+    <div class="timeline">
+      <div class="t-item"><div class="when">Jul 27 · the funnel autopsy</div>
+        <div class="what">Live was anti-selecting — it took zero of paper's top-15 winners.</div>
+        <div class="why">467 declines vs 72 boards in 48h. The gates were excluding proven flow while the open doors admitted the rug-heavy remainder.</div></div>
+      <div class="t-item"><div class="when">Jul 27 · the drain class</div>
+        <div class="what">86% of live's loss came from 14 positions that became unsellable mid-flight.</div>
+        <div class="why">All on one venue, all through one entry profile. LP pulls 24 seconds after fill — a class no entry-time check can see.</div></div>
+      <div class="t-item"><div class="when">Jul 27 · the landing tax</div>
+        <div class="what">16 of 17 failed buys never landed on-chain — we were bidding 40× too little for block space.</div>
+        <div class="why">Winners' orderly pools filled fine elsewhere; our transactions lost every contested block. Missed winners, kept losers.</div></div>
+      <div class="t-item"><div class="when">Jul 28 · the phantom print</div>
+        <div class="what">A "+235% given back" turned out to be a single bad price tick written into the books.</div>
+        <div class="why">Refuted across three independent data streams. Historical audit: only 0.3% contamination — but peaks now require corroboration.</div></div>
+      <div class="t-item"><div class="when">Jul 28 · the vertical blind spot</div>
+        <div class="what">A 134× mover was never even considered — and neither were 31 of the last 56 monsters ≥50×.</div>
+        <div class="why">Launches that go vertical cross the entry window faster than the formula's watch opens. More than half the monster class was structurally invisible.</div></div>
+      <div class="t-item"><div class="when">Jul 28 · the escalating family signal</div>
+        <div class="what">Relaunch families with a proven ≥3× sibling are 8× likelier to produce a 10× — the 134× was launch three of a 5×→19×→134× family.</div>
+        <div class="why">Harnessed on 6,400 candidates. Now boarded by dedicated paper probes collecting the evidence live needs.</div></div>
+      <div class="t-item"><div class="when">Jul 28 · the ride leash</div>
+        <div class="what">The exit ladder was ejecting monsters during their first breath — a 68× ride banked at minute one.</div>
+        <div class="why">Replay across 447 positions including every rug: late-arming the ladder wins +51% on the full book, +11% on monsters.</div></div>
+      <div class="t-item"><div class="when">Jul 28 · capital on the wrong band</div>
+        <div class="what">The biggest average tickets sat on the band earning 3.6¢/$ while the 12¢ band got less.</div>
+        <div class="why">One bypass rule sized mediocre flow at full clip. Flipped: the crowd earns the entry, the band prices the size.</div></div>
+      <div class="t-item"><div class="when">Jul 29 · the flee friction</div>
+        <div class="what">Failing sells traced to our own front door — the pre-send safety simulation was rejecting exits during fast moves.</div>
+        <div class="why">4 of 6 recent sell-fails never reached the chain; the retry ladder cost 25 seconds average in exactly the moments seconds are dollars.
+          Fixed the same hour: protective exits now go straight to the chain with a hot first tolerance — the single largest source of execution drag, removed.</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Part II</div>
+    <h2>What We Shipped — thirty ratified changes in three days</h2>
+    <div class="cols">
+      <div class="col"><h3>Defense · protect capital</h3><ul>
+        <li><b>Drain guard</b> — real-time pool telemetry cuts a draining position in its first minutes; replay-proven to spare every eventual moon</li>
+        <li><b>Sell-route probe</b> — never sit at a table you can't cash out of</li>
+        <li><b>Drain-farm cohort walled off</b> (supervised retrial under full armor under way)</li>
+        <li><b>Venue rug-tide gates</b> — doors stand down while a venue runs &gt;50% rugs, self-reopen</li>
+        <li><b>Landing fix</b> — 10× priority bid + rebroadcast: <b>failed buys 16/day → 0</b></li>
+        <li><b>3× flee priority</b> on every protective exit</li>
+        <li><b>Frictionless flee</b> — protective sells skip the preflight and fire hot on attempt one; the 25-second fail-retry tax is gone</li></ul></div>
+      <div class="col"><h3>Offense · catch the big ones</h3><ul>
+        <li><b>Moon-class boards first</b> — front of the entry queue, always</li>
+        <li><b>Late-armed ride ladder</b> — no floor until 3×; monsters keep their seats through the breath</li>
+        <li><b>Family-velocity probes</b> — the vertical class is finally boarded (paper-first); three verticals caught within hours of shipping</li>
+        <li><b>Capital flipped to the strong band</b> — the 90%-win flow now carries the sizing majority</li>
+        <li><b>Ride cards</b> — every 2×/3×/5×/10× rung buzzes the operator in real time</li></ul></div>
+      <div class="col"><h3>Intelligence · Genesis Quant</h3><ul>
+        <li><b>70B-parameter analyst brain</b> (Groq) behind the news desk, market briefs, and a live copilot drawer on the dashboard</li>
+        <li><b>Deterministic forecasting</b> — projections computed from measured rates, never invented; stale windows self-flagged</li>
+        <li><b>New Frontier feed</b> — hourly professional report on opportunity outside Solana, with a research watchlist</li>
+        <li><b>The DeFi Frontier digest</b> — branded research email, ambassador-pipeline ready</li>
+        <li><b>Books split</b> — the simulated lane's exploration budget can never masquerade as the model live copies</li></ul></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Part III</div>
+    <h2>Two Lanes, One Honest Ledger</h2>
+    <p class="subtitle">The paper lane <span class="chip sim">SIM</span> proved the strategy: +$364 in three days at 66% win.
+      The live lane <span class="chip live">LIVE</span> paid $52.77 of tuition — and every dollar bought a named, fenced defect.
+      That asymmetry is the design working: <i>paper reveals, live confirms.</i></p>
+    <div class="tablewrap"><table>
+      <tr><th>Loss class found (live)</th><th class="r">Cost</th><th>Fence shipped</th><th class="r">Since the fence</th></tr>
+      <tr><td>Unsellable drain positions</td><td class="r num" style="color:var(--crit)">−$41.32</td><td>route probe · drain guard · cohort wall</td><td class="r num" style="color:var(--good)">0 unsellables</td></tr>
+      <tr><td>Stops landing 37pts late</td><td class="r num" style="color:var(--crit)">−$13 excess</td><td>rebroadcast · 3× flee priority</td><td class="r">tightening, measured daily</td></tr>
+      <tr><td>Missed winners (landing failures)</td><td class="r num" style="color:var(--crit)">~16/day</td><td>40× stronger block bid</td><td class="r num" style="color:var(--good)">0 failed buys</td></tr>
+      <tr><td>Wrong-band capital</td><td class="r num" style="color:var(--crit)">silent drag</td><td>band-size flip</td><td class="r">scored at tomorrow's review</td></tr>
+      <tr><td>Sells failing at our own preflight</td><td class="r num" style="color:var(--crit)">25s / flee</td><td>frictionless flee path</td><td class="r">target: 0 protective sell-fails</td></tr>
+    </table></div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Part IV</div>
+    <h2>The Reality of a Small Live Balance — and What Scale Changes</h2>
+    <p>The live wallet currently runs <b>$78</b> against structural ceilings that don't scale down: the fee-viable minimum ticket is
+      <b>$2.50 — 3.2% of the balance per position</b>, so every trade is the same size regardless of conviction. The kill floor (−$32)
+      is 41% of equity, so safety brakes engage on variance a larger book would shrug off. The sizing engine — the machinery built to
+      put more capital on higher-conviction flow — is <b>structurally mute below ~$500</b>, because its computed sizes all round up to
+      the same floor ticket. A small balance doesn't just earn less; it is <i>forbidden from expressing the strategy.</i></p>
+    <div class="tablewrap"><table>
+      <tr><th>Live balance</th><th class="r">Fee drag / ticket</th><th class="r">Concurrent seats @ mandate</th><th>What unlocks</th></tr>
+      <tr><td class="num">$78 (today)</td><td class="r num">3.2%</td><td class="r num">6–10 floor tickets</td><td>survival mode — flat sizing, tight kills</td></tr>
+      <tr><td class="num">$250</td><td class="r num">1.0%</td><td class="r num">10+ · first size tiers</td><td>conviction begins to price; kills stop dominating</td></tr>
+      <tr><td class="num">$500</td><td class="r num">0.5%</td><td class="r num">full basket · 2 tiers</td><td>the sizing engine wakes up; strong band carries real weight</td></tr>
+      <tr><td class="num">$1,000</td><td class="r num">0.25%</td><td class="r num">full basket · full ladder</td><td>the mandate as designed — many small seats, sized by evidence</td></tr>
+    </table></div>
+
+    <div class="banner">⚠ SIMULATED PROJECTIONS — the table below compounds hypothetical daily rates for 30 days. The paper lane
+      <b>measured</b> 9.8¢ per deployed dollar (SIM, 3-day core book); the live lane has <b>not yet</b> sustained positive expectancy and must
+      first pass its six-bar proof gate. These are illustrations of compounding arithmetic under stated assumptions — not predictions,
+      not promises, and not an offer. Digital-asset trading risks loss up to total loss.</div>
+    <div class="tablewrap"><table>
+      <tr><th>Starting balance</th><th class="r">Conservative · 1%/day</th><th class="r">Base · 3%/day</th><th class="r">Strong · 5%/day</th></tr>
+      <tr><td class="num">$250</td><td class="r num">$337</td><td class="r num">$607</td><td class="r num">$1,081</td></tr>
+      <tr><td class="num">$500</td><td class="r num">$674</td><td class="r num">$1,214</td><td class="r num">$2,161</td></tr>
+      <tr><td class="num">$1,000</td><td class="r num">$1,348</td><td class="r num">$2,427</td><td class="r num">$4,322</td></tr>
+    </table></div>
+    <p style="font-size:12.5px;color:var(--muted)">Method: balance × (1 + rate)<sup>30</sup>. For context only: 3%/day on deployed capital is
+      <b>below</b> the paper lane's measured 9.8¢/$ per-trade economics (SIM) with capital recycling — and far below it with the moon tail attached.
+      The gap between measured-SIM and realized-LIVE is precisely what the proof gate, the fences, and the dedicated buy/sell lanes were built to close.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow">Part V</div>
+    <h2>The Week Ahead — the steady climb, if it holds</h2>
+    <ul style="color:var(--muted);max-width:70ch;line-height:1.8">
+      <li><b style="color:var(--ink)">Paper lane <span class="chip sim">SIM</span>:</b> core book at current rates projects ≈ <b>+$550–700</b> over 7 days, with the probe books feeding new cells (verticals, families) toward ratification.</li>
+      <li><b style="color:var(--ink)">Live lane <span class="chip live">LIVE</span>:</b> the six-bar proof gate (30 clean closes: win ≥55%, EV ≥+$0.10, no drains) is the tripwire — the day it prints green, ticket size doubles on top-shelf flow only. Tonight's supervised retrial and hunt window are running as this briefing is read.</li>
+      <li><b style="color:var(--ink)">Moon program:</b> first full week of the vertical probes, the late-armed ladder, and family boarding — the machinery pointed at the 134×-class that used to pass unseen.</li>
+      <li><b style="color:var(--ink)">The DeFi Frontier:</b> first ambassador cohort issue ships on operator go — the research engine becomes the product feed.</li>
+    </ul>
+    <div class="quote">The engine that protects a $78 wallet with this much machinery is the same engine that compounds a $1,000 one.
+      Scale changes the arithmetic; the discipline is already built.</div>
+    <p class="subtitle serif" style="font-size:16px">— Genesis Capital Engine · <i>Infusing the Human Experience with Blockchain Technology</i></p>
+  </section>
+
+  <footer>
+    Prepared July 28, 2026 by the Genesis Research Desk (Genesis Quant, 70B analyst lane) from the engine's own audited ledgers — every figure
+    traceable to a database row. Simulated (<b>SIM</b>) results are paper-lane simulations and do not represent real trading; live (<b>LIVE</b>)
+    results are real, chain-settled, and small by design during the proving phase. Nothing herein is investment advice, a performance guarantee,
+    or an offer of securities. Digital-asset markets are volatile; loss of the entire live balance is possible and is bounded by design
+    (automatic kill floors). Genesis Reserve · <a href="mailto:info@genesisreserve.io">info@genesisreserve.io</a>
+  </footer>
+</div>
