@@ -1278,6 +1278,41 @@ export async function maybeLiveBuy(
       await audit("live_buy_skipped", { mint, reason: "unrouted — live takes signature-routed trades only" });
       return;
     }
+    // SIGNATURE PLUG-IN (operator 2026-07-29): live trades only signatures
+    // whose MANAGEMENT prints. The others aren't routing problems — they're
+    // genome problems, and the paper workshop owns them until re-harnessed.
+    {
+      const allow = cfg.LIVE_SIGNATURE_ALLOWLIST.split(",").map((s) => s.trim()).filter(Boolean);
+      if (allow.length && !allow.includes(sig.signature)) {
+        await audit("live_buy_skipped", {
+          mint,
+          reason: `${sig.signature} not on the live plug-in list (${cfg.LIVE_SIGNATURE_ALLOWLIST}) — management genome unproven or drain-class; paper workshop owns it`,
+        });
+        return;
+      }
+    }
+    // THE RECOVERY CLIFF (measured 2026-07-29): on unlocked-LP pools the
+    // drain alarm must ring above $12k for the exit to keep ~95%. Entry
+    // pools below LIVE_UNLOCKED_LP_MIN_POOL_USD put the −25% trigger under
+    // the cliff — refuse the seat. Locked/burned LP is exempt: no pull race.
+    {
+      const [lp] = (await db.execute(sql`
+        SELECT bool_or(evidence::text ILIKE '%LP Unlocked%') unlocked
+        FROM safety_checks WHERE mint = ${mint} AND check_name = 'rugcheck'`)) as unknown as { unlocked: boolean | null }[];
+      if (lp?.unlocked) {
+        const [lt] = (await db.execute(sql`
+          SELECT liquidity_usd::float liq FROM candidate_ticks WHERE mint = ${mint}
+          ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
+        const liqNow = lt?.liq != null && Number.isFinite(Number(lt.liq)) ? Number(lt.liq) : null;
+        if (liqNow != null && liqNow < cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD) {
+          await audit("live_buy_skipped", {
+            mint,
+            reason: `unlocked LP with pool $${Math.round(liqNow).toLocaleString()} < $${cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD.toLocaleString()} recovery-cliff floor — the −25% alarm would ring below the $12k/95% line`,
+          });
+          return;
+        }
+      }
+    }
     if ((sig.stars ?? 0) < cfg.LIVE_MIN_STARS && !winnerRepCrowd) {
       // winner-rep exempt: the crowd's track record IS the evidence bar
       await audit("live_buy_skipped", { mint, reason: `${sig.stars ?? 0}★ — below live evidence bar (0★ ran −55.3% on deployed)` });

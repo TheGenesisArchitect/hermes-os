@@ -899,6 +899,21 @@ const envSchema = z.object({
   // Total losses from LP pulls remain out of our control by nature; the
   // LP-state doctrine (bank basis first on unlocked pools) handles that class.
   STANDARD_FLOOR_ARM_MULT: z.coerce.number().default(0.75),
+  // SIGNATURE PLUG-IN (operator 2026-07-29: "we do have high performing
+  // signatures that we can Plug the Wallet right into"). Live trades ONLY
+  // signatures whose MANAGEMENT already prints on paper (7d: BASE +$163,
+  // RISER +$122, MOON_FAST +$51 improving post-ladder, MOON_VIOLENT +$29 at
+  // 31% capture — the best). RUG_RISK excluded (pays paper +$117 but IS the
+  // live drain class, −$47.60); MOON_STEADY/SLOW/CLIMBER are genome-broken
+  // both lanes (m·steady −$86 paper, WORSE post-ladder) — paper workshop.
+  // Empty string disables the allowlist (all routed signatures trade).
+  LIVE_SIGNATURE_ALLOWLIST: z.string().default("BASE,RISER,MOON_FAST,MOON_VIOLENT"),
+  // THE RECOVERY CLIFF (measured 2026-07-29, 130 live protective exits):
+  // fire with pool >$12k → 95% recovery; <$5k → ~0%. The drain guard trips at
+  // −25% of entry depth, so unlocked-LP seats need entry pools whose trigger
+  // point stays above the cliff: entryLiq × 0.75 ≥ $12k → $16k floor.
+  // Locked/burned-LP pools are exempt — there is no pull to race.
+  LIVE_UNLOCKED_LP_MIN_POOL_USD: z.coerce.number().default(16_000),
 
   // LIVE INFLOW REQUIREMENT — real capital only mirrors the band that pays.
   // Live has no frictionless forgiveness: it eats slippage, gas and confirm
