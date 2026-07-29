@@ -1124,27 +1124,39 @@ export async function maybeLiveBuy(
       // counterfactual watch can split PRECISION vs RECOVERED cohorts.
       if (sig.walletStrictHits === 0) {
         recoveredTier = true;
-        // RECOVERED-TIER DEMOTION, VENUE-WIDE (operator "Let's fix",
-        // 2026-07-28; originally damm-v2-only 07-27): the profile is the
-        // drain-farm door wherever it opens — after the damm-v2 demotion the
-        // same fingerprint (RECOVERED + sub-floor RUG_RISK ticket) printed
-        // trustmebro −$2.65 and HUTCH −$2.58 on PUMPSWAP, making it 4 of the
-        // last 5 live full losses. Paper keeps taking the cohort so the
-        // counterfactual keeps measuring (CF is time-of-day sensitive: +$29
-        // in quiet hours, drains in active hours — cut by hour at reopen).
-        // Reopens on ~30 clean live-shape fills + operator word. Strict-winner
-        // flow, sensor cells, F3 deep-crowd tickets, and moon-class untouched.
-        await audit("live_buy_skipped", {
-          mint,
-          reason: "RECOVERED tier — paper-only on ALL venues until proven (4 of last 5 live full losses; drain-farm profile; reopens on ~30 clean fills + operator word)",
-        });
-        return;
-        await audit("live_recovered_tier", {
-          mint,
-          walletWinnerHits: wh ?? null,
-          walletRugHits: rh ?? null,
-          reason: "net-positive crowd, no strict winner — RECOVERED tier engagement (58% win / 28% rug leak-free cohort, half clip via mirror fraction)",
-        });
+        // RECOVERED-TIER DEMOTION (2026-07-27/28, venue-wide) with SUPERVISED
+        // RETRIAL (operator "Re-admit and unbench", 2026-07-28 hunt window):
+        // the cohort was convicted on drains that predate the full armor
+        // stack. When RECOVERED_READMIT_TICKETS > 0, up to that many boardings
+        // per day re-enter at TICKET size under strand probe + drain guard +
+        // ws live-first + 3× flee + late-arm ladder; every boarding audited
+        // as live_recovered_readmit so the retrial scores cleanly. At 0 (the
+        // default) the demotion is fully closed.
+        if (cfg.RECOVERED_READMIT_TICKETS > 0) {
+          const [rc] = (await db.execute(sql`
+            SELECT count(*)::int n FROM audit_log
+            WHERE action = 'live_recovered_readmit' AND created_at >= date_trunc('day', now())`)) as unknown as { n: number }[];
+          if ((rc?.n ?? 0) >= cfg.RECOVERED_READMIT_TICKETS) {
+            await audit("live_buy_skipped", {
+              mint,
+              reason: `RECOVERED retrial cap reached (${cfg.RECOVERED_READMIT_TICKETS}/night) — demotion holds for the rest of the day`,
+            });
+            return;
+          }
+          subFloorTicket = true; // ticket size, never the sizer's full clip
+          await audit("live_recovered_readmit", {
+            mint,
+            walletWinnerHits: wh ?? null,
+            walletRugHits: rh ?? null,
+            reason: `RECOVERED supervised retrial ${(rc?.n ?? 0) + 1}/${cfg.RECOVERED_READMIT_TICKETS} — ticket size under full armor (operator word 2026-07-28)`,
+          });
+        } else {
+          await audit("live_buy_skipped", {
+            mint,
+            reason: "RECOVERED tier — paper-only on ALL venues until proven (4 of last 5 live full losses; drain-farm profile; reopens on ~30 clean fills + operator word)",
+          });
+          return;
+        }
       }
       // Sub-floor MOON SHOT (operator 2026-07-25): the shot still fires, but a
       // MEASURED inflow below the floor pays ticket money, not slot money —

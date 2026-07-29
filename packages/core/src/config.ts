@@ -882,6 +882,13 @@ const envSchema = z.object({
   // ×1 (and then stacked conviction/hot-family boosts on top). The crowd
   // earns the ENTRY; the band still prices the SIZE.
   LIQ_BELOWSTRONG_WINNERREP_MULT: z.coerce.number().default(0.6),
+  // RECOVERED SUPERVISED RETRIAL (operator "Re-admit and unbench", 2026-07-28
+  // hunt window): >0 re-admits the demoted RECOVERED tier at TICKET size, at
+  // most this many boardings per day, under the full armor stack (strand
+  // probe, drain guard, ws live-first, 3× flee, late-arm ladder) that did NOT
+  // exist when the cohort was convicted. 0 = demotion fully closed (default —
+  // dawn reversal is setting this back to 0 in .env).
+  RECOVERED_READMIT_TICKETS: z.coerce.number().default(0),
 
   // LIVE INFLOW REQUIREMENT — real capital only mirrors the band that pays.
   // Live has no frictionless forgiveness: it eats slippage, gas and confirm
