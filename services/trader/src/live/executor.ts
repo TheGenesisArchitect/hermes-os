@@ -458,6 +458,7 @@ async function executeSwap(
   cfg: HermesConfig,
   base64Tx: string,
   outputMint: string,
+  opts?: { skipSim?: boolean },
 ): Promise<SwapResult> {
   const wallet = liveWallet();
   if (!wallet) throw new Error("no wallet");
@@ -475,10 +476,18 @@ async function executeSwap(
   }
 
   // Simulate first — a sim failure costs nothing; a sent failure costs fees.
-  const sim = await rpc.read((c) =>
-    tx instanceof VersionedTransaction ? c.simulateTransaction(tx, { commitment: "confirmed" }) : c.simulateTransaction(tx),
-  );
-  if (sim.value.err) throw new Error(`simulation failed: ${JSON.stringify(sim.value.err)}`);
+  // EXCEPT protective flees (operator "gold standard" directive, 2026-07-29):
+  // 4 of the last 6 sell-fails were OUR OWN preflight rejecting the exit
+  // during fast movement, costing 25s avg (45s worst) from first fail to
+  // landed exit — in a drain that is the whole capture (trustmebro −87.9pp
+  // vs twin). On a flee, a wasted $0.04 fee is two orders of magnitude
+  // cheaper than 25 seconds; the caller opts out and sends immediately.
+  if (!opts?.skipSim) {
+    const sim = await rpc.read((c) =>
+      tx instanceof VersionedTransaction ? c.simulateTransaction(tx, { commitment: "confirmed" }) : c.simulateTransaction(tx),
+    );
+    if (sim.value.err) throw new Error(`simulation failed: ${JSON.stringify(sim.value.err)}`);
+  }
 
   const sendStart = Date.now();
   const signature = await rpc.send(tx, { skipPreflight: true, maxRetries: 3 });
@@ -1868,8 +1877,11 @@ async function liveSellPosition(
     const attempts = sellBackoff.get(position.id);
     const escFails = attempts?.fails ?? 0;
     const escHold = attempts?.holdouts ?? 0;
+    // Protective attempt one starts HOT (floor 2000bps): the cold first rung
+    // was exactly what the preflight rejected during drains — the ladder now
+    // begins where the fight actually is instead of climbing to it.
     const slip = isProtective
-      ? Math.min(9_000, Math.round(base * 1.5 ** escFails))
+      ? Math.min(9_000, Math.max(Math.round(base * 1.5 ** escFails), 2_000))
       : isTakeProfit
         ? Math.min(cfg.LIVE_STOP_SLIPPAGE_BPS, base * (1 + escHold))
         : Math.min(cfg.LIVE_STOP_SLIPPAGE_BPS, base * 2 ** escFails);
@@ -1887,7 +1899,8 @@ async function liveSellPosition(
       ? { ...cfg, PUMPPORTAL_PRIORITY_FEE: cfg.PUMPPORTAL_PRIORITY_FEE * 3 }
       : cfg;
     const b64 = await swapRouter.buildSwapTx(buildCfg, quote, wallet.publicKey.toBase58());
-    const res = await executeSwap(cfg, b64, WSOL_MINT);
+    // Protective flees skip our own preflight sim — straight to the chain.
+    const res = await executeSwap(cfg, b64, WSOL_MINT, { skipSim: isProtective });
     const sol = (await solPriceUsd(cfg)) ?? 0;
     const proceedsUsd = res.outUi * sol;
     const qtyUiSold = Number(rawSell) / 10 ** decimals;
