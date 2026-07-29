@@ -931,6 +931,16 @@ const envSchema = z.object({
   // pull to insure against, let the natural ladder work. Both lanes (mirror
   // canon). Missing LP data counts as unlocked — insure by default.
   BASIS_FIRST_ENABLED: z.coerce.boolean().default(true),
+  // FAMVEL BOOK GROWTH (operator 2026-07-29: "the paper lane needs to lean
+  // into this book... sizing for optimized growth is how the system is
+  // designed"). Capacity doubled and sizing TIERED by the 44-probe harness:
+  // the cliff-safe cut (pool ≥$16k / damm-v2, 74% win, 1 floor-breach) sizes
+  // $5 — it is the live-promotion candidate and richer texture there is what
+  // the 80-probe re-harness needs; the tail cut (sub-cliff dbc, 48% win but
+  // the P&L tail, 4 breaches) stays $3 — texture only, never the model.
+  PAPER_FAMVEL_MAX_OPEN: z.coerce.number().default(6),
+  PAPER_FAMVEL_SIZE_USD: z.coerce.number().default(3),
+  PAPER_FAMVEL_SIZE_SAFE_USD: z.coerce.number().default(5),
   BASIS_FIRST_ARM_MULT: z.coerce.number().default(1.1),
   BASIS_FIRST_WINDOW_SEC: z.coerce.number().default(240),
 

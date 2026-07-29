@@ -2722,8 +2722,6 @@ export async function fastFloorSweep(cfg: HermesConfig): Promise<void> {
 // collect real ride texture toward a live-grade cut. Exits: legacy global
 // rails (signature null). Live NEVER sees this class until a fresh harness
 // on collected probes + operator word.
-const FAMVEL_SIZE_USD = 3;
-const FAMVEL_MAX_OPEN = 3;
 let lastFamvelScanMs = 0;
 async function scanFamilyVelocityProbes(cfg: HermesConfig): Promise<void> {
   if (Date.now() - lastFamvelScanMs < 10_000) return;
@@ -2733,11 +2731,13 @@ async function scanFamilyVelocityProbes(cfg: HermesConfig): Promise<void> {
       SELECT count(*)::int n FROM positions p
       WHERE p.lane='paper' AND p.status='open'
         AND EXISTS (SELECT 1 FROM fills f WHERE f.position_id=p.id AND f.reason='famvel_probe')`)) as unknown as { n: number }[];
-    if ((cap?.n ?? 0) >= FAMVEL_MAX_OPEN) return;
+    if ((cap?.n ?? 0) >= cfg.PAPER_FAMVEL_MAX_OPEN) return;
     const cands = (await db.execute(sql`
-      SELECT co.mint, t.symbol,
+      SELECT co.mint, t.symbol, t.dex,
         (SELECT ct.price_usd::float FROM candidate_ticks ct WHERE ct.mint=co.mint
           AND ct.snapped_at > now() - interval '40 seconds' ORDER BY ct.snapped_at DESC LIMIT 1) px,
+        (SELECT ct.liquidity_usd::float FROM candidate_ticks ct WHERE ct.mint=co.mint
+          AND ct.snapped_at > now() - interval '40 seconds' ORDER BY ct.snapped_at DESC LIMIT 1) liq,
         co.peak_multiple::float pk
       FROM candidate_outcomes co JOIN tokens t USING (mint)
       WHERE co.triggered_at IS NULL AND co.entered = false AND t.symbol IS NOT NULL
@@ -2750,9 +2750,16 @@ async function scanFamilyVelocityProbes(cfg: HermesConfig): Promise<void> {
             AND t2.first_seen_at >= t.first_seen_at - interval '2 hours'
             AND t2.first_seen_at < t.first_seen_at
             AND co2.peak_multiple >= 3)
-      LIMIT 2`)) as unknown as { mint: string; symbol: string | null; px: number | null; pk: number }[];
+      LIMIT 3`)) as unknown as { mint: string; symbol: string | null; dex: string | null; px: number | null; liq: number | null; pk: number }[];
     for (const c of cands) {
       if (c.px == null || !Number.isFinite(c.px) || c.px <= 0) continue;
+      // BOOK-GROWTH SIZING (operator 2026-07-29): the harness's safe cut
+      // (cliff-safe pool OR damm-v2 — 74% win, floor-respecting) collects at
+      // $5; the tail cut stays $3 texture. The band prices the size, inside
+      // the probe book too.
+      const safeCut =
+        (c.liq != null && c.liq >= cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD) || c.dex === "meteora-damm-v2";
+      const FAMVEL_SIZE_USD = safeCut ? cfg.PAPER_FAMVEL_SIZE_SAFE_USD : cfg.PAPER_FAMVEL_SIZE_USD;
       const qty = FAMVEL_SIZE_USD / c.px;
       let opened: { id: number } | undefined;
       try {
