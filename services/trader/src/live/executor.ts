@@ -2420,6 +2420,51 @@ export async function guardLiveBook(cfg: HermesConfig): Promise<void> {
 // Consecutive guard cycles a live position has read below the stop threshold, so a
 // single glitched quote never cuts a winner paper is still riding (2× = confirmed).
 const guardHits = new Map<number, number>();
+// Native-book sensory caches. (Small duplicates of paper.ts helpers — a
+// direct import would be circular: paper.ts already imports this module.)
+const liveEntryLiqCache = new Map<number, number | null>();
+async function liveEntryLiq(lp: { id: number; mint: string; openedAt: Date }): Promise<number | null> {
+  if (liveEntryLiqCache.has(lp.id)) return liveEntryLiqCache.get(lp.id)!;
+  try {
+    const openedIso = lp.openedAt.toISOString(); // toISOString — the wedge lesson
+    const [t] = (await db.execute(sql`
+      SELECT liquidity_usd::float AS liq FROM candidate_ticks
+      WHERE mint = ${lp.mint}
+        AND snapped_at BETWEEN ${openedIso}::timestamptz - interval '20 seconds' AND ${openedIso}::timestamptz + interval '5 seconds'
+      ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
+    const liq = t?.liq != null && Number.isFinite(Number(t.liq)) && Number(t.liq) > 0 ? Number(t.liq) : null;
+    liveEntryLiqCache.set(lp.id, liq);
+    return liq;
+  } catch {
+    liveEntryLiqCache.set(lp.id, null);
+    return null;
+  }
+}
+const liveLpUnlockedCache = new Map<string, boolean>();
+async function liveLpUnlocked(mint: string): Promise<boolean> {
+  const hit = liveLpUnlockedCache.get(mint);
+  if (hit !== undefined) return hit;
+  try {
+    const [row] = (await db.execute(sql`
+      SELECT bool_or(evidence::text ILIKE '%LP Unlocked%') unlocked
+      FROM safety_checks WHERE mint = ${mint} AND check_name = 'rugcheck'`)) as unknown as { unlocked: boolean | null }[];
+    const unlocked = row?.unlocked ?? true; // missing data → insure by default
+    liveLpUnlockedCache.set(mint, unlocked);
+    return unlocked;
+  } catch {
+    return true;
+  }
+}
+async function liveLatestLiq(mint: string): Promise<number | null> {
+  try {
+    const [t] = (await db.execute(sql`
+      SELECT liquidity_usd::float AS liq FROM candidate_ticks WHERE mint = ${mint}
+      ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
+    return t?.liq != null && Number.isFinite(Number(t.liq)) ? Number(t.liq) : null;
+  } catch {
+    return null;
+  }
+}
 // Highest REAL sell-quote value / cost seen per live position — the live lane's
 // own peak, used to arm the profit floor without waiting on the paper mirror.
 const livePeakMark = new Map<number, number>();
@@ -2669,8 +2714,17 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
         // while paper twins rode 1.15-1.69×. Unknown depth skips the depth
         // rail here; real depth protection stays with the ws drain rail and
         // the paper mirror, which read actual pools.
-        const synthetic = { priceUsd: entry * markNow, liquidityUsd: null, fdvUsd: 0, pairAddress: "", dexId: "" } as never;
-        const dec = decideExit(ecfg, lp, synthetic, entry * peakMark, null);
+        // THE NATIVE BOOK, FULL SENSES (operator 2026-07-29: "Shouldn't the
+        // Live run its own book built on the best of the paper lane
+        // strategy?"). This loop IS live's own manager — real sell-quote
+        // marks, real balances, its own peak clock, its own basket harvest —
+        // but it fed the genome a blind market (liquidityUsd null, no entry
+        // depth, no LP state), so the drain guard ran ws-only and basis-first
+        // ran on defaults. Now the genome gets everything paper's manager
+        // gets: live depends on the mirror for NOTHING.
+        const liqNow = await liveLatestLiq(lp.mint);
+        const synthetic = { priceUsd: entry * markNow, liquidityUsd: liqNow, fdvUsd: 0, pairAddress: "", dexId: "" } as never;
+        const dec = decideExit(ecfg, lp, synthetic, entry * peakMark, null, await liveEntryLiq(lp), await liveLpUnlocked(lp.mint));
         if (dec) {
           // DUST-AWARE RUNGS: a partial rung on a micro position produces a sub-$1
           // sell that venues reject (pumpportal build 400 ×4 on the $2-era tape) —
