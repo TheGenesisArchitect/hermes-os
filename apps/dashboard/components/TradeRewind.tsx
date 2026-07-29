@@ -41,6 +41,11 @@ const PAD = { l: 34, r: 12, t: 16, b: 20 };
 
 export function TradeRewind({ rewinds }: { rewinds: TradeRewind[] }) {
   const [sel, setSel] = useState(0);
+  // HORIZONTAL DRAWER (operator 2026-07-29: "lets tuck into a nice horizontal
+  // drawer so that we can open can close when needed"). Collapsed by default —
+  // one strip that slides open when a flight is worth rewinding, closed the
+  // rest of the time so the board stays quiet.
+  const [open, setOpen] = useState(false);
   if (!rewinds.length) {
     return (
       <Panel
@@ -135,6 +140,29 @@ export function TradeRewind({ rewinds }: { rewinds: TradeRewind[] }) {
     </div>
   );
 
+  const liveCount = rewinds.filter((r) => r.lane === "live").length;
+  const strip = (
+    <div className="rounded-md" style={{ border: "1px solid var(--gridline)", background: "var(--surface-1)" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px]"
+        style={{ color: "var(--text-secondary)" }}
+      >
+        <span style={{ color: "var(--series-1)" }}>{open ? "▾" : "▸"}</span>
+        <span className="font-semibold" style={{ color: "var(--text-primary)" }}>⏮ Trade Rewind</span>
+        <span style={{ color: "var(--text-muted)" }}>
+          {rewinds.length} flights{liveCount ? ` · ${liveCount} live` : ""} — every rung on the price path
+        </span>
+        <span className="ml-auto tabular" style={{ color: "var(--text-muted)" }}>
+          {open ? "close" : `top ${t.symbol} ${t.peakMark.toFixed(1)}×`}
+        </span>
+      </button>
+      {open && <div className="border-t px-3 py-3" style={{ borderColor: "var(--gridline)" }}>{chart}</div>}
+    </div>
+  );
+  if (!open) return strip;
+
   return (
     <Panel
       title="⏮ Trade Rewind"
@@ -173,7 +201,17 @@ export function TradeRewind({ rewinds }: { rewinds: TradeRewind[] }) {
         </div>
       }
     >
-      {chart}
+      <div className="space-y-2">
+        <button
+          onClick={() => setOpen(false)}
+          className="text-[10px]"
+          style={{ color: "var(--text-muted)" }}
+          aria-label="Collapse Trade Rewind"
+        >
+          ▾ tuck away
+        </button>
+        {chart}
+      </div>
     </Panel>
   );
 }

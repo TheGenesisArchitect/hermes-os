@@ -627,6 +627,10 @@ export interface TimingTrade {
   snapRate: number | null;
   remFrac: number;
   banked: number;
+  // RECORDED RUNGS (operator 2026-07-29: "Plotting the Recorded activity right
+  // onto the candle"). Every sell fill this bar actually took — so the matrix
+  // shows WHERE the ladder fired, not only where the trade finished.
+  rungs: { t: number; mm: number; reason: string; qtyPct: number }[];
 }
 export interface TimingGridView {
   trades: TimingTrade[];
@@ -750,6 +754,40 @@ export async function getTimingGrid(): Promise<TimingGridView> {
   // the $ floor), then the ratcheting trail rides up under the peak. Approximates
   // the trader's effective stop (tight-trail representative) so the lock line on
   // each bar shows what's banked vs what's still floating.
+  // RECORDED RUNGS — every sell fill for the bars on screen, keyed by position,
+  // as {seconds since entry, mark multiple, reason, % of position sold}. One
+  // query for the whole grid; a failure just means bars render without rungs.
+  const rungsByPos = new Map<number, { t: number; mm: number; reason: string; qtyPct: number }[]>();
+  try {
+    const allIds = [...open.map((p) => p.id), ...closed.map((p) => p.id)];
+    if (allIds.length) {
+      const rows = (await db.execute(sql`
+        SELECT f.position_id, f.price_usd::float AS px, f.qty_tokens::float AS qty,
+          coalesce(f.reason,'') AS reason,
+          extract(epoch from (f.filled_at - p.opened_at))::int AS t,
+          p.entry_price_usd::float AS entry, p.qty_tokens::float AS qty0
+        FROM fills f JOIN positions p ON p.id = f.position_id
+        WHERE f.side='sell' AND f.position_id IN ${sql.raw(`(${allIds.join(",")})`)}
+        ORDER BY f.filled_at`)) as unknown as Record<string, unknown>[];
+      for (const r of rows) {
+        const entry = Number(r.entry);
+        const qty0 = Number(r.qty0);
+        if (!(entry > 0)) continue;
+        const id = Number(r.position_id);
+        const list = rungsByPos.get(id) ?? [];
+        list.push({
+          t: Number(r.t),
+          mm: Number(r.px) / entry,
+          reason: String(r.reason),
+          qtyPct: qty0 > 0 ? (Number(r.qty) / qty0) * 100 : 0,
+        });
+        rungsByPos.set(id, list);
+      }
+    }
+  } catch {
+    /* rungs are enrichment — never block the grid */
+  }
+
   const lockOf = (sizeUsd: number, peakMult: number) => {
     const armed = peakMult >= cfg.PROFIT_LOCK_ARM_MULT || sizeUsd * (peakMult - 1) >= cfg.PROFIT_FLOOR_USD;
     const lockedMult = armed
@@ -791,6 +829,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       snapRate: p.snapRate === null ? null : num(p.snapRate),
       remFrac: num(p.qtyTokens) > 0 ? Math.max(0, Math.min(1, num(p.qtyRemaining) / num(p.qtyTokens))) : 1,
       banked: num(p.realizedPnlUsd),
+      rungs: rungsByPos.get(p.id) ?? [],
     });
   }
   for (const p of closed) {
@@ -826,6 +865,7 @@ export async function getTimingGrid(): Promise<TimingGridView> {
       snapRate: p.snapRate === null ? null : num(p.snapRate),
       remFrac: 0,
       banked: num(p.realizedPnlUsd),
+      rungs: rungsByPos.get(p.id) ?? [],
     });
   }
 
@@ -5063,8 +5103,25 @@ export interface TradeRewind {
 
 export async function getTradeRewinds(limit = 6): Promise<TradeRewind[]> {
   try {
+    // BOTH LANES, GUARANTEED (operator 2026-07-29: "live should be included").
+    // Ranked per lane and unioned, so live never gets crowded out by paper's
+    // volume — and live's bar is lower (≥1.3×) because a live 1.5× flight is
+    // as instructive as a paper 6×: it is real money's ladder we're rewinding.
     const heads = (await db.execute(sql`
-      SELECT p.id, p.lane, coalesce(t.symbol,'?') AS symbol, p.signature,
+      (SELECT p.id, p.lane, coalesce(t.symbol,'?') AS symbol, p.signature,
+        p.size_usd::float AS size_usd, p.realized_pnl_usd::float AS pnl_usd,
+        p.entry_price_usd::float AS entry, p.qty_tokens::float AS qty0,
+        p.peak_price_usd::float / nullif(p.entry_price_usd::float,0) AS peak_mark,
+        coalesce(p.exit_reason,'') AS exit_reason, p.opened_at,
+        extract(epoch from (p.closed_at - p.opened_at))::int AS hold_sec
+      FROM positions p LEFT JOIN tokens t ON t.mint = p.mint
+      WHERE p.status='closed' AND p.closed_at > now() - interval '48 hours'
+        AND p.lane='live' AND p.entry_price_usd::float > 0 AND p.qty_tokens::float > 0
+        AND p.peak_price_usd::float / nullif(p.entry_price_usd::float,0) >= 1.3
+      ORDER BY p.peak_price_usd::float / nullif(p.entry_price_usd::float,0) DESC
+      LIMIT ${Math.max(2, Math.floor(limit / 2))})
+      UNION ALL
+      (SELECT p.id, p.lane, coalesce(t.symbol,'?') AS symbol, p.signature,
         p.size_usd::float AS size_usd, p.realized_pnl_usd::float AS pnl_usd,
         p.entry_price_usd::float AS entry, p.qty_tokens::float AS qty0,
         p.peak_price_usd::float / nullif(p.entry_price_usd::float,0) AS peak_mark,
@@ -5072,10 +5129,10 @@ export async function getTradeRewinds(limit = 6): Promise<TradeRewind[]> {
         extract(epoch from (p.closed_at - p.opened_at))::int AS hold_sec
       FROM positions p LEFT JOIN tokens t ON t.mint = p.mint
       WHERE p.status='closed' AND p.closed_at > now() - interval '24 hours'
-        AND p.entry_price_usd::float > 0 AND p.qty_tokens::float > 0
+        AND p.lane='paper' AND p.entry_price_usd::float > 0 AND p.qty_tokens::float > 0
         AND p.peak_price_usd::float / nullif(p.entry_price_usd::float,0) >= 2
       ORDER BY p.peak_price_usd::float / nullif(p.entry_price_usd::float,0) DESC
-      LIMIT ${limit}`)) as unknown as Record<string, unknown>[];
+      LIMIT ${limit})`)) as unknown as Record<string, unknown>[];
     if (!heads.length) return [];
     const ids = heads.map((h) => Number(h.id));
     const ticks = (await db.execute(sql`

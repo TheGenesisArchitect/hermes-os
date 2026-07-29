@@ -105,6 +105,19 @@ function ValueSpark({ t }: { t: TimingTrade }) {
       {/* cost-basis baseline */}
       <line x1={2} x2={W - 2} y1={y(t.sizeUsd)} y2={y(t.sizeUsd)} stroke="var(--gridline)" strokeDasharray="3 3" />
       <path d={d} fill="none" stroke={up ? "var(--status-good)" : "var(--status-critical)"} strokeWidth={1.5} />
+      {/* RECORDED RUNGS on the card's own trace — each sell fill at the time it
+          fired, so the hover card rewinds the ladder without leaving the bar. */}
+      {t.rungs.map((r, i) => {
+        const span = pts[pts.length - 1]!.t - pts[0]!.t || 1;
+        const px = ((r.t - pts[0]!.t) / span) * (W - 4) + 2;
+        if (!Number.isFinite(px) || px < 0 || px > W) return null;
+        return (
+          <g key={i}>
+            <line x1={px} x2={px} y1={2} y2={H - 2} stroke="var(--series-1)" strokeWidth={0.75} opacity={0.5} />
+            <circle cx={px} cy={y(r.mm * t.sizeUsd)} r={2} fill="var(--series-1)" />
+          </g>
+        );
+      })}
       <circle cx={x(pts.length - 1)} cy={y(last)} r={2.5} fill={up ? "var(--status-good)" : "var(--status-critical)"} />
     </svg>
   );
@@ -354,6 +367,26 @@ export function TimingGrid({ view, dnaByMint }: { view: TimingGridView; dnaByMin
           <div className="absolute left-0 right-0" style={{ bottom: `${pct(Math.max(t.exit?.mm ?? 1, 1))}%` }}>
             <div className="h-[2px] w-full" style={{ background: exitUp ? "var(--status-good)" : "var(--status-critical)", opacity: 0.9 }} />
           </div>
+        )}
+        {/* RECORDED RUNGS (operator 2026-07-29): every sell fill drawn at the
+            multiple it actually took — the ladder's real footprints on the
+            candle. Partial rungs are dashes; a full exit is the solid line
+            above. TABLE's story reads instantly: rungs stacked up the bar,
+            then the last one far below the peak. */}
+        {t.rungs.map((r, i) =>
+          r.qtyPct < 99 ? (
+            <div key={i} className="absolute left-0 right-0" style={{ bottom: `${pct(Math.max(r.mm, 1))}%` }}>
+              <div
+                className="h-[1.5px]"
+                style={{
+                  width: `${Math.max(30, Math.min(100, r.qtyPct * 2))}%`,
+                  background: "var(--series-1)",
+                  opacity: 0.85,
+                }}
+                title={`${r.reason} — sold ${r.qtyPct.toFixed(0)}% at ${r.mm.toFixed(2)}×`}
+              />
+            </div>
+          ) : null,
         )}
         {!ghost && t.armed && t.lockedMult > 1.0 && (
           <div className="absolute left-0 right-0" style={{ bottom: `${pct(t.lockedMult)}%` }}>
