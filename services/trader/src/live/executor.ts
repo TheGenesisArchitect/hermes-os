@@ -1649,6 +1649,10 @@ export async function maybeLiveBuy(
         // scorecards compare the two lanes signal-for-signal.
         signature: sig?.signature ?? null,
         stars: sig?.stars ?? null,
+        // Cache-completeness (stage-grading audit 2026-07-29): live rows never
+        // stored the trigger multiple, leaving the SEAT stage ungradable on
+        // the live funnel. Same field paper persists.
+        triggerMult: sig?.triggerMultiple != null && Number.isFinite(sig.triggerMultiple) ? String(sig.triggerMultiple) : null,
         // The routing EVIDENCE, same as paper persists. Without it the Matrix's
         // signal-vs-execution card is blank for live and a signature cannot be
         // audited after the fact — which is the whole point of recording it.
