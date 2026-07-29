@@ -75,6 +75,15 @@ async function universeSnapshot(): Promise<string> {
       SELECT 'arm/kill event: ' || action, created_at FROM audit_log
       WHERE action IN ('live_kill_cleared','live_kill_engaged') AND created_at > now() - interval '48 hours'
       ORDER BY first_seen DESC LIMIT 12`),
+    q("WINDOW SEASONALITY (14d, per 4h UTC window) — the market keeps a schedule: use these per-window rates to shape any intra-day forecast ('the next window historically arrives N winners at X% capture'). Known structure: 12-16 UTC = highest volume AND 34% capture; 20-24 UTC = biggest peaks (11.3x avg) at only 2% capture — flag forecasts that ignore which window is coming.", sql`
+      SELECT (EXTRACT(HOUR FROM co.triggered_at)::int / 4) * 4 utc_window,
+        count(*) FILTER (WHERE co.label='winner') winners_14d,
+        round(avg(co.peak_multiple) FILTER (WHERE co.label='winner')::numeric,1) avg_peak,
+        (SELECT round((100*sum(p.realized_pnl_usd)/NULLIF(sum(GREATEST(p.size_usd*(p.peak_price_usd/NULLIF(p.entry_price_usd,0)-1),0)),0))::numeric,0)
+         FROM positions p WHERE p.lane='paper' AND p.status='closed' AND p.closed_at > now() - interval '14 days'
+           AND (EXTRACT(HOUR FROM p.closed_at)::int / 4) * 4 = (EXTRACT(HOUR FROM co.triggered_at)::int / 4) * 4) capture_pct
+      FROM candidate_outcomes co WHERE co.triggered_at > now() - interval '14 days' AND co.label IN ('winner','dud','rug')
+      GROUP BY 1 ORDER BY 1`),
     q("DETERMINISTIC FORECAST INPUTS — computed arithmetic, the ONLY basis for any forward-looking answer. Present as projections conditioned on current rates holding, never as promises. proj_24h = fills_24h × ev_per_fill; compound paths apply daily_return_pct to live equity.", sql`
       WITH l AS (
         SELECT count(*)::float fills_24h, coalesce(avg(realized_pnl_usd),0)::float ev,
