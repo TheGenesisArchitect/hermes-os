@@ -715,8 +715,25 @@ export function livePositionUsd(
       : sizeFraction(sig?.stars ?? 0, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) *
         (sig ? profileOf(sig.signature).size : 1)) * starBoost,
   );
+  // GENOME WEIGHT — the winning formula's allocation term (ratified
+  // 2026-07-29). Selection decides WHETHER we board; this decides HOW MUCH,
+  // from each genome's own measured EV. Applied to routed positions only;
+  // unweighted genomes and unrouted rows pass through at 1.0. The caps below
+  // still bound everything, so a weight can tilt allocation but never breach
+  // the exposure rails.
+  const genomeWeight = (() => {
+    if (!sig) return 1;
+    for (const pair of cfg.LIVE_GENOME_WEIGHTS.split(",")) {
+      const [name, w] = pair.split(":");
+      if (name?.trim() === sig.signature) {
+        const parsed = Number(w);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+      }
+    }
+    return 1;
+  })();
   const base = sig
-    ? balanceUsd * routedFrac
+    ? balanceUsd * routedFrac * genomeWeight
     : balanceUsd * cfg.LIVE_SIZE_FRAC * regimeMult * convictionMult * anticipationMult;
   // CAPS SCALE WITH THE BALANCE, FLOORS DO NOT.
   // LIVE_MIN_POSITION_USD is a fee-viability floor, not a strategy knob — below

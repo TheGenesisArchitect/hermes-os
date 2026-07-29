@@ -69,6 +69,39 @@ build, zero sign at fire time.
 - **Arming gate:** `LIVE_PRESIGNED_EXITS` env flag, default false. Chain-test
   on devnet-or-one-live-ticket with operator watching before default-on.
 
+## THE WINNING FORMULA — live wallet construction (ratified 2026-07-29)
+
+Every term measured on our own ledger, entry-knowable only. Selection first,
+because it is the only stage fully within our control.
+
+**QUALIFY** (all must hold — no path exempt):
+| Term | Bar | Evidence (7–14d) |
+|---|---|---|
+| Buy share at trigger | **≥55%** | <55% died 30% vs 13%, identical 3× rate |
+| Pool at trigger | **≥$13k** | <$13k died 23–29%; ≥$13k recovery plateau 90%+ |
+| Inflow at trigger | **≥1.20×** | mild band was 54% of volume / 57% of losses |
+| Genome | **BASE · RISER · MOON_FAST · MOON_VIOLENT** | the four whose management prints |
+| Crowd | strict winner, or RECOVERED on a cliff-safe pool | strict 11% died vs 16% |
+| LP unlocked | allowed, but basis-first arms | 34/35 catastrophes carried the flag |
+
+**ALLOCATE** (`LIVE_GENOME_WEIGHTS`) — RISER ×1.25 (+$1.59 EV, 89% win, n=158),
+BASE ×0.85 (+$0.43, n=131), moons ×1.0 (thin n; never starve the tail). Band
+still prices size on top (strong ×1.5 / below-strong ×0.6). Dormant while every
+ticket rounds to the fee floor; expresses as the balance grows.
+
+**MANAGE** — basis-first TP0 on unlocked LP · late-arm ladder (first rung 3×) ·
+ripe sweep (peak ≥2×, 180s stall, 0.90 fade) · drain guard on chain truth ·
+floor_45 armed at −25% mark.
+
+**EXIT** — chambered sniper first, live-quote fallback always armed, no
+preflight sim on any sell, protective at 3× fee and ≥2000bps.
+
+**Known limits — state them, don't paper over them:** the −45% standard binds
+price drawdowns, NOT liquidity removals (no bid exists at any floor when the LP
+is pulled); basis-first only insures trades that first go up 10%; and the
+sizing engine cannot express conviction below ~$500 — every ticket rounds to
+the fee floor, so at small balances SELECTION is the only live lever.
+
 ## Validation gates (operator spec)
 
 - Rolling 10 live closes: **≥7 green**, every red **≥ −45% realized**, zero

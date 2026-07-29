@@ -961,6 +961,21 @@ const envSchema = z.object({
   // outnumber the sellers at the trigger tick. Unmeasured buy share refuses
   // too; a blind read is not a favorable one.
   LIVE_MIN_BUY_SHARE: z.coerce.number().default(0.55),
+  // GENOME WEIGHTS (operator 2026-07-29: "Dialing this into the Live Wallet
+  // construction is what's left on the table"). Selection is dialed; this is
+  // ALLOCATION — the formula's last unencoded piece. Measured EV per trade,
+  // core book, live-eligible cohort, 14d:
+  //   RISER        n=158 · 89% win · +$1.592   ← the earner, largest clean n
+  //   MOON_FAST    n= 18 · 44% win · +$1.232   (convex: dies 28%, pays anyway)
+  //   MOON_VIOLENT n=  5 · 40% win · +$4.158   (n too thin to weight)
+  //   BASE         n=131 · 64% win · +$0.425
+  // Weighted ONLY where the sample supports it — RISER up, BASE down, moons
+  // neutral (thin n, and the mandate never starves the tail). Deliberately
+  // conservative vs the 3.7× EV spread: this tilts allocation, it does not
+  // chase the point estimate. DORMANT at today's balance (every ticket rounds
+  // to the fee floor) and expresses itself as capital grows — the formula is
+  // encoded now rather than waiting on another session.
+  LIVE_GENOME_WEIGHTS: z.string().default("RISER:1.25,BASE:0.85"),
   // THE SNIPER (chain-test PASSED 2026-07-29, all 5 steps, ~$0.30): every
   // live fill chambers a durable-nonce pre-signed full exit; protective
   // fires submit the stored bytes — zero build work at fire time. Fallback
