@@ -1687,6 +1687,24 @@ export function decideExit(
     return { reason: "floor_45", fraction: 1 };
   }
 
+  // ── RIPE SWEEP (scoped-replay-proven 2026-07-29) ──────────────────────────
+  // A position that has PROVEN ≥2.0×, then stalled ≥180s off its peak and
+  // faded to ≤0.90×peak, banks now — the monster-window capture mechanic
+  // (+$196/+19% vs booked on 398 ripe greens; signature/hour scopes LOSE).
+  // Peak clock is in-memory (restart re-learns within the ride — safe).
+  if (cfg.RIPE_SWEEP_ENABLED && entry > 0 && price > 0) {
+    const mark = price / entry;
+    const rec = ripeClock.get(position.id);
+    if (!rec || mark > rec.peak) ripeClock.set(position.id, { peak: Math.max(mark, rec?.peak ?? 0), atMs: Date.now() });
+    else if (
+      rec.peak >= cfg.RIPE_SWEEP_MIN_PEAK &&
+      Date.now() - rec.atMs >= cfg.RIPE_SWEEP_STALL_SEC * 1000 &&
+      mark <= rec.peak * cfg.RIPE_SWEEP_FADE
+    ) {
+      return { reason: "ripe_sweep", fraction: 1 };
+    }
+  }
+
   // ── FIRST-MINUTES DRAIN GUARD (replay-proven 2026-07-27) ──────────────────
   // Relative-to-entry depth guard for the position's first minutes — the
   // adversarial-drain kill zone the absolute floor and the −50%/30s ws cliff
@@ -2276,6 +2294,12 @@ const entryLiqCache = new Map<number, number | null>();
 // rugcheck evidence, cached forever (LP lock state doesn't change mid-trade in
 // a way we could see anyway). Missing data counts as UNLOCKED: insure by default.
 const lpUnlockedCache = new Map<string, boolean>();
+// Ripe-sweep peak clock: positionId → highest mark seen and when it was set.
+// Pruned in managePositions against the open book.
+const ripeClock = new Map<number, { peak: number; atMs: number }>();
+export function pruneRipeClock(openIds: Set<number>): void {
+  for (const id of ripeClock.keys()) if (!openIds.has(id)) ripeClock.delete(id);
+}
 async function lpUnlockedFor(mint: string): Promise<boolean> {
   const hit = lpUnlockedCache.get(mint);
   if (hit !== undefined) return hit;
@@ -2821,6 +2845,7 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
   await refreshAutoFarm(cfg); // keep the adaptive farm list current (no-op inside refresh window)
   await scanFamilyVelocityProbes(cfg);
   const open = await db.select().from(positions).where(and(eq(positions.status, "open"), eq(positions.lane, "paper")));
+  pruneRipeClock(new Set(open.map((p) => p.id)));
   // P1: keep the ws pool watcher subscribed to exactly the open book (both
   // lanes — a live twin shares the paper mint). Fail-open: an empty pool
   // address just means no telemetry for that mint.

@@ -707,6 +707,17 @@ const envSchema = z.object({
   // sweep-into-strength path, it only ever banks greens.
   AUTO_HARVEST_NIGHT_MIN_GREEN: z.coerce.number().default(3),
   AUTO_HARVEST_NIGHT_MIN_USD: z.coerce.number().default(6),
+  // RIPE SWEEP (operator 2026-07-29: "One Window is worth the entire day if
+  // we build the right capture system for it"). Scoped replay (398 ripe
+  // greens/14d): sweeping positions whose OWN peak reached ≥2.0×, once
+  // stalled ≥180s and faded to ≤0.90×peak, beats booked +$196 (+19%) —
+  // while signature- or hour-scoped variants LOSE. The discriminator is the
+  // move itself: a proven 2× that stalls and fades is a ripe monster,
+  // whatever hour or genome it wears. Both lanes; organic exit class.
+  RIPE_SWEEP_ENABLED: z.coerce.boolean().default(true),
+  RIPE_SWEEP_MIN_PEAK: z.coerce.number().default(2.0),
+  RIPE_SWEEP_STALL_SEC: z.coerce.number().default(180),
+  RIPE_SWEEP_FADE: z.coerce.number().default(0.9),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction
