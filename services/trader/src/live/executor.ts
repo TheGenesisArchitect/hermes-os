@@ -768,6 +768,11 @@ export async function maybeLiveBuy(
     walletRugHits?: number | null;
     /** F6: which launch of this ticker (1-based). Sizing flows via paperFrac; carried for audit visibility. */
     launchOrder?: number | null;
+    /** Buy share at the trigger tick — THE selection separator (operator
+     *  2026-07-29: "Buy Shares must be in our favor when qualifying").
+     *  7d live-eligible cohort: <55% buys died 30% vs 13% for the rest, at an
+     *  identical 3×-run rate — deaths removed with no upside cost. */
+    triggerBuyShare?: number | null;
   } | null = null,
   /**
    * The fraction of ITS capital paper just committed to this same signal. Live
@@ -1333,6 +1338,24 @@ export async function maybeLiveBuy(
       // without a genome has no exit profile and no evidence — paper-only.
       await audit("live_buy_skipped", { mint, reason: "unrouted — live takes signature-routed trades only" });
       return;
+    }
+    // ── THE BUY-SHARE FLOOR (operator RATIFIED 2026-07-29) ──────────────────
+    // "Buy Shares must be in our favor when qualifying." The strongest
+    // entry-knowable separator we own: <55% buys at the trigger tick died 30%
+    // vs 13% (n=66 / 508, 7d) at an identical 3×-run rate — deaths removed
+    // with no upside forfeited. Universal: every path (strict-winner,
+    // RECOVERED cliff-safe, L1, L3+) passes through it, and an UNMEASURED buy
+    // share refuses too — a blind read is not a favorable one.
+    {
+      const bs = sig.triggerBuyShare == null ? null : Number(sig.triggerBuyShare);
+      if (bs == null || !Number.isFinite(bs) || bs < cfg.LIVE_MIN_BUY_SHARE) {
+        await audit("live_buy_skipped", {
+          mint,
+          buyShare: bs,
+          reason: `buy share ${bs == null || !Number.isFinite(bs) ? "unmeasured" : (bs * 100).toFixed(0) + "%"} below the ${(cfg.LIVE_MIN_BUY_SHARE * 100).toFixed(0)}% floor — sellers at the trigger tick (30% death cohort vs 13%)`,
+        });
+        return;
+      }
     }
     // SIGNATURE PLUG-IN (operator 2026-07-29): live trades only signatures
     // whose MANAGEMENT prints. The others aren't routing problems — they're

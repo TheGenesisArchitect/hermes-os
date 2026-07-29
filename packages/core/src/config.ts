@@ -951,6 +951,16 @@ const envSchema = z.object({
   // plateau; the alarm-point arithmetic is explicit rather than hidden.
   // Locked/burned-LP pools remain exempt — there is no pull to race.
   LIVE_UNLOCKED_LP_MIN_POOL_USD: z.coerce.number().default(13_000),
+  // THE BUY-SHARE FLOOR (operator RATIFIED 2026-07-29: "Buy Shares must be in
+  // our favor when qualifying"). Selection harness, 7d live-eligible cohort
+  // (inflow ≥1.20, allowlisted genomes):
+  //   buys <55%  n= 66 · died 30% · ran3× 52%
+  //   buys ≥55%  n=508 · died 13% · ran3× 55%   ← 2.3× fewer deaths, no upside cost
+  // Applies to EVERY qualifying path — strict-winner, RECOVERED cliff-safe,
+  // L1, L3+ — no exceptions: the tape only counts as a pitch when the buyers
+  // outnumber the sellers at the trigger tick. Unmeasured buy share refuses
+  // too; a blind read is not a favorable one.
+  LIVE_MIN_BUY_SHARE: z.coerce.number().default(0.55),
   // THE SNIPER (chain-test PASSED 2026-07-29, all 5 steps, ~$0.30): every
   // live fill chambers a durable-nonce pre-signed full exit; protective
   // fires submit the stored bytes — zero build work at fire time. Fallback

@@ -1447,6 +1447,10 @@ export async function openConfirmedPositions(cfg: HermesConfig): Promise<void> {
           walletStrictHits: walletStrictHits ?? null,
           walletRugHits: walletRugHits ?? null,
           launchOrder: launchOrder ?? null,
+          // Buy share at the trigger tick — live's selection floor reads it.
+          // It was measured here and never handed across; the live lane has
+          // been qualifying candidates blind to the strongest separator we own.
+          triggerBuyShare: triggerBuyShare === null ? null : Number(triggerBuyShare),
         }
       : null;
     // LIVE FIRES ON THE SAME SIGNAL, INDEPENDENTLY — not as a shadow of paper.
