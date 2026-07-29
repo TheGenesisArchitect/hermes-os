@@ -1188,11 +1188,39 @@ export async function maybeLiveBuy(
             reason: `RECOVERED supervised retrial ${(rc?.n ?? 0) + 1}/${cfg.RECOVERED_READMIT_TICKETS} — ticket size under full armor (operator word 2026-07-28)`,
           });
         } else {
-          await audit("live_buy_skipped", {
-            mint,
-            reason: "RECOVERED tier — paper-only on ALL venues until proven (4 of last 5 live full losses; drain-farm profile; reopens on ~30 clean fills + operator word)",
-          });
-          return;
+          // ── THE CLIFF-SAFE DOOR (operator 2026-07-29: "Lets open the cliff
+          // safe pools now. Live wallet needs attempts at bat.") ────────────
+          // The demotion convicted this tier on drains — but the recovery-
+          // cliff study (130 protective exits) says the drain only wins BELOW
+          // the cliff: fire with the pool over $12k and we keep 95%. So the
+          // tier reopens exactly where the physics protect us: entry pool ≥
+          // LIVE_UNLOCKED_LP_MIN_POOL_USD ($16k → the −25% drain alarm still
+          // rings above the $12k/95% line), at TICKET size, under the full
+          // armor (sniper chambered, strand probe, drain guard on chain
+          // truth, basis-first, floor_45, late-arm ladder). Sub-cliff
+          // RECOVERED stays paper-only — that is where the farm actually ate
+          // us. Audited as live_cliffsafe_readmit so the cohort scores on its
+          // own line.
+          const [ct] = (await db.execute(sql`
+            SELECT liquidity_usd::float liq FROM candidate_ticks WHERE mint = ${mint}
+            ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
+          const poolNow = ct?.liq != null && Number.isFinite(Number(ct.liq)) ? Number(ct.liq) : null;
+          if (poolNow != null && poolNow >= cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD) {
+            subFloorTicket = true; // ticket size, never the sizer's full clip
+            await audit("live_cliffsafe_readmit", {
+              mint,
+              poolUsd: Math.round(poolNow),
+              walletWinnerHits: wh ?? null,
+              walletRugHits: rh ?? null,
+              reason: `RECOVERED tier admitted through the CLIFF-SAFE door — pool $${Math.round(poolNow).toLocaleString()} ≥ $${cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD.toLocaleString()} keeps the drain alarm above the 95%-recovery line (operator word 2026-07-29)`,
+            });
+          } else {
+            await audit("live_buy_skipped", {
+              mint,
+              reason: `RECOVERED tier below the cliff (pool ${poolNow == null ? "unknown" : "$" + Math.round(poolNow).toLocaleString()} < $${cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD.toLocaleString()}) — paper-only where the drain farm actually wins`,
+            });
+            return;
+          }
         }
       }
       // Sub-floor MOON SHOT (operator 2026-07-25): the shot still fires, but a
