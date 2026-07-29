@@ -2193,6 +2193,7 @@ async function clearHarvestRequest(): Promise<void> {
 // it reuses the certified harvest_now → basket sweep path and wakes the moment
 // boarding volume rebuilds the float. Audited on every fire; 15m cooldown.
 let lastAutoHarvestMs = 0;
+let lastBasketAuditMs = 0;
 export async function checkAutoHarvest(cfg: HermesConfig): Promise<void> {
   if (!cfg.AUTO_HARVEST_ENABLED) return;
   if (Date.now() - lastAutoHarvestMs < cfg.AUTO_HARVEST_COOLDOWN_MIN * 60_000) return;
@@ -2206,7 +2207,26 @@ export async function checkAutoHarvest(cfg: HermesConfig): Promise<void> {
     id: number; s: number; mm: number;
   }[];
   const unrealized = greens.reduce((t, g) => t + (Number(g.mm) - 1) * Number(g.s), 0);
-  if (greens.length >= cfg.AUTO_HARVEST_MIN_GREEN && unrealized >= cfg.AUTO_HARVEST_MIN_USD) {
+  // BASKET-STATE INSTRUMENTATION (autopsy 2026-07-29): the backstop fired
+  // once in 14d — either evening baskets never form (market shape) or they
+  // dissolve between samples. Audit the state whenever ≥3 greens exist
+  // (10-min rate limit) so tomorrow's review answers it with data.
+  if (greens.length >= 3 && Date.now() - lastBasketAuditMs > 10 * 60_000) {
+    lastBasketAuditMs = Date.now();
+    await audit("harvest_basket_state", {
+      greens: greens.length,
+      unrealizedUsd: Number(unrealized.toFixed(2)),
+      utcHour: new Date().getUTCHours(),
+    });
+  }
+  // NIGHT SHIFT: 18:00–06:00 UTC the backstop works the summons's job — the
+  // operator's 39 morning taps ARE the 34% capture; the machine now taps at
+  // night at a slightly lower bar (3 greens / $6), same certified sweep.
+  const hourUtc = new Date().getUTCHours();
+  const night = hourUtc >= 18 || hourUtc < 6;
+  const minGreen = night ? cfg.AUTO_HARVEST_NIGHT_MIN_GREEN : cfg.AUTO_HARVEST_MIN_GREEN;
+  const minUsd = night ? cfg.AUTO_HARVEST_NIGHT_MIN_USD : cfg.AUTO_HARVEST_MIN_USD;
+  if (greens.length >= minGreen && unrealized >= minUsd) {
     lastAutoHarvestMs = Date.now();
     await db
       .insert(config)

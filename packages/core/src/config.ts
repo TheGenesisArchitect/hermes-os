@@ -699,6 +699,14 @@ const envSchema = z.object({
   AUTO_HARVEST_MIN_GREEN: z.coerce.number().default(4),
   AUTO_HARVEST_MIN_USD: z.coerce.number().default(8),
   AUTO_HARVEST_COOLDOWN_MIN: z.coerce.number().default(15),
+  // NIGHT SHIFT (evening capture autopsy 2026-07-29): morning capture is 34%
+  // largely because the operator answers the harvest summons (39 basket
+  // closes vs 12 in the 20-24 UTC window; the auto backstop fired ONCE in
+  // 14d). When no human is at the desk (18:00-06:00 UTC) the backstop works
+  // the summons's job at a slightly lower bar — same certified
+  // sweep-into-strength path, it only ever banks greens.
+  AUTO_HARVEST_NIGHT_MIN_GREEN: z.coerce.number().default(3),
+  AUTO_HARVEST_NIGHT_MIN_USD: z.coerce.number().default(6),
   INFLOW_CEILING: z.coerce.number().default(2.05),
   // F3 FLOOR ratified 2026-07-24 ("our floor has to be 1.20 — the data prove
   // it"): crowd-pass below 1.20 inflow won 73% but ran −$0.81/t at conviction
