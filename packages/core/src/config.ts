@@ -889,6 +889,16 @@ const envSchema = z.object({
   // exist when the cohort was convicted. 0 = demotion fully closed (default —
   // dawn reversal is setting this back to 0 in .env).
   RECOVERED_READMIT_TICKETS: z.coerce.number().default(0),
+  // THE −45% STANDARD (operator 2026-07-29: "We can't give up more than 45%
+  // of any trade as a standard"). Pre-bank catastrophic floor: ARM at −25%
+  // mark so that after the measured 15–25pp protective-execution delta the
+  // REALIZED loss respects −45% by arithmetic, not hope. Applies both lanes
+  // (mirror canon) as a hard overlay: tighter class stops still fire first;
+  // deeper ratified covers (e.g. CLIMBER 0.37×) are CAPPED by the standard —
+  // flagged for per-class re-harness. Post-bank, the ladder owns the ride.
+  // Total losses from LP pulls remain out of our control by nature; the
+  // LP-state doctrine (bank basis first on unlocked pools) handles that class.
+  STANDARD_FLOOR_ARM_MULT: z.coerce.number().default(0.75),
 
   // LIVE INFLOW REQUIREMENT — real capital only mirrors the band that pays.
   // Live has no frictionless forgiveness: it eats slippage, gas and confirm

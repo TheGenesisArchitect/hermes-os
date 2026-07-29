@@ -1776,7 +1776,7 @@ async function liveSellPosition(
   // stop slippage so they fill at the crashed price instead of reverting into a −100%
   // sweep. Take-profits bank into strength and get the tight tolerance. Trails sit
   // between: they fire while price pulls away, so landing beats price.
-  const isProtective = /stop|catastrophe|rug|sweep|mirror_cut|unsellable|depth_collapse|drain_guard/i.test(reason);
+  const isProtective = /stop|catastrophe|rug|sweep|mirror_cut|unsellable|depth_collapse|drain_guard|floor_45/i.test(reason);
   const isTakeProfit = !isProtective && /take_profit/i.test(reason);
   try {
     const { PublicKey } = await import("@solana/web3.js");
@@ -1899,8 +1899,11 @@ async function liveSellPosition(
       ? { ...cfg, PUMPPORTAL_PRIORITY_FEE: cfg.PUMPPORTAL_PRIORITY_FEE * 3 }
       : cfg;
     const b64 = await swapRouter.buildSwapTx(buildCfg, quote, wallet.publicKey.toBase58());
-    // Protective flees skip our own preflight sim — straight to the chain.
-    const res = await executeSwap(cfg, b64, WSOL_MINT, { skipSim: isProtective });
+    // ALL sells skip our own preflight sim (widened from protective-only,
+    // 2026-07-29): Wanjan died with a user_cut and two runner_timeouts queued
+    // behind 6001 sim-fails — a commanded cut must never wait on a simulation,
+    // and every sell is time-sensitive by nature. Buys keep the preflight.
+    const res = await executeSwap(cfg, b64, WSOL_MINT, { skipSim: true });
     const sol = (await solPriceUsd(cfg)) ?? 0;
     const proceedsUsd = res.outUi * sol;
     const qtyUiSold = Number(rawSell) / 10 ** decimals;

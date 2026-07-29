@@ -1647,6 +1647,25 @@ export function decideExit(
     return { reason: "depth_collapse_cut", fraction: 1 };
   }
 
+  // ── THE −45% STANDARD (operator 2026-07-29) ───────────────────────────────
+  // Universal pre-bank floor, both lanes: no trade gives up more than 45%
+  // realized. Armed at −25% mark; the protective flee (skip-sim, hot slip,
+  // 3× fee, pre-signed path when armed) spends the remaining budget. Fires
+  // only BEFORE a rung is banked — after banking, the ladder owns the ride
+  // and principal is already defended. Overlays every class: tighter stops
+  // fire first naturally; deeper covers are capped by the standard.
+  const floorBanked =
+    n(position.qtyTokens) > 0 && 1 - n(position.qtyRemaining) / n(position.qtyTokens) > 1e-6;
+  if (
+    cfg.STANDARD_FLOOR_ARM_MULT > 0 &&
+    !floorBanked &&
+    entry > 0 &&
+    price > 0 &&
+    price <= entry * cfg.STANDARD_FLOOR_ARM_MULT
+  ) {
+    return { reason: "floor_45", fraction: 1 };
+  }
+
   // ── FIRST-MINUTES DRAIN GUARD (replay-proven 2026-07-27) ──────────────────
   // Relative-to-entry depth guard for the position's first minutes — the
   // adversarial-drain kill zone the absolute floor and the −50%/30s ws cliff
