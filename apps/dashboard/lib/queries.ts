@@ -5031,3 +5031,98 @@ export async function getTradeManager(limit = 14): Promise<TradeManagerView> {
     return { connectPct: null, dragPp: null, capturePct: null, compound24hPct: null, managedReturnPct: null, managedN: 0, pareto: [], rows: [] };
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRADE REWIND — the flight recorder (operator 2026-07-29: "illustrate all 5
+// targets right on the candlestick so performance is clear and easy to
+// rewind"). TABLE peaked 5.72× at second 87 and the runner filled at 1.19× at
+// second 89: the ladder climbed the whole flight, the last rung met a 79%
+// one-tick collapse. That story was only visible by hand-querying ticks and
+// fills. This panel draws it: the price path with every rung marked where it
+// actually fired, the peak, and the give-back.
+export interface RewindFill {
+  sec: number;
+  mark: number;
+  reason: string;
+  qtyPct: number; // share of the original position this rung sold
+}
+export interface TradeRewind {
+  id: number;
+  lane: string;
+  symbol: string;
+  signature: string | null;
+  sizeUsd: number;
+  pnlUsd: number;
+  peakMark: number;
+  peakSec: number;
+  exitReason: string;
+  holdSec: number;
+  path: { sec: number; mark: number }[];
+  fills: RewindFill[];
+}
+
+export async function getTradeRewinds(limit = 6): Promise<TradeRewind[]> {
+  try {
+    const heads = (await db.execute(sql`
+      SELECT p.id, p.lane, coalesce(t.symbol,'?') AS symbol, p.signature,
+        p.size_usd::float AS size_usd, p.realized_pnl_usd::float AS pnl_usd,
+        p.entry_price_usd::float AS entry, p.qty_tokens::float AS qty0,
+        p.peak_price_usd::float / nullif(p.entry_price_usd::float,0) AS peak_mark,
+        coalesce(p.exit_reason,'') AS exit_reason, p.opened_at,
+        extract(epoch from (p.closed_at - p.opened_at))::int AS hold_sec
+      FROM positions p LEFT JOIN tokens t ON t.mint = p.mint
+      WHERE p.status='closed' AND p.closed_at > now() - interval '24 hours'
+        AND p.entry_price_usd::float > 0 AND p.qty_tokens::float > 0
+        AND p.peak_price_usd::float / nullif(p.entry_price_usd::float,0) >= 2
+      ORDER BY p.peak_price_usd::float / nullif(p.entry_price_usd::float,0) DESC
+      LIMIT ${limit}`)) as unknown as Record<string, unknown>[];
+    if (!heads.length) return [];
+    const ids = heads.map((h) => Number(h.id));
+    const ticks = (await db.execute(sql`
+      SELECT position_id, mark_multiple::float AS mark,
+        extract(epoch from (snapped_at - (SELECT opened_at FROM positions WHERE id = position_id)))::int AS sec
+      FROM position_ticks WHERE position_id IN ${sql.raw(`(${ids.join(",")})`)}
+      ORDER BY position_id, snapped_at`)) as unknown as Record<string, unknown>[];
+    const fills = (await db.execute(sql`
+      SELECT f.position_id, f.side, f.qty_tokens::float AS qty, f.price_usd::float AS px,
+        coalesce(f.reason,'') AS reason,
+        extract(epoch from (f.filled_at - (SELECT opened_at FROM positions WHERE id = f.position_id)))::int AS sec
+      FROM fills f WHERE f.position_id IN ${sql.raw(`(${ids.join(",")})`)} AND f.side='sell'
+      ORDER BY f.position_id, f.filled_at`)) as unknown as Record<string, unknown>[];
+    return heads.map((h) => {
+      const id = Number(h.id);
+      const entry = Number(h.entry);
+      const qty0 = Number(h.qty0);
+      const path = ticks
+        .filter((t) => Number(t.position_id) === id)
+        .map((t) => ({ sec: Number(t.sec), mark: Number(t.mark) }))
+        .filter((t) => Number.isFinite(t.mark) && t.mark > 0);
+      let peakMark = Number(h.peak_mark) || 1;
+      let peakSec = 0;
+      for (const p of path) if (p.mark >= peakMark - 1e-9) { peakMark = Math.max(peakMark, p.mark); peakSec = p.sec; }
+      return {
+        id,
+        lane: String(h.lane),
+        symbol: String(h.symbol),
+        signature: h.signature == null ? null : String(h.signature),
+        sizeUsd: Number(h.size_usd),
+        pnlUsd: Number(h.pnl_usd),
+        peakMark,
+        peakSec,
+        exitReason: String(h.exit_reason),
+        holdSec: Number(h.hold_sec),
+        path,
+        fills: fills
+          .filter((f) => Number(f.position_id) === id)
+          .map((f) => ({
+            sec: Number(f.sec),
+            mark: entry > 0 ? Number(f.px) / entry : 1,
+            reason: String(f.reason),
+            qtyPct: qty0 > 0 ? (Number(f.qty) / qty0) * 100 : 0,
+          })),
+      };
+    });
+  } catch {
+    return [];
+  }
+}

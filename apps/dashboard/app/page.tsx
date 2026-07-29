@@ -22,6 +22,7 @@ import { LedgerWorkspace } from "@/components/LedgerWorkspace";
 import { WalletPanel } from "@/components/WalletPanel";
 import { SignalTicker } from "@/components/SignalTicker";
 import { AnticipationForecast } from "@/components/AnticipationForecast";
+import { TradeRewind } from "@/components/TradeRewind";
 import { WinningFormula } from "@/components/WinningFormula";
 import { WalletDrawer } from "@/components/WalletDrawer";
 import { LaneComparison } from "@/components/LaneComparison";
@@ -56,6 +57,7 @@ import {
   getChainPulse,
   getAnticipation,
   getWinningFormula,
+  getTradeRewinds,
   getHourlyWindows,
   getWalletStatus,
   getLaneComparison,
@@ -109,6 +111,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     walletIntel,
     anticipation,
     winningFormula,
+    tradeRewinds,
     tickerRadar,
     laneBalances,
     inflowEdge,
@@ -148,6 +151,7 @@ export default async function Overview({ searchParams }: { searchParams: Promise
     getWalletIntel(),
     getAnticipation(),
     getWinningFormula(),
+    getTradeRewinds(),
     getTickerRadar(),
     getLaneBalances(),
     getInflowEdge(),
@@ -398,6 +402,9 @@ export default async function Overview({ searchParams }: { searchParams: Promise
 
       {/* Winning Formula — real-time paper-vs-live per-trade divergence gauge */}
       <WinningFormula view={winningFormula} />
+
+      {/* Trade Rewind — the flight recorder: every rung on the price path */}
+      <TradeRewind rewinds={tradeRewinds} />
 
       {/* Live wallet + paper-vs-live divergence — the go-live command row */}
       <div className="grid gap-6 lg:grid-cols-2">
