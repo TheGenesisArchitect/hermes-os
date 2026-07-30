@@ -1308,7 +1308,22 @@ export async function maybeLiveBuy(
       // Paper's crowd-net read agreed (−1.6¢/$, n=166). The 1.66–1.95×@strong
       // slice returns to DECLINE; the 1.96–2.05×@strong sensor seat below is a
       // different, 98%-win cell and stands on its own study.
-      const strongSeat = false;
+      // REOPENED (operator "Ship both", 2026-07-30) — the CONVEXITY harness
+      // reverses the closure. Formula-qualified cohort, 10d, "ran ≥2×":
+      //   trigger ≥1.65×   n=323 · 94% ran 2×
+      //   trigger 1.4-1.65 n=430 · 70%
+      // This is the most convex cohort we own, and live was refusing it
+      // wholesale while trapped at 80% flat-band. The closure was correct on
+      // its evidence — adverse execution selection — but that evidence
+      // predates the landing fix (rebroadcast + 10× priority), the buy-share
+      // floor, the pool floor, and the chambered sniper. The execution
+      // problems that convicted this slice no longer exist; it also cost
+      // +$3.64 in last night's refusal counterfactual. Scoreboard: live must
+      // hold ≥4¢/$ over the first 30 fills, and the band mix must move off
+      // 80% flat — if neither happens, it closes again on that evidence.
+      const strongSeat =
+        sig.liqGrowth != null && Number(sig.liqGrowth) >= 1.30 &&
+        sig.triggerMultiple != null && sig.triggerMultiple <= 1.95;
       // SENSOR-SLICE OPENING (ratified 2026-07-27, sensor-slice-study.ts 7d/14d):
       // the "−$1.01/t" that closed the slice predates the F1 crowd gate — this
       // code path only sees crowd-net flow now, and crowd-net flips the cells:
