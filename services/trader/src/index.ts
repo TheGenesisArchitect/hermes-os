@@ -15,7 +15,7 @@ import { setDrainHandler } from "./slotWatch.js";
 let latestEff = loadConfig();
 setDrainHandler((mint) => void fastDrainExit(latestEff, mint));
 import { readEffectiveConfig, refreshAdaptivePolicy } from "./adaptive.js";
-import { guardLiveBook, liveLaneStatus, processLiveCloseRequests, processLiveRequeues, processWalletSends, snapshotLiveEquity, startSniperRefresh, sweepLiveBook } from "./live/executor.js";
+import { guardLiveBook, liveLaneStatus, scanLiveIndependent, processLiveCloseRequests, processLiveRequeues, processWalletSends, snapshotLiveEquity, startSniperRefresh, sweepLiveBook } from "./live/executor.js";
 
 async function killSwitchEngaged(): Promise<boolean> {
   const [row] = await db.select().from(config).where(eq(config.key, "kill_switch"));
@@ -154,6 +154,10 @@ while (true) {
     void processLiveCloseRequests(eff);
     // Bounded retry of unroutable young-pool buys (the BIO fix).
     void processLiveRequeues(eff);
+    // THE INDEPENDENT LIVE SCAN — live evaluates every fresh armed candidate on
+    // its own cadence, so paper portfolio caps never decide what real capital
+    // can see. Self-throttled to LIVE_SCAN_INTERVAL_MS; every risk gate intact.
+    void scanLiveIndependent(eff);
     if (Date.now() - lastSnapshot >= cfg.PNL_SNAPSHOT_MS) {
       await snapshotEquity(eff);
       void snapshotLiveEquity(eff); // real live wallet value → the investor curve

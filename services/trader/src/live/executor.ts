@@ -1800,6 +1800,79 @@ const requeueUntil = new Map<string, number>();
  *  every trader tick; each retry goes back through maybeLiveBuy's full gate
  *  stack, so success, gate-refusal, or twin-exit all end the queue naturally
  *  (only a repeat unroutable failure re-queues, and only inside the window). */
+// ── THE INDEPENDENT LIVE SCAN (operator 2026-07-29: "the Live wallet needs
+// access to the most profitable opportunities that we have flowing through the
+// pipes") ───────────────────────────────────────────────────────────────────
+// Live's entry hook fired only from inside PAPER's armed-candidate loop, so
+// paper's PORTFOLIO rules — family caps, slot caps, per-lane reserves, sized
+// for a 300-position book — silently decided what a one-to-two-position wallet
+// was allowed to even SEE. Measured in the 20:00-24:00Z window: 10 formula-
+// qualified candidates, 8 of which ran ≥2×; live evaluated 4 (all in the flat
+// 1.00-1.34× band) and NEVER SAW the 4.9×, the 4.2×, or three more ≥1.8×.
+//
+// Live now scans for itself. Every fresh armed candidate is handed to
+// maybeLiveBuy on live's own cadence, whatever paper decided. NO risk gate is
+// loosened: maybeLiveBuy still runs the full stack (buy-share floor, pool
+// floor, inflow band, genome allowlist, crowd F1, cliff-safe door, exposure,
+// concurrency, kills) and carries its own in-flight claim + already-held guard,
+// so a paper-driven call and a scan-driven call for the same mint can never
+// double-fire. paperFrac is null here — live derives its own size from the
+// signature, exactly as the sizer's fallback path was built to do.
+const liveScanSeen = new Map<string, number>(); // mint → last evaluated (ms)
+let lastLiveScanMs = 0;
+export async function scanLiveIndependent(cfg: HermesConfig): Promise<void> {
+  if (!cfg.LIVE_TRADING_ENABLED || !cfg.LIVE_INDEPENDENT_SCAN || !liveWallet()) return;
+  if (Date.now() - lastLiveScanMs < cfg.LIVE_SCAN_INTERVAL_MS) return;
+  lastLiveScanMs = Date.now();
+  try {
+    // Re-evaluation cooldown: a candidate refused for a transient reason gets
+    // another look, but we don't re-run the gate stack every tick.
+    const now = Date.now();
+    for (const [m, t] of liveScanSeen) if (now - t > 10 * 60_000) liveScanSeen.delete(m);
+
+    const freshSec = cfg.CONFIRM_MAX_TRIGGER_AGE_SEC > 0 ? cfg.CONFIRM_MAX_TRIGGER_AGE_SEC : 3600;
+    const rows = (await db.execute(sql`
+      SELECT co.mint, t.symbol, co.signature, co.stars, co.dip_depth, co.snap_pct, co.snap_rate,
+        co.liq_growth, co.trigger_multiple, co.wallet_winner_hits, co.wallet_strict_hits,
+        co.wallet_rug_hits, co.launch_order, co.trigger_buy_share
+      FROM candidate_outcomes co JOIN tokens t ON t.mint = co.mint
+      WHERE co.armed = true AND co.signature IS NOT NULL
+        AND co.confirmed_at >= now() - make_interval(secs => ${freshSec})
+        AND NOT EXISTS (SELECT 1 FROM positions p WHERE p.mint = co.mint AND p.lane='live' AND p.status='open')
+      ORDER BY co.conviction_score DESC NULLS LAST, co.trigger_multiple DESC
+      LIMIT 12`)) as unknown as Record<string, unknown>[];
+
+    for (const r of rows) {
+      const mint = String(r.mint);
+      if (liveScanSeen.has(mint)) continue;
+      liveScanSeen.set(mint, now);
+      const num = (v: unknown): number | null => (v == null ? null : Number(v));
+      await maybeLiveBuy(
+        cfg,
+        mint,
+        r.symbol == null ? null : String(r.symbol),
+        {
+          signature: String(r.signature) as Signature,
+          stars: num(r.stars),
+          dipDepth: num(r.dip_depth),
+          snapPct: num(r.snap_pct),
+          snapRate: num(r.snap_rate),
+          liqGrowth: num(r.liq_growth),
+          triggerMultiple: num(r.trigger_multiple),
+          walletWinnerHits: num(r.wallet_winner_hits),
+          walletStrictHits: num(r.wallet_strict_hits),
+          walletRugHits: num(r.wallet_rug_hits),
+          launchOrder: num(r.launch_order),
+          triggerBuyShare: num(r.trigger_buy_share),
+        },
+        null, // live sizes itself — no paper fraction to inherit
+      );
+    }
+  } catch (err) {
+    console.warn(`live independent scan failed: ${err instanceof Error ? err.message.slice(0, 90) : err}`);
+  }
+}
+
 export async function processLiveRequeues(cfg: HermesConfig): Promise<void> {
   const now = Date.now();
   for (const [mint, r] of liveRequeue) {

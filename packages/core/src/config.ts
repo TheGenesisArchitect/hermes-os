@@ -976,6 +976,15 @@ const envSchema = z.object({
   // to the fee floor) and expresses itself as capital grows — the formula is
   // encoded now rather than waiting on another session.
   LIVE_GENOME_WEIGHTS: z.string().default("RISER:1.25,BASE:0.85"),
+  // INDEPENDENT LIVE SCAN (operator 2026-07-29 "Build it"). Live's entry hook
+  // fired only from paper's loop, so paper's PORTFOLIO caps (family, slot,
+  // lane reserves — sized for a 300-position book) decided what a 1-2 position
+  // wallet could even see. The 20:00-24:00Z window measured it: 10 qualified
+  // candidates, 8 ran ≥2×, live saw 4 — all flat — and never evaluated the
+  // 4.9× or the 4.2×. Live now scans on its own cadence. No risk gate moves;
+  // maybeLiveBuy runs the full stack and dedupes by construction.
+  LIVE_INDEPENDENT_SCAN: z.coerce.boolean().default(true),
+  LIVE_SCAN_INTERVAL_MS: z.coerce.number().default(4_000),
   // THE SNIPER (chain-test PASSED 2026-07-29, all 5 steps, ~$0.30): every
   // live fill chambers a durable-nonce pre-signed full exit; protective
   // fires submit the stored bytes — zero build work at fire time. Fallback
