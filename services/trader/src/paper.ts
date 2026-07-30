@@ -1670,8 +1670,19 @@ export function decideExit(
   // position — cost basis covered, the trade is house money, the remainder
   // rides the late-armed ladder with nothing left to lose. Locked pools skip
   // it: no pull to insure against.
+  // CONVEX EXEMPTION (operator 2026-07-30): the rung captures inversely to the
+  // move — 37% on flat trades, 12% on ≥3× runners. Skip it exactly where the
+  // convexity harness says the runners are (trigger ≥1.65× ran ≥2× 94% of the
+  // time, n=323; MOON-class is the monster window's native genome) and let the
+  // late-arm ladder own those. floor_45, the drain guard and the sniper still
+  // bound the downside — this removes an early PROFIT rung, not protection.
+  const convexRide =
+    cfg.BASIS_FIRST_CONVEX_SKIP &&
+    ((position.triggerMult != null && Number(position.triggerMult) >= cfg.BASIS_FIRST_CONVEX_TRIGGER) ||
+      (typeof position.signature === "string" && position.signature.startsWith("MOON")));
   if (
     cfg.BASIS_FIRST_ENABLED &&
+    !convexRide &&
     unlockedLp &&
     !floorBanked &&
     entry > 0 &&

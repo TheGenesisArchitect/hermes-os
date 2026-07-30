@@ -1013,6 +1013,19 @@ const envSchema = z.object({
   PAPER_FAMVEL_SIZE_USD: z.coerce.number().default(3),
   PAPER_FAMVEL_SIZE_SAFE_USD: z.coerce.number().default(5),
   BASIS_FIRST_ARM_MULT: z.coerce.number().default(1.1),
+  // CONVEX EXEMPTION (operator "Let's ship it", 2026-07-30, before the monster
+  // window). Basis-first captures INVERSELY to the size of the move — it dumps
+  // ~85% of the position at the first rung, which is right on flat trades and
+  // fatal on runners. Measured 5d, capture by what the position went on to do:
+  //   <1.5× n=77 → 37% captured  ·  1.5-2× n=19 → 19%
+  //   2-3×  n=11 → 16%           ·  ≥3×    n= 5 → 12% ($13.64 of $112.79)
+  // So the rung is SKIPPED on the cohort the convexity harness says runs:
+  // trigger ≥1.65× (94% ran ≥2×, n=323) or a MOON-class genome (MOON_VIOLENT
+  // is the monster window's native shift). Those positions ride the late-arm
+  // ladder instead — still floored by floor_45 at −25% arm, the drain guard,
+  // and the chambered sniper. Flat flow keeps basis-first untouched.
+  BASIS_FIRST_CONVEX_SKIP: z.coerce.boolean().default(true),
+  BASIS_FIRST_CONVEX_TRIGGER: z.coerce.number().default(1.65),
   BASIS_FIRST_WINDOW_SEC: z.coerce.number().default(240),
 
   // LIVE INFLOW REQUIREMENT — real capital only mirrors the band that pays.
