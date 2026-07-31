@@ -1702,6 +1702,28 @@ export function decideExit(
     return { reason: "floor_45", fraction: 1 };
   }
 
+  // ── THE LIQUID WINDOW (operator RATIFIED 2026-07-30, both lanes) ──────────
+  // The ride ends when LIQUIDITY turns, not when price breathes. The stop
+  // trails the pool's own running peak, so it scales with the winner: 19×
+  // the booked price-trail result over 892 positions (replay above). Fires
+  // after the −45% floor (protective always wins) and before the price trail
+  // it replaces, on the genomes the replay covered.
+  if (
+    cfg.LIQUID_WINDOW_ENABLED &&
+    typeof position.signature === "string" &&
+    cfg.LIQUID_WINDOW_GENOMES.split(",").map((s) => s.trim()).includes(position.signature) &&
+    market.liquidityUsd != null &&
+    Number.isFinite(market.liquidityUsd) &&
+    market.liquidityUsd > 0
+  ) {
+    const seen = poolPeak.get(position.id) ?? 0;
+    const pk = Math.max(seen, market.liquidityUsd);
+    if (pk > seen) poolPeak.set(position.id, pk);
+    if (pk > 0 && market.liquidityUsd <= pk * cfg.LIQUID_WINDOW_POOL_FRAC) {
+      return { reason: "liquid_window", fraction: 1 };
+    }
+  }
+
   // ── RIPE SWEEP (scoped-replay-proven 2026-07-29) ──────────────────────────
   // A position that has PROVEN ≥2.0×, then stalled ≥180s off its peak and
   // faded to ≤0.90×peak, banks now — the monster-window capture mechanic
@@ -2312,8 +2334,13 @@ const lpUnlockedCache = new Map<string, boolean>();
 // Ripe-sweep peak clock: positionId → highest mark seen and when it was set.
 // Pruned in managePositions against the open book.
 const ripeClock = new Map<number, { peak: number; atMs: number }>();
+// THE LIQUID WINDOW: highest pool depth this position has seen. The release
+// stop trails the POOL's peak, not the price's — a winner's pool grows with
+// it, so the stop scales with success. Pruned with the open book.
+const poolPeak = new Map<number, number>();
 export function pruneRipeClock(openIds: Set<number>): void {
   for (const id of ripeClock.keys()) if (!openIds.has(id)) ripeClock.delete(id);
+  for (const id of poolPeak.keys()) if (!openIds.has(id)) poolPeak.delete(id);
 }
 async function lpUnlockedFor(mint: string): Promise<boolean> {
   const hit = lpUnlockedCache.get(mint);

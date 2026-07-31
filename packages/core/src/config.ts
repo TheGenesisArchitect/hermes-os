@@ -1024,6 +1024,26 @@ const envSchema = z.object({
   // is the monster window's native shift). Those positions ride the late-arm
   // ladder instead — still floored by floor_45 at −25% arm, the drain guard,
   // and the chambered sniper. Flat flow keeps basis-first untouched.
+  // THE LIQUID WINDOW (operator RATIFIED 2026-07-30, BOTH LANES: "Every trade
+  // is liquid until it isn't and that's where the Opportunities Live").
+  // The price trail released positions on cosmetic pullbacks: 79% of its exits
+  // ran higher afterwards, averaging 5.20× our exit price — $18,303 left on
+  // the table in 10d across MOON_STEADY/MOON_SLOW/RISER. The pool was still
+  // intact when we sold.
+  // Replay (liquid-window.ts, 892 positions incl. 119 dust deaths, 0.95 fill,
+  // −45% floor still binding):
+  //   booked price trail        $  156.39
+  //   pool ≤85% of running peak $  509.66
+  //   pool ≤80% of running peak $3,003.87   ← SHIPPED (19×, conservative twin)
+  //   pool ≤70% of running peak $4,710.15   (30×, but assumes a 0.95 fill after
+  //                                          a 30% pool decline — inference,
+  //                                          not measurement; earn it on tape)
+  // The stop trails the POOL'S OWN PEAK, so it scales with success: a winner's
+  // pool grows, and a 20% fall from an elevated peak still leaves a deep
+  // market. Scoped to the three genomes the replay covered.
+  LIQUID_WINDOW_ENABLED: z.coerce.boolean().default(true),
+  LIQUID_WINDOW_POOL_FRAC: z.coerce.number().default(0.80),
+  LIQUID_WINDOW_GENOMES: z.string().default("MOON_STEADY,MOON_SLOW,RISER"),
   BASIS_FIRST_CONVEX_SKIP: z.coerce.boolean().default(true),
   BASIS_FIRST_CONVEX_TRIGGER: z.coerce.number().default(1.65),
   BASIS_FIRST_WINDOW_SEC: z.coerce.number().default(240),
