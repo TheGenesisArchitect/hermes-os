@@ -42,7 +42,8 @@ import { JupiterHostedProvider, WSOL_MINT } from "./swap/jupiterHosted.js";
 import { PumpSwapProvider } from "./swap/pumpswap.js";
 import { swapRouter } from "./swap/router.js";
 import { liveWallet } from "./wallet.js";
-import { chamberExit, fireChambered, releaseChamber, chamberAgeMs } from "./presigned.js";
+import { chamberExit, fireChambered, releaseChamber, chamberAgeMs, rehydrateChambers } from "./presigned.js";
+import { persist as persistState, forget as forgetState, rehydrate as rehydrateState } from "./state.js";
 
 // Exit pre-check probes — dedicated verifying providers (NOT the full router,
 // whose build-only PumpPortal would optimistically "pass" an unsellable token).
@@ -2077,6 +2078,7 @@ async function liveSellPosition(
   // Full exits only — a partial rung that misses is not a position in trouble.
   if (fraction >= 0.999 && LATCHING_EXIT.test(reason) && !exitLatch.has(position.id))
     exitLatch.set(position.id, { reason, fraction, slippageBps, since: Date.now() });
+    void persistState("latch", position.id, { reason, fraction, slippageBps, since: Date.now() });
   try {
     const { PublicKey } = await import("@solana/web3.js");
     const resp = await rpcPool(cfg).read((c) =>
@@ -2333,7 +2335,8 @@ async function liveSellPosition(
     if (closing) void closeEmptyAtas(cfg, resp.value.map((v) => v.pubkey), position.mint);
     sellBackoff.delete(position.id); // it sold — clear any accumulated penalty
     sellExclude.delete(position.id);
-    if (closing) exitLatch.delete(position.id); // the commanded exit completed
+    void forgetState("exclude", position.id);
+    if (closing) { exitLatch.delete(position.id); void forgetState("latch", position.id); } // the commanded exit completed
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -2348,6 +2351,7 @@ async function liveSellPosition(
       if (prov && !ex.includes(prov)) {
         ex.push(prov);
         sellExclude.set(position.id, ex);
+        void persistState("exclude", position.id, ex);
         routePoisoned = true; // a NEW venue is now reachable — don't make it wait
       }
     }
@@ -2408,7 +2412,7 @@ async function liveSellPosition(
         .where(and(eq(positions.id, position.id), eq(positions.status, "open")));
       await audit("live_unsellable_writeoff", { positionId: position.id, mint: position.mint, ageMin: Math.round(ageMin), bookedLoss: -remCost, error: msg });
       releaseChamber(position.id); // writeoff frees the nonce too
-      exitLatch.delete(position.id); // terminal — the position is closed
+      exitLatch.delete(position.id); void forgetState("latch", position.id); // terminal — the position is closed
       console.error(`🪦 LIVE WRITE-OFF ${short(position.mint)} — unsellable after ${ageMin.toFixed(0)}min, booked −$${remCost.toFixed(2)}`);
       sellBackoff.delete(position.id); // terminal — nothing left to retry
     }
@@ -2743,7 +2747,7 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
   // Drop latches for positions that left the open book by any other path (mirror
   // sell, close request, recon) so the map tracks the book instead of growing.
   const openIds = new Set(rows.map((r) => r.id));
-  for (const id of exitLatch.keys()) if (!openIds.has(id)) exitLatch.delete(id);
+  for (const id of exitLatch.keys()) if (!openIds.has(id)) { exitLatch.delete(id); void forgetState("latch", id); }
   if (rows.length === 0) return;
   const sol = (await solPriceUsd(cfg)) ?? 0;
   if (sol <= 0) return; // no SOL price → can't value; skip rather than risk a false read
@@ -3204,6 +3208,32 @@ let sniperLoopStarted = false;
 export function startSniperRefresh(cfg: HermesConfig): void {
   if (sniperLoopStarted || !cfg.LIVE_PRESIGNED_EXITS) return;
   sniperLoopStarted = true;
+  // ── REHYDRATE TACTICAL STATE BEFORE THE FIRST TICK (QTES Phase A #1) ──────
+  // A restart used to erase every chamber, latch and poisoned route. Measured
+  // cost: 13 fired of 39 chambers across a day with ~8 deploys. Rounds are
+  // durable-nonce signed and stay valid indefinitely, so there was never a
+  // reason to throw them away — and a latched protective exit that a deploy
+  // forgets is a position left un-commanded.
+  void (async () => {
+    try {
+      const n = await rehydrateChambers();
+      for (const [pid, v] of await rehydrateState<{ reason: string; fraction: number; slippageBps?: number; since: number }>("latch")) {
+        exitLatch.set(Number(pid), v);
+      }
+      for (const [pid, v] of await rehydrateState<string[]>("exclude")) {
+        sellExclude.set(Number(pid), v);
+      }
+      if (n > 0 || exitLatch.size > 0 || sellExclude.size > 0) {
+        await audit("live_state_rehydrated", {
+          chambers: n, latches: exitLatch.size, excludes: sellExclude.size,
+          reason: "tactical state restored across restart (GTPED P3 — deterministic decisions)",
+        });
+        console.log(`♻️  live state rehydrated — ${n} chamber(s), ${exitLatch.size} latch(es), ${sellExclude.size} exclusion(s)`);
+      }
+    } catch (err) {
+      console.warn(`live state rehydrate failed (in-memory only): ${err instanceof Error ? err.message.slice(0, 60) : err}`);
+    }
+  })();
   setInterval(() => {
     void (async () => {
       try {

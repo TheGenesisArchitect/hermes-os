@@ -20,6 +20,7 @@ import type { HermesConfig } from "@hermes/core";
 import { db } from "@hermes/db";
 import { swapRouter } from "./swap/router.js";
 import { liveWallet } from "./wallet.js";
+import { persist, forget, rehydrate } from "./state.js";
 
 const WSOL = "So11111111111111111111111111111111111111112";
 const NONCES_KEY = "presigned_nonces";
@@ -35,6 +36,40 @@ interface Chamber {
 }
 const chambers = new Map<number, Chamber>(); // positionId → round in the chamber
 const nonceInUse = new Map<string, number>(); // noncePub → positionId
+
+/**
+ * PURPOSE       Survive a restart with the chamber intact (QTES Phase A #1).
+ * SUCCESS       Fired-rate stops correlating with deploy count; target ≥70%.
+ * FAILURE MODE  A rehydrated round is stale — covered by the live-quantity
+ *               guard in fireChambered(), which refuses a mismatched round.
+ * OWNER         Execution Team
+ *
+ * The measured cost of NOT doing this: 39 chambers, 13 fired (33%), 11 never
+ * consulted, across a day with ~8 deploys. A durable-nonce round stays valid
+ * indefinitely — losing it to a process restart was pure self-harm.
+ */
+let rehydrated = false;
+export async function rehydrateChambers(): Promise<number> {
+  if (rehydrated) return chambers.size;
+  rehydrated = true;
+  const rows = await rehydrate<{ bytes: string; noncePub: string; builtAt: number; qtyRaw: string; provider: string }>("chamber");
+  for (const [pid, v] of rows) {
+    try {
+      chambers.set(Number(pid), {
+        bytes: Uint8Array.from(Buffer.from(v.bytes, "base64")),
+        noncePub: v.noncePub,
+        builtAt: Number(v.builtAt),
+        qtyRaw: BigInt(v.qtyRaw),
+        provider: v.provider,
+      });
+      nonceInUse.set(v.noncePub, Number(pid));
+    } catch {
+      /* a malformed row is dropped, not fatal */
+    }
+  }
+  if (chambers.size > 0) console.log(`🎯 sniper: rehydrated ${chambers.size} chambered round(s) across restart`);
+  return chambers.size;
+}
 
 async function conn(cfg: HermesConfig): Promise<Connection> {
   return new Connection(cfg.rpcUrls[0]!, "confirmed");
@@ -127,7 +162,18 @@ export async function chamberExit(
     }).compileToV0Message(alts);
     const tx = new VersionedTransaction(msg);
     tx.sign([wallet]);
-    chambers.set(positionId, { bytes: tx.serialize(), noncePub, builtAt: Date.now(), qtyRaw, provider: q.provider });
+    const bytes = tx.serialize();
+    const builtAt = Date.now();
+    chambers.set(positionId, { bytes, noncePub, builtAt, qtyRaw, provider: q.provider });
+    // WRITE-THROUGH — the round outlives this process. A durable-nonce tx stays
+    // valid indefinitely; losing it to a deploy was pure self-harm.
+    void persist("chamber", positionId, {
+      bytes: Buffer.from(bytes).toString("base64"),
+      noncePub,
+      builtAt,
+      qtyRaw: qtyRaw.toString(),
+      provider: q.provider,
+    });
     nonceInUse.set(noncePub, positionId);
     return true;
   } catch (err) {
@@ -200,6 +246,7 @@ export function releaseChamber(positionId: number): void {
   const round = chambers.get(positionId);
   if (round) nonceInUse.delete(round.noncePub);
   chambers.delete(positionId);
+  void forget("chamber", positionId);
 }
 
 /** Age check for the refresh loop. */
