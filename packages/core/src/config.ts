@@ -796,7 +796,35 @@ const envSchema = z.object({
   // refused outright. Admission and sizing tiers are deliberately decoupled:
   // the sweetspot finder's band informs tiers and the radar, never admission.
   CONFIRM_MAX_MULT: z.coerce.number().default(2.05),
-  CONVICTION_SEAT_MAX: z.coerce.number().default(1.65), // full-size fire zone ceiling
+  // ── ADMIT THE UPPER SEAT, 1.65 → 2.05 (2026-07-31) ───────────────────────
+  // 7d, live-eligible signatures, by trigger multiple at confirmation:
+  //   <=1.65    n=2658 · 44% reach 2x · 13% reach 5x · avg peak 4.24 · TAIL 7759
+  //   1.65-1.95 n= 432 · 85% reach 2x · 28% reach 5x · avg peak 5.40 · tail 1848
+  //   1.95-2.05 n= 104 · 96% reach 2x · 34% reach 5x · avg peak 20.12 · tail 1985
+  //
+  // READ THIS AS OFFER, NOT AS RISK. The <=1.65 band carries 7,759 of tail —
+  // MORE THAN THE OTHER TWO COMBINED — and it already has the full seat, which
+  // is correct: it is the largest pool of opportunity we own. Its 22% dud rate
+  // is the cost of standing in front of that tail, not an argument against it.
+  // (Operator, and he has had to say it more than once: "If we catch the tail
+  // the duds are just the cost of doing business.")
+  //
+  // What this change adds is the 536 candidates ABOVE 1.65, which were made to
+  // qualify for a strong-inflow seat before they could size. They reach 2x at
+  // 85% and 96%, reach 5x at 28% and 34%, and the top band averages a 20.12x
+  // peak. That is 3,833 more tail mass admitted at full size. A later trigger
+  // is not a chase — it is a token that has already proven it moves.
+  // Nothing in the cohort triggers above 2.05, so this ceiling now covers the
+  // entire measured range and the ">seat" refusal stops firing.
+  //
+  // This is the gate the refusal ledger kept naming: "trigger in the sensor
+  // slice — paper probes it, live declines" refused 93 live-eligible
+  // candidates carrying 982 of tail. The prior "-$1.01/t at size" that closed
+  // this slice was an EXECUTION result, not an opportunity one, and execution
+  // is the thing repaired today.
+  // Shared knob: paper promotes the same band out of probe scale, which is the
+  // paper-mirrors-live-gates doctrine working as intended.
+  CONVICTION_SEAT_MAX: z.coerce.number().default(2.05), // full-size fire zone ceiling
   // SWEETSPOT FINDER — the boarding band as a rolling measurement, not a
   // constant (operator: "sweetspot finder at any moment in the day"). Every
   // refresh the recorder re-fits [minMult, maxMult] from trailing realized
