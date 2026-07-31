@@ -2776,10 +2776,34 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       // and paper rode it to 1.43×). No quote (no route) → can't value → leave it for
       // the sweep; never false-cut on missing/bad data.
       let value: number | null = null;
+      // ── REAL-TIME DEPTH FROM THE QUOTE WE ALREADY MAKE (2026-07-31) ───────
+      // Operator: "how can Lag be better than Live Liquidity Depth visibility…
+      // the wallet should be faster at identifying the condition of the pool."
+      // Exactly right, and we were doing the opposite. Live valued positions
+      // from a REAL sell quote (no lag) but fed the depth-driven rules —
+      // pool ownership, the liquid window, the drain guard — from
+      // candidate_ticks, the DexScreener tape, which trails an LP pull by
+      // seconds. So the wallet holding the token had worse depth vision than
+      // the aggregator, while owning the one instrument that cannot lag: the
+      // route itself.
+      //
+      // priceImpactPct on a full-position sell IS a depth measurement, taken
+      // against the pool as it exists this instant. Inverting our own
+      // convexSlippagePct model recovers implied liquidity:
+      //     impact = trade / (liq/2 + trade) * 100
+      //  ⇒  liq    = 2 · trade · (100/impact − 1)
+      // A pulled pool prices as enormous impact (or refuses to quote at all),
+      // so the drain shows up here the moment it happens rather than whenever
+      // the aggregator notices.
+      let impliedLiq: number | null = null;
       try {
         const j = await exitJup.quote(cfg, lp.mint, WSOL_MINT, raw, cfg.LIVE_STOP_SLIPPAGE_BPS);
         const outSol = Number(j.outAmount) / 1e9;
         if (outSol > 0) value = outSol * sol;
+        const impact = Number(j.priceImpactPct);
+        if (value != null && Number.isFinite(impact) && impact > 0 && impact < 100) {
+          impliedLiq = Math.max(0, 2 * value * (100 / impact - 1));
+        }
       } catch {
         /* no live sell route — the sweep/mirror handles it, don't false-cut here */
       }
@@ -3003,7 +3027,12 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
         // depth, no LP state), so the drain guard ran ws-only and basis-first
         // ran on defaults. Now the genome gets everything paper's manager
         // gets: live depends on the mirror for NOTHING.
-        const liqNow = await liveLatestLiq(lp.mint);
+        // DEPTH PRECEDENCE: the live route first, the aggregator only as a
+        // fallback. impliedLiq is measured against the pool as it exists right
+        // now; liveLatestLiq is a DexScreener read that trails a pull. Feeding
+        // the genome the stale one is what let positions ride into a vanished
+        // pool and sell for $0.00 while the tape still showed a price.
+        const liqNow = impliedLiq ?? (await liveLatestLiq(lp.mint));
         const synthetic = { priceUsd: entry * markNow, liquidityUsd: liqNow, fdvUsd: 0, pairAddress: "", dexId: "" } as never;
         const dec = decideExit(ecfg, lp, synthetic, entry * peakMark, null, await liveEntryLiq(lp), await liveLpUnlocked(lp.mint));
         if (dec) {
