@@ -1571,7 +1571,20 @@ const envSchema = z.object({
   // proven: paper's fraction × this, still capped by LIVE_MAX_POSITION_FRAC.
   LIVE_STAR2_BOOST: z.coerce.number().default(1.5),
   LIVE_SIZE_FRAC: z.coerce.number().default(0.1), // base position = 10% of balance
-  LIVE_MAX_POSITION_FRAC: z.coerce.number().default(0.14), // ≤14% of balance in any one position
+  // ── LIVE'S OWN BASKET (operator 2026-07-31: "4 positions ... $2.50 per
+  // position for a total of 5% capital outlay") ────────────────────────────
+  // 5% is the AGGREGATE outlay across the basket, not a per-position cap:
+  // 4 slots × $2.50 = $10 = 5% of a $200 balance. Live was dividing PAPER's
+  // spec (5% ÷ 8 slots) against its own balance, giving 0.625%/slot = $1.25 —
+  // under the $2.50 fee floor — so every precision entry got bumped to the
+  // floor and the slot protocol never expressed. Four slots makes the computed
+  // slot land ON the fee floor instead of beneath it, and gives basket_harvest
+  // a real portfolio: it is a PORTFOLIO rule that has never once fired on more
+  // than 2 positions in either lane. The slot scales with the balance from
+  // here, so at $400 the ticket is $5 without touching a knob.
+  LIVE_MANDATE_SLOTS: z.coerce.number().default(4),
+  LIVE_MANDATE_AGG_FRAC: z.coerce.number().default(0.05), // ÷ 4 slots ⇒ 1.25%/position
+  LIVE_MAX_POSITION_FRAC: z.coerce.number().default(0.0125), // one slot — no position exceeds its share
   LIVE_MAX_EXPOSURE_FRAC: z.coerce.number().default(0.75), // deploy ≤75% of balance (reserve for fees/rent)
   LIVE_MIN_FREE_SOL: z.coerce.number().default(0.03), // keep ≥0.03 SOL free for fees/ATA rent so buys don't fail
   LIVE_PROBE_SIZE_MULT: z.coerce.number().default(0.6), // off-hours/probe regime shrink

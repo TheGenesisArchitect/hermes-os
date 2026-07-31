@@ -1580,7 +1580,11 @@ export async function maybeLiveBuy(
         (cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
           typeof sig.signature === "string" && sig.signature.startsWith("MOON") &&
           !(sig.triggerMultiple != null && Number(sig.triggerMultiple) > cfg.CONVICTION_SEAT_MAX)));
-    const mandateSlotUsd = (bal.usd * cfg.MANDATE_AGG_FRAC) / Math.max(1, cfg.MANDATE_SLOTS);
+    // LIVE'S OWN SLOT SPEC — same protocol, live's balance AND live's basket.
+    // Sharing paper's 8-slot divisor gave 0.625%/slot ($1.25 on $200), under
+    // the fee floor; live runs 4 slots at 5% each so the slot is fee-viable and
+    // basket_harvest finally has more than one position to sweep.
+    const mandateSlotUsd = (bal.usd * cfg.LIVE_MANDATE_AGG_FRAC) / Math.max(1, cfg.LIVE_MANDATE_SLOTS);
     let usd = sized;
     if (mPrecision && mandateSlotUsd > 0) {
       const slotted = Math.min(mandateSlotUsd, Math.max(mandateSlotUsd, sized)); // even tickets, as paper
