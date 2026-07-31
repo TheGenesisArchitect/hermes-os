@@ -2137,6 +2137,33 @@ async function liveSellPosition(
     const rawSell = f >= 0.999 ? raw : (raw * BigInt(Math.floor(f * 10_000))) / 10_000n;
     if (rawSell <= 0n) return false;
 
+    // ── THE SNIPER FIRES FIRST (execution leak, 2026-07-31) ──────────────────
+    // The chambered round was submitted AFTER swapRouter.quote(). A pre-signed
+    // durable-nonce exit needs no quote — the bytes are already signed — but the
+    // quote sat in front of it and can THROW ("all swap providers down"), which
+    // routes straight to the catch and the round is never fired. That is the
+    // exact atomic-rug case: the pool collapses, every provider stops quoting,
+    // and the one exit that would still have landed is skipped because we asked
+    // permission first. 124 of 195 floor breaches (64%) never reached 1.15x and
+    // booked -69% of size against a -45% standard; the gap anatomy put 45% of
+    // breaches in the "survivable with speed" class. This is that speed.
+    //
+    // Quoting now happens ONLY on the fallback path, so detect->fill for a
+    // protective full exit is one sendRawTransaction with no network round-trip
+    // in front of it.
+    let res: Awaited<ReturnType<typeof executeSwap>> | null = null;
+    if (cfg.LIVE_PRESIGNED_EXITS && isProtective && rawSell === raw) {
+      const fired = await fireChambered(cfg, position.id);
+      if (fired) {
+        usedProvider = `sniper:${fired.provider}`;
+        res = await parseSettledSwap(cfg, fired.signature, WSOL_MINT, fired.landMs);
+        await audit("live_presigned_fired", {
+          mint: position.mint, positionId: position.id, landMs: fired.landMs, provider: fired.provider, reason,
+        });
+      } else {
+        await audit("live_presigned_fallback", { mint: position.mint, positionId: position.id, reason });
+      }
+    }
     // Explicit slippageBps (the guard) always wins over the classification above.
     const base =
       slippageBps ??
@@ -2165,43 +2192,28 @@ async function liveSellPosition(
       : isTakeProfit
         ? Math.min(cfg.LIVE_STOP_SLIPPAGE_BPS, base * (1 + escHold))
         : Math.min(cfg.LIVE_STOP_SLIPPAGE_BPS, base * 2 ** escFails);
-    const quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip, {
-      exclude: sellExclude.get(position.id),
-    });
-    usedProvider = quote.provider;
-    // ── THE SNIPER FIRE-HOOK (chain-tested 2026-07-29) ──────────────────────
-    // Protective FULL exit with a chambered round: submit the pre-signed
-    // bytes — zero build work. A miss (or no round) falls through to the
-    // live-quote path below; the sniper can only be faster, never worse.
-    let res: Awaited<ReturnType<typeof executeSwap>> | null = null;
-    if (cfg.LIVE_PRESIGNED_EXITS && isProtective && rawSell === raw) {
-      const fired = await fireChambered(cfg, position.id);
-      if (fired) {
-        usedProvider = `sniper:${fired.provider}`;
-        res = await parseSettledSwap(cfg, fired.signature, WSOL_MINT, fired.landMs);
-        await audit("live_presigned_fired", {
-          mint: position.mint, positionId: position.id, landMs: fired.landMs, provider: fired.provider, reason,
-        });
-      } else {
-        await audit("live_presigned_fallback", { mint: position.mint, positionId: position.id, reason });
-      }
-    }
     if (!res) {
-    // PROTECTIVE PRIORITY ESCALATION (operator "fix the bleeding", 2026-07-27):
-    // hard stops booked −65% avg depth vs the −28% design — the flee tx was
-    // losing the block race while the pool drained. A protective exit bids 3×
-    // the standing priority fee (~$0.12): pennies against the 37pp of stop
-    // slippage it races. Direct-build providers read the fee off cfg at build
-    // time, so an overlay cfg scopes the bump to exactly this tx.
-    const buildCfg = isProtective
-      ? { ...cfg, PUMPPORTAL_PRIORITY_FEE: cfg.PUMPPORTAL_PRIORITY_FEE * 3 }
-      : cfg;
-    const b64 = await swapRouter.buildSwapTx(buildCfg, quote, wallet.publicKey.toBase58());
-    // ALL sells skip our own preflight sim (widened from protective-only,
-    // 2026-07-29): Wanjan died with a user_cut and two runner_timeouts queued
-    // behind 6001 sim-fails — a commanded cut must never wait on a simulation,
-    // and every sell is time-sensitive by nature. Buys keep the preflight.
-    res = await executeSwap(cfg, b64, WSOL_MINT, { skipSim: true });
+      // FALLBACK PATH ONLY — the chamber either had no round or missed. Quoting
+      // lives here now so a provider outage can never block the pre-signed exit.
+      const quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip, {
+        exclude: sellExclude.get(position.id),
+      });
+      usedProvider = quote.provider;
+      // PROTECTIVE PRIORITY ESCALATION (operator "fix the bleeding", 2026-07-27):
+      // hard stops booked −65% avg depth vs the −28% design — the flee tx was
+      // losing the block race while the pool drained. A protective exit bids 3×
+      // the standing priority fee (~$0.12): pennies against the 37pp of stop
+      // slippage it races. Direct-build providers read the fee off cfg at build
+      // time, so an overlay cfg scopes the bump to exactly this tx.
+      const buildCfg = isProtective
+        ? { ...cfg, PUMPPORTAL_PRIORITY_FEE: cfg.PUMPPORTAL_PRIORITY_FEE * 3 }
+        : cfg;
+      const b64 = await swapRouter.buildSwapTx(buildCfg, quote, wallet.publicKey.toBase58());
+      // ALL sells skip our own preflight sim (widened from protective-only,
+      // 2026-07-29): Wanjan died with a user_cut and two runner_timeouts queued
+      // behind 6001 sim-fails — a commanded cut must never wait on a simulation,
+      // and every sell is time-sensitive by nature. Buys keep the preflight.
+      res = await executeSwap(cfg, b64, WSOL_MINT, { skipSim: true });
     }
     const sol = (await solPriceUsd(cfg)) ?? 0;
     const proceedsUsd = res.outUi * sol;
