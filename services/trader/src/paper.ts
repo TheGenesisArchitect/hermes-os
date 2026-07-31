@@ -3060,8 +3060,29 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
         skipped.push(position.mint);
         continue; // dust/no-pair → not sellable, skip
       }
+      // DIVERGENCE GUARD — the same one LAYER 1 applies below (2026-07-31).
+      // This block took the RAW Jupiter mark, and because the harvest runs
+      // BEFORE per-position management it got there first, banking fills at
+      // prices the guarded path would have rejected. Audited over today's 144
+      // closes: the median exit is a conservative 0.910× the tape, but 23
+      // exits printed >20% ABOVE it and carried $159.99 of $252.23 — and 13 of
+      // the top 14 were basket_harvest. MEMECAT sold at 27.61× the tape; the
+      // tape did not reach that price for another 23 seconds, and on several
+      // others (CHOUCHOU 15.38×, OPTIMUS at +970s) it never got there at all.
+      // Jupiter genuinely leads DexScreener on a vertical, which is why the
+      // override exists — but unguarded it also imports Jupiter's glitches
+      // straight into the book, and this rule banks the whole green book on it.
       const jp = jupPrices.get(position.mint);
-      const px = jp && jp > 0 ? jp : m.priceUsd; // sell at the real-time mark
+      const dexPx = m.priceUsd;
+      const jpSane =
+        jp != null && jp > 0 && dexPx > 0 &&
+        jp <= dexPx * cfg.MARK_FEED_DIVERGENCE && jp >= dexPx / cfg.MARK_FEED_DIVERGENCE;
+      if (jp != null && jp > 0 && !jpSane && dexPx > 0) {
+        await audit("harvest_jupiter_reject", {
+          positionId: position.id, mint: position.mint, jup: jp, dex: dexPx, liq: m.liquidityUsd,
+        });
+      }
+      const px = jpSane ? (jp as number) : dexPx; // fresher when sane, DexScreener when not
       const upl = n(position.qtyRemaining) * (px - n(position.entryPriceUsd));
       if (upl > 0) green.push({ position, market: { ...m, priceUsd: px }, upl });
     }

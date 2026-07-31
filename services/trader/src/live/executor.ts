@@ -2055,7 +2055,22 @@ async function liveSellPosition(
   // stop slippage so they fill at the crashed price instead of reverting into a −100%
   // sweep. Take-profits bank into strength and get the tight tolerance. Trails sit
   // between: they fire while price pulls away, so landing beats price.
-  const isProtective = /stop|catastrophe|rug|sweep|mirror_cut|unsellable|depth_collapse|drain_guard|floor_45/i.test(reason);
+  // ── user_cut / runner_timeout ARE PROTECTIVE (BingBing −$2.50, 2026-07-31) ──
+  // These are COMMANDED TERMINAL exits — the operator pressing close, or the
+  // clock expiring — and they were excluded from this classification, which
+  // cost two things at once on the first live positions after arming:
+  //   1. the SNIPER never fired. The fire-hook is gated on isProtective, so a
+  //      chambered round sat unused (BingBing chambered 12:01:33) while three
+  //      sells reverted and the position was written off at −$2.50.
+  //   2. they got ORDINARY-sell tolerance. Protective exits start hot at
+  //      2000bps and escalate toward 9000; these were capped at the plain sell
+  //      slippage, so every attempt died Custom:6001 ExceededSlippage into a
+  //      collapsing pool.
+  // BingBing was still at 1.81× when it was written off. It was never
+  // unsellable — we asked politely, three times, and then booked a full loss.
+  // A commanded terminal exit must fill, not negotiate.
+  const isProtective =
+    /stop|catastrophe|rug|sweep|mirror_cut|unsellable|depth_collapse|drain_guard|floor_45|user_cut|runner_timeout/i.test(reason);
   const isTakeProfit = !isProtective && /take_profit/i.test(reason);
   // Latch the intent BEFORE the attempt, not in the catch: a throw anywhere in
   // the body (RPC read, quote, build, send) must leave the exit still commanded.
