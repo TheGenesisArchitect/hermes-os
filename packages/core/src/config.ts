@@ -1656,6 +1656,40 @@ const envSchema = z.object({
   // a real portfolio: it is a PORTFOLIO rule that has never once fired on more
   // than 2 positions in either lane. The slot scales with the balance from
   // here, so at $400 the ticket is $5 without touching a knob.
+  // ── TEST-WINDOW TRADE CAP (operator 2026-07-31: "a 10 trade max so that we
+  // can test the changes we made") ─────────────────────────────────────────
+  // Counts live positions opened since the kill epoch (clearedAt), so arming
+  // starts a fresh window. At the cap live stops taking NEW entries; open
+  // positions keep managing and exiting normally. 0 disables.
+  // ── THE −45% STANDARD, ENFORCED ON-CHAIN (operator 2026-07-31: "fix now") ──
+  // floor_45 was a DECISION with no constraint behind it. It fires at 0.75×,
+  // then execution passed slippage as bps off a MOVING QUOTE — escalating to
+  // 9000bps on protective exits — so a 90% tolerance against an already
+  // collapsed quote accepted essentially any fill. The standard said "never
+  // give up more than 45%" while the machinery permitted −100%. zuckbot:
+  // decision at 0.75×, fill at ~0, −106% of a traded dollar.
+  //
+  // The floor is now anchored to COST BASIS, not to a quote that moves with the
+  // collapse. A protective sell fills at ≥ this fraction of what the position
+  // cost, or it does not fill.
+  //
+  // THE TRADEOFF, chosen deliberately: when the pool genuinely cannot pay 55%,
+  // the order is refused and the position is held (and eventually written off)
+  // rather than booked at −100%. Same dollar outcome in the true-rug case, but
+  // it stops us donating inventory at 8 picodollars, and every fill that DOES
+  // land is compliant with the standard by construction.
+  LIVE_FILL_FLOOR_ENABLED: z.coerce.boolean().default(true),
+  LIVE_FILL_FLOOR_FRAC: z.coerce.number().default(0.55), // = the −45% standard
+  LIVE_SESSION_TRADE_CAP: z.coerce.number().default(10),
+  // ── THE SLOT IS FLOOR-AWARE (fixes the §8.1 portfolio bias) ───────────────
+  // balance × agg ÷ slots computed BELOW LIVE_MIN_POSITION_USD once equity fell
+  // under ~$200 ($183.82 × 5% ÷ 4 = $2.30 against a $2.50 floor). Only PRECISION
+  // entries were rescued to the floor; everything else skipped silently — and
+  // the skipped cohort measured BETTER than the funded one (80% vs 63% reach 2×,
+  // 7% vs 15% dud). A sizing accident was selecting against us. The slot now
+  // takes the floor when the arithmetic falls under it, so the ticket is always
+  // the $2.50 the spec calls for and aggregate outlay floats instead.
+  LIVE_SLOT_FLOOR_AWARE: z.coerce.boolean().default(true),
   LIVE_MANDATE_SLOTS: z.coerce.number().default(4),
   LIVE_MANDATE_AGG_FRAC: z.coerce.number().default(0.05), // ÷ 4 slots ⇒ 1.25%/position
   LIVE_MAX_POSITION_FRAC: z.coerce.number().default(0.0125), // one slot — no position exceeds its share

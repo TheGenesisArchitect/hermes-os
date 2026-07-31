@@ -16,7 +16,7 @@ import {
   type AddressLookupTableAccount,
 } from "@solana/web3.js";
 import { sql } from "drizzle-orm";
-import type { HermesConfig } from "@hermes/core";
+import { fetchJupiterPrice, type HermesConfig } from "@hermes/core";
 import { db } from "@hermes/db";
 import { swapRouter } from "./swap/router.js";
 import { liveWallet } from "./wallet.js";
@@ -25,7 +25,32 @@ import { persist, forget, rehydrate } from "./state.js";
 const WSOL = "So11111111111111111111111111111111111111112";
 const NONCES_KEY = "presigned_nonces";
 const CHAMBER_MAX_AGE_MS = 5 * 60_000;
-const MIN_OUT_FRAC = 55n; // ×/100 — the −45% STANDARD embedded on-chain
+/**
+ * THE −45% STANDARD, ANCHORED TO COST BASIS (operator "let's fix now", 2026-07-31).
+ *
+ * This constant existed since the sniper shipped, carrying the comment "the −45%
+ * STANDARD embedded on-chain" — and was NEVER REFERENCED. The standard was named
+ * in the code and never wired. What actually set the chamber's minimum output was
+ * line ~140: a quote taken at LIVE_STOP_SLIPPAGE_BPS (3500), i.e.
+ *
+ *     minOut = 0.65 × the token's value AT CHAMBER TIME
+ *
+ * and executor.ts:3355 re-chambers every round older than 4 minutes at the price
+ * then prevailing. So a position that ran up re-anchored its own floor upward:
+ * chambered at 1.169× basis, the round's minOut became 0.76× basis — sitting
+ * just ABOVE the 0.75× at which floor_45 fires. The chambered exit was therefore
+ * structurally guaranteed to revert on the very exit it exists to serve. That is
+ * zuckbot #6910's `Custom:6004` (slippage exceeded), twice.
+ *
+ * The two defects composed exactly backwards: the sniper REFUSED to sell at −45%
+ * because its floor was anchored to a price that had moved up, and the fallback
+ * then sold at −100% because it had no floor at all. Strict where it should be
+ * permissive; permissive where it should be strict.
+ *
+ * Both are now anchored to COST BASIS, which does not move. One number, both
+ * paths: the round fills at ≥ −45% of what the position cost, or it does not fill.
+ */
+const MIN_OUT_FRAC = 0.55; // = the −45% standard, as a fraction of COST BASIS
 
 interface Chamber {
   bytes: Uint8Array;
@@ -133,11 +158,45 @@ export async function chamberExit(
     if (!noncePub) return false;
     // Raw balance straight from the chain — the chamber sells what we HOLD.
     const bal = await c.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(mint) });
-    const amtInfo = bal.value[0]?.account.data as { parsed?: { info?: { tokenAmount?: { amount: string } } } } | undefined;
+    const amtInfo = bal.value[0]?.account.data as
+      { parsed?: { info?: { tokenAmount?: { amount: string; decimals: number } } } } | undefined;
     const rawStr = amtInfo?.parsed?.info?.tokenAmount?.amount ?? "0";
+    const decs = amtInfo?.parsed?.info?.tokenAmount?.decimals ?? 0;
     const qtyRaw = (BigInt(rawStr) * 995n) / 1000n; // dust margin
     if (qtyRaw <= 0n) return false;
-    const q = await swapRouter.quote(cfg, mint, WSOL, qtyRaw, cfg.LIVE_STOP_SLIPPAGE_BPS);
+    // ── SLIPPAGE DERIVED FROM THE COST-BASIS FLOOR, NOT FROM THE TAPE ────────
+    // See MIN_OUT_FRAC above for why the old `LIVE_STOP_SLIPPAGE_BPS` anchor
+    // made the round revert precisely when it was needed. We take one quote to
+    // learn what the route currently pays, then re-quote at the tolerance that
+    // puts minOut exactly on 0.55 × basis. Chambering is OFF the hot path — it
+    // runs at boarding and on a 4-minute refresh — so the second round-trip
+    // costs the flee window nothing.
+    let q = await swapRouter.quote(cfg, mint, WSOL, qtyRaw, cfg.LIVE_STOP_SLIPPAGE_BPS);
+    if (cfg.LIVE_FILL_FLOOR_ENABLED) {
+      const [pos] = (await db.execute(sql`
+        SELECT size_usd::float AS sz, qty_tokens::float AS q0
+        FROM positions WHERE id = ${positionId}`)) as unknown as { sz: number; q0: number }[];
+      const solPx = await fetchJupiterPrice(cfg.JUPITER_PRICE_URL, WSOL).catch(() => null);
+      const outNow = Number(q.outAmount);
+      if (pos != null && pos.q0 > 0 && solPx != null && solPx > 0 && outNow > 0) {
+        // Pro-rata: the round sells qtyRaw of the original qty_tokens, so it
+        // must return at least that same share of 0.55 × the position's cost.
+        const shareOfPos = Math.min(1, Number(qtyRaw) / 10 ** decs / pos.q0);
+        const floorUsd = pos.sz * shareOfPos * MIN_OUT_FRAC;
+        const floorLamports = (floorUsd / solPx) * 1e9;
+        // bps such that outNow × (1 − bps/10000) = floorLamports.
+        const bps = Math.round((1 - floorLamports / outNow) * 10_000);
+        const capped = Math.max(0, Math.min(9_900, bps));
+        if (capped !== cfg.LIVE_STOP_SLIPPAGE_BPS) {
+          q = await swapRouter.quote(cfg, mint, WSOL, qtyRaw, capped);
+          console.log(
+            `🎯 sniper: #${positionId} chambered against COST BASIS — minOut ${floorUsd.toFixed(4)} USD ` +
+              `(0.55× of $${(pos.sz * shareOfPos).toFixed(2)}), slippage ${capped}bps` +
+              (bps < 0 ? " [pool below the standard — round will hold rather than fill under it]" : ""),
+          );
+        }
+      }
+    }
     const b64 = await swapRouter.buildSwapTx(
       { ...cfg, PUMPPORTAL_PRIORITY_FEE: cfg.PUMPPORTAL_PRIORITY_FEE * 3 }, // flee fee pre-paid
       q, wallet.publicKey.toBase58(),

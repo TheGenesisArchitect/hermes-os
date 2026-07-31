@@ -318,6 +318,21 @@ async function liveBuyGate(cfg: HermesConfig, mint: string, routed = false): Pro
     .where(and(eq(positions.lane, "live"), eq(positions.status, "open")))) as { c: number }[];
   if (n(open?.c) >= cfg.LIVE_MAX_CONCURRENT) return { ok: false, reason: "concurrency cap" };
 
+  // ── TEST-WINDOW TRADE CAP (operator: "10 trade max so we can test the
+  // changes we made") ──────────────────────────────────────────────────────
+  // Counted from the kill epoch, so arming opens a fresh window. New entries
+  // stop at the cap; open positions keep managing and exiting normally, which
+  // is what makes the window a clean measurement rather than a hard stop.
+  if (cfg.LIVE_SESSION_TRADE_CAP > 0 && killState.clearedAt) {
+    const [sess] = (await db
+      .select({ c: sql<number>`count(*)` })
+      .from(positions)
+      .where(and(eq(positions.lane, "live"), gte(positions.openedAt, killState.clearedAt)))) as { c: number }[];
+    const taken = n(sess?.c);
+    if (taken >= cfg.LIVE_SESSION_TRADE_CAP)
+      return { ok: false, reason: `test-window cap reached (${taken}/${cfg.LIVE_SESSION_TRADE_CAP} since arming) — measure before extending` };
+  }
+
   // Already hold it live?
   const [held] = await db
     .select({ id: positions.id })
@@ -1600,7 +1615,14 @@ export async function maybeLiveBuy(
     // Sharing paper's 8-slot divisor gave 0.625%/slot ($1.25 on $200), under
     // the fee floor; live runs 4 slots at 5% each so the slot is fee-viable and
     // basket_harvest finally has more than one position to sweep.
-    const mandateSlotUsd = (bal.usd * cfg.LIVE_MANDATE_AGG_FRAC) / Math.max(1, cfg.LIVE_MANDATE_SLOTS);
+    // FLOOR-AWARE SLOT: below ~$200 equity the arithmetic fell under the
+    // fee-viable floor and non-PRECISION entries skipped silently, which
+    // selected against us — the skipped cohort measured better than the funded
+    // one. The ticket is the $2.50 the spec calls for; aggregate outlay floats.
+    const rawSlotUsd = (bal.usd * cfg.LIVE_MANDATE_AGG_FRAC) / Math.max(1, cfg.LIVE_MANDATE_SLOTS);
+    const mandateSlotUsd = cfg.LIVE_SLOT_FLOOR_AWARE
+      ? Math.max(rawSlotUsd, cfg.LIVE_MIN_POSITION_USD)
+      : rawSlotUsd;
     let usd = sized;
     if (mPrecision && mandateSlotUsd > 0) {
       const slotted = Math.min(mandateSlotUsd, Math.max(mandateSlotUsd, sized)); // even tickets, as paper
@@ -2039,6 +2061,11 @@ const sellExclude = new Map<number, string[]>();
 // on later ticks cannot cancel it. This is what makes the −45% standard a rail.
 interface ExitLatch { reason: string; fraction: number; slippageBps?: number; since: number }
 const exitLatch = new Map<number, ExitLatch>();
+/** Last time a position's sell was refused by the cost-basis floor. A refused
+ *  exit stays latched and retries every cycle, so the audit row is throttled to
+ *  once a minute — the signal is "this position cannot pay the standard", not
+ *  one row per retry. */
+const floorBlockAt = new Map<number, number>();
 /** Terminal exits that must complete once commanded. Opportunistic exits
  *  (profit_trail, liquid_window, take_profit) are deliberately NOT latched — if
  *  one fails and price recovers, continuing to ride is the correct outcome. */
@@ -2173,6 +2200,12 @@ async function liveSellPosition(
     const rawSell = f >= 0.999 ? raw : (raw * BigInt(Math.floor(f * 10_000))) / 10_000n;
     if (rawSell <= 0n) return false;
 
+    // Kicked off HERE, not where it is consumed: the cost-basis floor below sits
+    // on the flee path, and this fetch is an uncached HTTP round-trip. Starting
+    // it now means the floor check costs ~0ms of added latency, and the same
+    // promise settles the P&L conversion after the fill.
+    const solPxP = solPriceUsd(cfg).catch(() => null);
+
     // ── THE SNIPER FIRES FIRST (execution leak, 2026-07-31) ──────────────────
     // The chambered round was submitted AFTER swapRouter.quote(). A pre-signed
     // durable-nonce exit needs no quote — the bytes are already signed — but the
@@ -2233,10 +2266,72 @@ async function liveSellPosition(
     if (!res) {
       // FALLBACK PATH ONLY — the chamber either had no round or missed. Quoting
       // lives here now so a provider outage can never block the pre-signed exit.
-      const quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip, {
+      let quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip, {
         exclude: sellExclude.get(position.id),
       });
       usedProvider = quote.provider;
+
+      // ── THE −45% STANDARD, ENFORCED (operator "let's fix now", 2026-07-31) ──
+      // floor_45 fired as a DECISION and then handed execution a tolerance
+      // measured off a MOVING quote — escalating to 9000bps on protective exits
+      // — so an already-collapsed pool filled it at whatever price existed. The
+      // standard said "never give up more than 45%" while the machinery
+      // permitted −100%. zuckbot #6910: decision at 0.75×, fill near zero,
+      // −106% of a traded dollar.
+      //
+      // The floor is anchored to COST BASIS, which does not move with the
+      // collapse. Two enforcement steps, in order of what they cost us:
+      if (cfg.LIVE_FILL_FLOOR_ENABLED && isProtective) {
+        const solPx = (await solPxP) ?? 0;
+        const qtyUi = Number(rawSell) / 10 ** decimals;
+        const totQty = n(position.qtyTokens);
+        const basisUsd = totQty > 0 ? n(position.sizeUsd) * (qtyUi / totQty) : 0;
+        const floorUsd = basisUsd * cfg.LIVE_FILL_FLOOR_FRAC;
+        const offeredUsd = (Number(quote.outAmount) / 1e9) * solPx;
+        // FAIL-OPEN on a price-fetch failure (solPx = 0) — deliberate. A floor
+        // that blocks every sell when Jupiter's price endpoint blips would trap
+        // the book, which is strictly worse than the leak it prevents.
+        if (solPx > 0 && basisUsd > 0 && offeredUsd < floorUsd) {
+          // (1) The pool CANNOT pay the standard. Refuse rather than donate.
+          // The position stays latched and retries; if it never recovers it is
+          // written off at the SAME dollar cost we would have booked by selling
+          // — but we stop handing inventory over at 8 picodollars, and every
+          // fill that does land is compliant with the standard by construction.
+          // Backoff is deliberately NOT bumped: escalating tolerance is exactly
+          // the mechanism that broke the floor.
+          const last = floorBlockAt.get(position.id) ?? 0;
+          if (Date.now() - last > 60_000) {
+            floorBlockAt.set(position.id, Date.now());
+            await audit("live_fill_floor_block", {
+              positionId: position.id, mint: position.mint, reason,
+              basisUsd: +basisUsd.toFixed(4), floorUsd: +floorUsd.toFixed(4),
+              offeredUsd: +offeredUsd.toFixed(4),
+              offeredFrac: +(offeredUsd / basisUsd).toFixed(4),
+              provider: quote.provider,
+            });
+          }
+          return false;
+        }
+        // (2) The pool CAN pay it. Cap the tolerance so slippage between quote
+        // and land cannot carry the fill below the floor. This re-quote only
+        // fires when the escalated tolerance actually reaches past the standard
+        // — i.e. precisely the case that produced −106% — so the flee path pays
+        // an extra round-trip only when it is about to violate the rail.
+        if (solPx > 0 && basisUsd > 0 && offeredUsd > 0) {
+          const capBps = Math.floor((1 - floorUsd / offeredUsd) * 10_000);
+          if (Number.isFinite(capBps) && capBps >= 0 && capBps < slip) {
+            quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, capBps, {
+              exclude: sellExclude.get(position.id),
+            });
+            usedProvider = quote.provider;
+            await audit("live_fill_floor_capped", {
+              positionId: position.id, mint: position.mint, reason,
+              slipWas: slip, slipNow: capBps, floorUsd: +floorUsd.toFixed(4),
+              offeredUsd: +offeredUsd.toFixed(4),
+            });
+          }
+        }
+      }
       // PROTECTIVE PRIORITY ESCALATION (operator "fix the bleeding", 2026-07-27):
       // hard stops booked −65% avg depth vs the −28% design — the flee tx was
       // losing the block race while the pool drained. A protective exit bids 3×
@@ -2253,7 +2348,7 @@ async function liveSellPosition(
       // and every sell is time-sensitive by nature. Buys keep the preflight.
       res = await executeSwap(cfg, b64, WSOL_MINT, { skipSim: true });
     }
-    const sol = (await solPriceUsd(cfg)) ?? 0;
+    const sol = (await solPxP) ?? 0; // same in-flight fetch the floor used
     const proceedsUsd = res.outUi * sol;
     const qtyUiSold = Number(rawSell) / 10 ** decimals;
     const totalQty = n(position.qtyTokens);
@@ -2268,6 +2363,7 @@ async function liveSellPosition(
       if (closing) releaseChamber(position.id);
       else void chamberExit(cfg, position.id, position.mint);
     }
+    if (closing) floorBlockAt.delete(position.id);
 
     const [lsFill] = await db.insert(fills).values({
       positionId: position.id,
