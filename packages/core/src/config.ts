@@ -234,7 +234,24 @@ const envSchema = z.object({
   // avg peak of 1.62×): we were giving back 43% of every winner, and on 20
   // positions that peaked 1.61× and then rugged, all of it.
   TP2_MULT: z.coerce.number().default(1.58), // bank most of the rest, below the median turn
-  TP2_CUM_SELL: z.coerce.number().default(0.8), // total 80% banked by TP2; the remaining 20% rides uncapped
+  // ── THE RUNNER GROWS: 80% → 55% banked (operator ratified E, 2026-07-31) ──
+  // tp-ladder.ts, 2,406 positions/10d, TP0 held FIXED at 1.15×/40% in every
+  // variant. The shipped 80% ladder came LAST of nine on total return — highest
+  // win rate (69.4%), lowest money ($2,141). The signature of over-banking.
+  //   A shipped 1.58/80%   69.4% win   rug +$30    moon $1,005   $2,141
+  //   E this      1.58/55%  66.6% win   rug +$154   moon $1,796   $2,781
+  //   H TP0 only  (60% ride) 59.0% win  rug +$203   moon $2,281   $3,178
+  // RUNNER SIZE DOMINATES RUNG PLACEMENT: moving the top rung out to 2.0/2.5×
+  // while still banking 80% got only $2,240/$2,306, while leaving the rung
+  // where it is and banking less got $2,525/$2,781/$3,178. We were tuning where
+  // the rungs sit when the question was how much goes through them.
+  // And banking LESS improves the rug column (+$30 → +$154 → +$203): TP0 has
+  // already taken the insurance, so everything banked above it is upside
+  // forfeited that buys nothing on the downside.
+  // E over H deliberately — H is the maximum but costs 10pp of win rate;
+  // operator: "E as our Initial option, then Monitor for Optimization to H
+  // once we have proven our triggers are working."
+  TP2_CUM_SELL: z.coerce.number().default(0.55), // 55% banked by TP2; 45% rides uncapped
   // DUD CUT — the divergence cull (validated 2026-07-19, +$85/48h fill-realistic). Winners
   // clear the divergence line by ~2.25min (win_p25 crosses above dud_p75); duds sit flat.
   // A position whose PEAK hasn't cleared DUD_CUT_MARK by DUD_CUT_AGE_MIN never followed
