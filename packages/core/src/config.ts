@@ -992,15 +992,14 @@ const envSchema = z.object({
   // its cause. Scoreboard: live RUG_RISK write-off rate must stay near paper's
   // 11%, not the 15% the old execution produced.
   //
-  // HONEST SCOPE OF THIS LINE: adding RUG_RISK here does NOT by itself admit
-  // the class. `profileOf('RUG_RISK').trade === false` is a separate and
-  // EARLIER gate, and the qualified cell already has its own door
-  // (RUGRISK_FORMULA_ROUTE, crowd-PASS + in-envelope). That door is not the
-  // binding constraint either: on 2026-07-31, 17 candidates passed it and
-  // ZERO became live fills — 4 died on the 55% buy-share floor at 52-54%,
-  // 1 on the pool-depth floor, and TWELVE left no audit row at all. The
-  // allowlist entry is here for consistency; the real blocker is downstream
-  // and the silent declines are a defect (every live decision must carry a row).
+  // THIS LINE IS THE BINDING CONSTRAINT, traced 2026-07-31. The qualified cell
+  // already cleared its own door (RUGRISK_FORMULA_ROUTE, crowd-PASS +
+  // in-envelope) — 17 candidates passed it that day and ZERO became live
+  // fills. Every one of them carried an audit row, and 14 of 17 read
+  // "RUG_RISK not on the live plug-in list". The formula door admitted them
+  // and the plug-in list refused them three gates later. The remaining 3 died
+  // on gates that are doing real work and stay: the 55% buy-share floor
+  // (they printed 52-54%) and the 2500 pool-depth floor.
   //
   // ── MOON_STEADY + MOON_SLOW ADMITTED (operator word 2026-07-31) ───────────
   // They were benched as "genome-broken" on a CAPTURE measurement (m·steady
