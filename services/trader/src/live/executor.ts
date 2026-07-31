@@ -927,8 +927,23 @@ export async function maybeLiveBuy(
     // the regime bench, the inflow floor, and the stars bar below. Every hard
     // safety rail still applies: kill switches, exposure caps, depth floor,
     // clone-wave, anti-gate, crowd gate, honeypot.
+    // ── 1:1 MIRROR (operator 2026-07-31): paper already decided this trade ────
+    // This flag already waives exactly the three gates paper has no equivalent
+    // of — the regime class gate, the inflow band, and the stars bar — and it
+    // was already firing on 61% of live entries via a net-of-one-wallet test.
+    // That made the bands SELECTIVELY non-binding, which is the worst of both:
+    // they refused enough to distort the traded distribution (the skipped
+    // cohort measured BETTER than the funded one) while admitting 70% of
+    // entries below our own 1.25 bar anyway.
+    //
+    // Under mirror they stop binding UNIFORMLY. Solvency, executability,
+    // routed-only and the plug-in allowlist (which keeps MOON_STEADY out) all
+    // still apply. Every waived gate still writes its audit row so acceptance
+    // stays measurable against paper.
+    const mirrorEntry = cfg.LIVE_MIRROR_PAPER_ENTRY && sig != null;
     const winnerRepCrowd =
-      sig?.walletWinnerHits != null && sig?.walletRugHits != null && sig.walletWinnerHits - sig.walletRugHits >= 1;
+      mirrorEntry ||
+      (sig?.walletWinnerHits != null && sig?.walletRugHits != null && sig.walletWinnerHits - sig.walletRugHits >= 1);
     // ── REGIME CLASS GATE ────────────────────────────────────────────────────
     // The market is regime-centric (operator, 2026-07-22): CLIMBER went green
     // in the very window after the static audit blocked it. So live capital

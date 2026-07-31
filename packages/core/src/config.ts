@@ -1042,7 +1042,22 @@ const envSchema = z.object({
   // are already inside LIQUID_WINDOW_GENOMES, so they arrive with the pool
   // release attached rather than the price trail that broke them.
   // Scoreboard: capture% on these two must beat the 16%/24% booked baseline.
-  LIVE_SIGNATURE_ALLOWLIST: z.string().default("BASE,RISER,MOON_FAST,MOON_VIOLENT,MOON_STEADY,MOON_SLOW,RUG_RISK"),
+  // ── MOON_STEADY WITHDRAWN FROM LIVE (operator word 2026-07-31, evening) ───
+  // "Stay away from the probe path and the Steady Moon we haven't perfected
+  // yet." Verified on live receipts before acting — 10d, by class:
+  //   RISER        n=93  63% win  −10.8%
+  //   MOON_SLOW    n=18  50% win  −18.3%
+  //   RUG_RISK     n=85  38% win  −21.8%
+  //   BASE         n=63  35% win  −25.0%
+  //   MOON_STEADY  n=31  29% win  −23.4%   ← worst win rate at volume
+  // I admitted MOON_STEADY this morning on TAIL MASS (6,185, 41% of the board)
+  // and that opportunity measurement still stands — the class carries the
+  // largest tail we own. What it does not yet have is a management genome that
+  // converts it: 29% win on live against a 65-80% design target. The class
+  // returns when paper proves the conversion, not before.
+  // Probe-path flow needs no change: live has taken 297 core-book positions and
+  // ZERO probe positions in 10d — that path was already closed.
+  LIVE_SIGNATURE_ALLOWLIST: z.string().default("BASE,RISER,MOON_FAST,MOON_VIOLENT,MOON_SLOW,RUG_RISK"),
   // THE RECOVERY CLIFF — RE-MEASURED IN $2k BINS (operator "Ship the $13k
   // floor", 2026-07-29). The original $16k came from a coarse study (>$12k =
   // 95%) plus a −25% drain assumption stacked on top. The fine curve over 152
@@ -1780,6 +1795,26 @@ const envSchema = z.object({
   // curve/AMM tokens (sells structurally symmetric with buys — no buy-yes/sell-no
   // construct), paper already cleared the keyless RugCheck trap gate on each, and
   // positions stay small + exposure-capped.
+  // ── 1:1 MIRROR OF PAPER'S ENTRY DECISION (operator, 2026-07-31 evening) ───
+  // "Mirror the paper lane architecture with live wallet instrumentation step
+  // for step, with the exception of the probe class and the Steady Moon."
+  //
+  // A ROUTED signal means paper already decided. Live's parallel strategy stack
+  // (regime class gate, inflow band, stars bar, class veto, trigger seat) has no
+  // equivalent in paper, and six exception doors plus the winner-rep bypass were
+  // added to punch back through it. Measured: 62% of live entries carried a
+  // door and 70% arrived BELOW our own 1.25 admission bar — so the bands were
+  // decorative and we were tuning decoration.
+  //
+  // Under mirror the bands stop binding uniformly rather than selectively.
+  // STILL ENFORCED, because they are not strategy opinions:
+  //   solvency      kill switch · daily cap · concurrency · exposure · reserve
+  //   executability honeypot verified · sell route exists · fee-viable floor
+  //   scope         routed-only, the plug-in allowlist (which is how MOON_STEADY
+  //                 stays out), and probe flow (live has taken 0 probe rows in 10d)
+  // Every waived gate still writes its audit row, so ACCEPTANCE remains
+  // measurable and the 1:1 conversion can be compared against paper.
+  LIVE_MIRROR_PAPER_ENTRY: z.coerce.boolean().default(true),
   LIVE_MIRROR_PAPER: z
     .string()
     .default("true")
