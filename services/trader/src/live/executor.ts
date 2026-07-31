@@ -2686,12 +2686,31 @@ async function liveLpUnlocked(mint: string): Promise<boolean> {
     return true;
   }
 }
+// ── PARITY: LIVE'S POOL FEED MUST BE AS FRESH AS PAPER'S (2026-07-31) ───────
+// decideExit is shared, so live and paper run the SAME capture genome — but a
+// shared rule fed different data is not the same rule. Paper hands it a live
+// market read every tick; live hands it the newest candidate_tick, which had
+// no freshness guard at all. Measured over 6h of closes: median staleness 2s,
+// but a real tail — 7% over 60s and 4% over FIVE MINUTES, because ticks stop
+// when a mint leaves the candidate window while we still hold it.
+//
+// Acting on five-minute-old depth is worse than not acting: pool ownership
+// would either hold a position with no live capture rule or release it on a
+// phantom turn, and poolPeak would anchor to a stale high. Past the cutoff we
+// return null, which sets poolOwns=false and hands the position back to the
+// legacy stack — where the profit lock and the milestone ratchet still govern.
+// That is exactly the fail-safe the ownership design was built around.
+const LIVE_LIQ_MAX_AGE_SEC = 90;
 async function liveLatestLiq(mint: string): Promise<number | null> {
   try {
     const [t] = (await db.execute(sql`
-      SELECT liquidity_usd::float AS liq FROM candidate_ticks WHERE mint = ${mint}
-      ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
-    return t?.liq != null && Number.isFinite(Number(t.liq)) ? Number(t.liq) : null;
+      SELECT liquidity_usd::float AS liq,
+             extract(epoch from (now() - snapped_at)) AS age
+      FROM candidate_ticks WHERE mint = ${mint}
+      ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null; age: number }[];
+    if (t?.liq == null || !Number.isFinite(Number(t.liq))) return null;
+    if (Number(t.age) > LIVE_LIQ_MAX_AGE_SEC) return null; // stale → legacy stack owns it
+    return Number(t.liq);
   } catch {
     return null;
   }
