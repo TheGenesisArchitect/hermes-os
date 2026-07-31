@@ -934,10 +934,22 @@ const envSchema = z.object({
   // signatures whose MANAGEMENT already prints on paper (7d: BASE +$163,
   // RISER +$122, MOON_FAST +$51 improving post-ladder, MOON_VIOLENT +$29 at
   // 31% capture — the best). RUG_RISK excluded (pays paper +$117 but IS the
-  // live drain class, −$47.60); MOON_STEADY/SLOW/CLIMBER are genome-broken
-  // both lanes (m·steady −$86 paper, WORSE post-ladder) — paper workshop.
-  // Empty string disables the allowlist (all routed signatures trade).
-  LIVE_SIGNATURE_ALLOWLIST: z.string().default("BASE,RISER,MOON_FAST,MOON_VIOLENT"),
+  // live drain class, −$47.60).
+  //
+  // ── MOON_STEADY + MOON_SLOW ADMITTED (operator word 2026-07-31) ───────────
+  // They were benched as "genome-broken" on a CAPTURE measurement (m·steady
+  // −$86 paper). That diagnosis was right and its cause is now fixed: the
+  // 10d tail map shows these two carry 8,057 of ~14,900 total tail mass —
+  // 53% of every dollar of upside above 2× the board produces — and live was
+  // structurally locked out of all of it. MOON_STEADY alone (6,185) outweighs
+  // every previously-allowed genome COMBINED (3,950), running 53 tokens past
+  // 10× in 10 days at a 20.1× average peak. The bench was never a verdict on
+  // the opportunity; it was a verdict on our exit, and the exit is the thing
+  // under active repair (liquid window ae3c428, band sweep in flight). Both
+  // are already inside LIQUID_WINDOW_GENOMES, so they arrive with the pool
+  // release attached rather than the price trail that broke them.
+  // Scoreboard: capture% on these two must beat the 16%/24% booked baseline.
+  LIVE_SIGNATURE_ALLOWLIST: z.string().default("BASE,RISER,MOON_FAST,MOON_VIOLENT,MOON_STEADY,MOON_SLOW"),
   // THE RECOVERY CLIFF — RE-MEASURED IN $2k BINS (operator "Ship the $13k
   // floor", 2026-07-29). The original $16k came from a coarse study (>$12k =
   // 95%) plus a −25% drain assumption stacked on top. The fine curve over 152
