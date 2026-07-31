@@ -2028,13 +2028,27 @@ export function decideExit(
       // Non-MOON classes keep the 1.02 floor; RISER keeps its trail.
       const isMoonClass = typeof position.signature === "string" && position.signature.startsWith("MOON");
       const stop = isMoonClass ? entry * msFloor : Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, entry * msFloor);
-      // POOL OWNERSHIP: the price trail is the measured thief (−$3,781 over
-      // 993 positions). When the pool is being watched it decides the ride's
-      // end; the trail only governs positions the pool rule cannot see.
-      if (!poolOwns && stop > 0 && price <= stop) return { reason: msFloor > 0 ? "moon_ratchet" : "profit_trail", fraction: 1 };
+      // THE RATCHET IS NOT THE TRAIL (regression fix, operator 2026-07-31:
+      // "incredible trades falling through the floor"). Pool ownership
+      // originally suppressed this branch too — and Coco printed 2.35× then
+      // exited at 0.84×, BELOW ENTRY, because the pool never turned 30% while
+      // price round-tripped. Price and liquidity are decoupled: buyers hold a
+      // pool up all the way down. This `stop` contains NO trailing component —
+      // it is the profit-lock floor and the milestone ratchet, i.e. protection
+      // for gains already proven. It must survive pool ownership. Only the
+      // breathing-room trail below is the measured thief.
+      if (stop > 0 && price <= stop) {
+        return { reason: msFloor > 0 ? "moon_ratchet" : poolOwns ? "profit_lock" : "profit_trail", fraction: 1 };
+      }
     } else {
-      const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, gainLock, trailFloor);
-      if (!poolOwns && price <= stop) return { reason: "profit_trail", fraction: 1 };
+      // Under pool ownership the gainLock/trailFloor components drop away — they
+      // are the breathing-room trail that cost −$3,781 — but the profit-lock
+      // floor STAYS. A position that has printed green must never round-trip
+      // through entry just because its pool held up on the way down.
+      const stop = poolOwns
+        ? entry * cfg.PROFIT_LOCK_FLOOR_MULT
+        : Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, gainLock, trailFloor);
+      if (price <= stop) return { reason: poolOwns ? "profit_lock" : "profit_trail", fraction: 1 };
     }
   } else {
     // Not yet in profit — the pre-profit hard stop is the only floor.
