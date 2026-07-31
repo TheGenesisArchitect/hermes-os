@@ -3066,10 +3066,20 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
       if (upl > 0) green.push({ position, market: { ...m, priceUsd: px }, upl });
     }
     const greenUpl = green.reduce((s, g) => s + g.upl, 0);
-    if (green.length > 0 && (manualHarvest || greenUpl >= cfg.BASKET_HARVEST_USD)) {
+    // THE BAR SCALES WITH THE BOOK. `upl` is measured on qtyRemaining, so the
+    // basis must be too — after the ladder banks, a position's runner is a
+    // fraction of its original size and an absolute bar becomes unreachable.
+    const openBasis = open.reduce((s, p) => {
+      const orig = n(p.qtyTokens);
+      return s + (orig > 0 ? n(p.sizeUsd) * (n(p.qtyRemaining) / orig) : 0);
+    }, 0);
+    const bar = Math.max(cfg.BASKET_HARVEST_MIN_USD, openBasis * cfg.BASKET_HARVEST_FRAC);
+    if (green.length > 0 && (manualHarvest || greenUpl >= bar || greenUpl >= cfg.BASKET_HARVEST_USD)) {
       await audit("basket_harvest", {
         positions: green.length,
         greenUpl,
+        bar,
+        openBasis,
         manual: manualHarvest,
         skippedUnsellable: skipped.length,
         skippedMints: skipped.slice(0, 10),

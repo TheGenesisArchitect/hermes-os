@@ -2981,8 +2981,18 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
   // that already fired, and only over genome-owned rows.
   if (cfg.BASKET_HARVEST_ENABLED && liveGreens.length > 0) {
     const total = liveGreens.reduce((s, g) => s + g.upl, 0);
-    if (total >= cfg.BASKET_HARVEST_USD) {
-      await audit("live_basket_harvest", { positions: liveGreens.length, greenUpl: total });
+    // SCALED BAR (2026-07-31): the absolute $30 made this rule mathematically
+    // DEAD on live — six $2.50 tickets is $15 of exposure, which can never show
+    // $30 of green. The best-capturing mechanism in the book (97% of peak on
+    // paper) had therefore never once fired here. The bar is now a fraction of
+    // live's own open cost basis, so it scales with the wallet.
+    const liveBasis = rows.reduce((s, lp) => {
+      const orig = n(lp.qtyTokens);
+      return s + (orig > 0 ? n(lp.sizeUsd) * (n(lp.qtyRemaining) / orig) : 0);
+    }, 0);
+    const bar = Math.max(cfg.BASKET_HARVEST_MIN_USD, liveBasis * cfg.BASKET_HARVEST_FRAC);
+    if (total >= bar || total >= cfg.BASKET_HARVEST_USD) {
+      await audit("live_basket_harvest", { positions: liveGreens.length, greenUpl: total, bar, liveBasis });
       console.log(
         `💰 LIVE BASKET HARVEST — ${liveGreens.length} green positions net +$${total.toFixed(2)} → banking all`,
       );

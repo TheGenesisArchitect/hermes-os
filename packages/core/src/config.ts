@@ -367,7 +367,24 @@ const envSchema = z.object({
     .string()
     .default("true")
     .transform((v) => v !== "false"),
-  BASKET_HARVEST_USD: z.coerce.number().default(30), // net unrealized gain across the open book that triggers a full green sweep
+  // ── SCALED TO THE BOOK (2026-07-31) ──────────────────────────────────────
+  // The $30 ABSOLUTE bar was the defect. Measured over 10d: the open book
+  // averages 1.55 positions and $8.71 of remaining cost basis, so $30 is
+  // **344% of the entire book** — it required the book to more than triple
+  // before a portfolio rule could fire. Result: 43 fires in 10d of which 30
+  // were the OPERATOR clicking harvest manually; only 13 were automatic, and
+  // every one of those was a single position up $30+ on its runner, not a
+  // basket at all. On live it is worse than rare, it is impossible: 6 × $2.50
+  // = $15 of exposure can never show $30 of green.
+  //
+  // The threshold is now a FRACTION of the open book's remaining cost basis,
+  // calibrated to the operator's own 30 manual harvests — median $2.82 green
+  // on a $6.31 book = ~45% of basis. That is a hand-executed rule with 30
+  // samples; we are encoding it, not inventing one. Scales to any wallet size,
+  // which is what makes it reachable on the live lane at all.
+  BASKET_HARVEST_FRAC: z.coerce.number().default(0.40), // green ≥ this × open remaining cost basis
+  BASKET_HARVEST_MIN_USD: z.coerce.number().default(1.0), // fee-viability floor on a tiny book
+  BASKET_HARVEST_USD: z.coerce.number().default(30), // legacy absolute; now an OR-ceiling, never the only path
   // Absolute-dollar profit arm. On small positions a +15% arm is slow — a $17.50
   // bet has to move +15% before anything is protected. This arms the "never
   // close red" floor the moment a position has been up this many DOLLARS, so the
