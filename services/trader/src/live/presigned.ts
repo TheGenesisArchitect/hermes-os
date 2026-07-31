@@ -141,9 +141,34 @@ export async function chamberExit(
 export async function fireChambered(
   cfg: HermesConfig,
   positionId: number,
+  liveRaw?: bigint,
 ): Promise<{ signature: string; landMs: number; qtyRaw: bigint; provider: string } | null> {
   const round = chambers.get(positionId);
   if (!round) return null;
+  // ── STALE-QUANTITY GUARD (2026-07-31) ────────────────────────────────────
+  // The round is signed for the balance AT CHAMBER TIME (99.5% of it). Every
+  // partial bank since — a TP rung, a basket sweep — leaves us holding less
+  // than the round tries to sell, and an over-sized swap fails on-chain. That
+  // used to be rare; two ships tonight made it common (TP2_CUM_SELL 0.80→0.55
+  // leaves a 45% runner, and basket_harvest now fires on ~27% of closes), and
+  // the re-chamber after a partial is a fire-and-forget `void` with a network
+  // round-trip inside it, so a protective exit can easily arrive first.
+  //
+  // Firing a stale round is not merely wasted — it burns the flee window on a
+  // transaction that cannot land while the pool drains. Refuse and let the
+  // caller take the fallback path, which re-quotes against the real balance.
+  // This is what makes "the sniper can only be faster, never worse" true
+  // rather than aspirational.
+  if (liveRaw != null) {
+    const lo = (liveRaw * 98n) / 100n; // the round should be ~99.5% of held
+    if (round.qtyRaw > liveRaw || round.qtyRaw < lo) {
+      console.warn(
+        `🎯 sniper: STALE round for #${positionId} — chambered ${round.qtyRaw} vs held ${liveRaw}; refusing, fallback re-quotes`,
+      );
+      releaseChamber(positionId);
+      return null;
+    }
+  }
   if (Date.now() - round.builtAt > CHAMBER_MAX_AGE_MS) {
     // stale round: still VALID (nonce never expires) but the route may have
     // rotted — fire it anyway (fastest option), fallback covers a miss.

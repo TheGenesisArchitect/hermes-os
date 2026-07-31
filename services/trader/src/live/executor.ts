@@ -2153,7 +2153,9 @@ async function liveSellPosition(
     // in front of it.
     let res: Awaited<ReturnType<typeof executeSwap>> | null = null;
     if (cfg.LIVE_PRESIGNED_EXITS && isProtective && rawSell === raw) {
-      const fired = await fireChambered(cfg, position.id);
+      // `raw` is the balance just read from chain — the guard needs it to
+      // reject a round signed against a pre-bank quantity.
+      const fired = await fireChambered(cfg, position.id, raw);
       if (fired) {
         usedProvider = `sniper:${fired.provider}`;
         res = await parseSettledSwap(cfg, fired.signature, WSOL_MINT, fired.landMs);
@@ -3026,10 +3028,10 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
     // $30 of green. The best-capturing mechanism in the book (97% of peak on
     // paper) had therefore never once fired here. The bar is now a fraction of
     // live's own open cost basis, so it scales with the wallet.
-    const liveBasis = rows.reduce((s, lp) => {
-      const orig = n(lp.qtyTokens);
-      return s + (orig > 0 ? n(lp.sizeUsd) * (n(lp.qtyRemaining) / orig) : 0);
-    }, 0);
+    // ORIGINAL deployed basis, not remaining — see the paper-lane note. Using
+    // the remainder made every banked rung lower the bar that governs the
+    // runner, so the rule swept hardest exactly where it had already won.
+    const liveBasis = rows.reduce((s, lp) => s + n(lp.sizeUsd), 0);
     const bar = Math.max(cfg.BASKET_HARVEST_MIN_USD, liveBasis * cfg.BASKET_HARVEST_FRAC);
     if (total >= bar || total >= cfg.BASKET_HARVEST_USD) {
       await audit("live_basket_harvest", { positions: liveGreens.length, greenUpl: total, bar, liveBasis });
