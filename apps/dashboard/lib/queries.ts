@@ -3073,12 +3073,25 @@ export interface ControlTerminalView {
   regime: RegimeState | null;
   updatedAt: number | null;
   groups: { group: OverrideGroup; label: string; knobs: ControlKnobView[] }[];
-  // The REAL money that hits the next trade, so the book never lies again. Base
-  // is the size knob; the off-hours throttle applies now if we're off-prime;
-  // per-candidate risk (speculative→clean) and quality then modulate, so the
-  // actual bet lands in [perTradeLo, perTradeHi].
+  // The REAL money that hits the next trade, so the book never lies again.
+  // A routed entry sizes as bankroll × MANDATE_AGG_FRAC ÷ MANDATE_SLOTS (the
+  // even slot), and a sensor probe is that slot × PROBE_SLOT_FRAC. Live runs
+  // the identical protocol against its own wallet balance. The legacy
+  // base/perTrade fields below describe PAPER_POSITION_USD, which sizes only
+  // unrouted rows — they are kept for the superseded dial, never the headline.
   sizing: {
-    base: number;
+    bankroll: number;
+    slotUsd: number; // bankroll × aggFrac ÷ slots — the even mandate ticket
+    probeUsd: number; // slotUsd × probeFrac — the sensor ticket
+    routedLo: number; // bankroll × POSITION_FRAC_MIN (pre-clamp)
+    routedHi: number; // bankroll × POSITION_FRAC_MAX (pre-clamp)
+    slots: number;
+    aggFrac: number;
+    probeFrac: number;
+    liveBalance: number;
+    liveSlotUsd: number; // same formula, live's own balance
+    liveFeeFloor: number; // LIVE_MIN_POSITION_USD — the backstop below the slot
+    base: number; // legacy PAPER_POSITION_USD — unrouted rows only
     offHoursMult: number;
     primeNow: boolean;
     sessionAdjusted: number; // base × (primeNow ? 1 : offHoursMult)
@@ -3113,12 +3126,43 @@ export async function getControlTerminal(): Promise<ControlTerminalView> {
     knobs: knobViews.filter((k) => k.group === group),
   }));
 
-  const base = resolved.PAPER_POSITION_USD.value;
+  // ── THE REAL SIZING SURFACE (2026-07-31) ─────────────────────────────────
+  // This block used to headline PAPER_POSITION_USD as "next trade size". That
+  // knob sizes NOTHING on a routed position — paper.ts reads it only in the
+  // `conv ? … : …` legacy branch — so the terminal was reporting $38.24 while
+  // routed entries filled at $2.87. The terminal now computes what the trader
+  // actually computes: the compounding bankroll, the mandate slot, and the
+  // probe ticket, from the same knobs (MANDATE_AGG_FRAC ÷ MANDATE_SLOTS, then
+  // PROBE_SLOT_FRAC). Any divergence between glass and book is now a bug in
+  // one formula rather than two formulas that were never the same.
+  const legacyBase = resolved.PAPER_POSITION_USD.value; // unrouted rows only
   const offHoursMult = resolved.OFF_HOURS_SIZE_MULT.value;
   const primeNow = cfg.PRIME_HOURS_UTC.has(new Date().getUTCHours());
-  const sessionAdjusted = base * (primeNow ? 1 : offHoursMult);
+  const sessionMult = primeNow ? 1 : offHoursMult;
+  // bankroll = base + everything realised since, the same compounding figure
+  // paperBankrollNow() feeds the sizer.
+  const [bk] = (await db.execute(sql`
+    SELECT coalesce(sum(realized_pnl_usd),0)::float AS s
+    FROM positions WHERE lane='paper' AND status='closed'`)) as unknown as { s: number }[];
+  const bankroll = Math.max(100, cfg.PAPER_BANKROLL_USD + Number(bk?.s ?? 0));
+  const aggFrac = resolved.MANDATE_AGG_FRAC.value;
+  const probeFrac = resolved.PROBE_SLOT_FRAC.value;
+  const slotUsd = (bankroll * aggFrac) / Math.max(1, cfg.MANDATE_SLOTS);
+  const probeUsd = slotUsd * probeFrac;
+  // LIVE runs the IDENTICAL protocol against its own wallet balance, so the
+  // terminal shows both slots side by side — if these two ever diverge in
+  // formula rather than in balance, that is the bug.
+  const [lb] = (await db.execute(sql`
+    SELECT equity_usd::float AS e FROM pnl_snapshots
+    WHERE lane='live' ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { e: number }[];
+  const liveBalance = Number(lb?.e ?? 0);
+  const liveSlotUsd = liveBalance > 0 ? (liveBalance * aggFrac) / Math.max(1, cfg.MANDATE_SLOTS) : 0;
+  // The pre-clamp routed range: bankroll × frac, floor(0★) to ceiling(2★).
+  const routedLo = bankroll * resolved.POSITION_FRAC_MIN.value * sessionMult;
+  const routedHi = bankroll * resolved.POSITION_FRAC_MAX.value * sessionMult;
   const riskFloor = cfg.RISK_SIZE_SPECULATIVE; // most-shrunk speculative candidate
   const qualityFloor = cfg.CONFIRM_QUALITY_SIZE_MULT; // fading-demand confirm
+  const sessionAdjusted = legacyBase * sessionMult;
 
   return {
     autoMode,
@@ -3126,7 +3170,21 @@ export async function getControlTerminal(): Promise<ControlTerminalView> {
     updatedAt: raw?.updatedAt ?? null,
     groups,
     sizing: {
-      base,
+      // what a routed trade ACTUALLY gets — this is the headline
+      bankroll: Number(bankroll.toFixed(2)),
+      slotUsd: Number(slotUsd.toFixed(2)),
+      probeUsd: Number(probeUsd.toFixed(2)),
+      routedLo: Number(routedLo.toFixed(2)),
+      routedHi: Number(routedHi.toFixed(2)),
+      slots: cfg.MANDATE_SLOTS,
+      aggFrac,
+      probeFrac,
+      // live, same protocol, its own balance
+      liveBalance: Number(liveBalance.toFixed(2)),
+      liveSlotUsd: Number(liveSlotUsd.toFixed(2)),
+      liveFeeFloor: cfg.LIVE_MIN_POSITION_USD,
+      // legacy chain, kept so the superseded dial can still show its own math
+      base: legacyBase,
       offHoursMult,
       primeNow,
       sessionAdjusted: Number(sessionAdjusted.toFixed(2)),

@@ -1562,7 +1562,39 @@ export async function maybeLiveBuy(
     // measured 18.3pp drag at $2 clips), at/above it the regime-scaled value
     // flows through un-inflated. Tickets scale with the Sizer too, capped by
     // the ticket ceiling and the pool-fraction bound.
+    // ── ONE PROTOCOL, TWO BALANCES (operator 2026-07-31: "Live should use the
+    // same protocol sized according to its own balance") ─────────────────────
+    // Paper clamps a PRECISION entry to an EVEN mandate slot —
+    // bankroll × MANDATE_AGG_FRAC ÷ MANDATE_SLOTS — so one trade can never
+    // destroy a basket. Live was sizing off the raw conviction fraction and
+    // only meeting the mandate at the fee floor, so the lanes were running two
+    // different position-sizing models against identical signals. Live now
+    // computes the same even slot against the WALLET BALANCE. Everything after
+    // this (fee-viable floor, ticket caps, exposure rails) is unchanged.
+    const mPrecision =
+      cfg.MANDATE_SIZING_ENABLED &&
+      sig != null &&
+      ((sig.signature !== "RUG_RISK" &&
+        sig.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) &&
+        Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) <= cfg.INFLOW_CEILING) ||
+        (cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
+          typeof sig.signature === "string" && sig.signature.startsWith("MOON") &&
+          !(sig.triggerMultiple != null && Number(sig.triggerMultiple) > cfg.CONVICTION_SEAT_MAX)));
+    const mandateSlotUsd = (bal.usd * cfg.MANDATE_AGG_FRAC) / Math.max(1, cfg.MANDATE_SLOTS);
     let usd = sized;
+    if (mPrecision && mandateSlotUsd > 0) {
+      const slotted = Math.min(mandateSlotUsd, Math.max(mandateSlotUsd, sized)); // even tickets, as paper
+      if (Math.abs(slotted - usd) > 0.005) {
+        await audit("live_mandate_size", {
+          mint,
+          from: Number(usd.toFixed(2)),
+          to: Number(slotted.toFixed(2)),
+          balanceUsd: Number(bal.usd.toFixed(2)),
+          reason: `even mandate slot — ${(cfg.MANDATE_AGG_FRAC * 100).toFixed(1)}% of $${bal.usd.toFixed(2)} balance ÷ ${cfg.MANDATE_SLOTS} slots (same protocol as paper, live's own balance)`,
+        });
+      }
+      usd = slotted;
+    }
     if (dbcTicket) {
       // FLOOR CLAMP (operator 2026-07-27): Math.max(1.0, sized) let a $1.70
       // sub-viable ticket through this door while the same afternoon three
@@ -1589,19 +1621,8 @@ export async function maybeLiveBuy(
       // model. A FULL-formula slot (strict crowd, measured in-envelope inflow,
       // conviction seat — all re-verified by the gates above) buys a fee-viable
       // ticket instead; everything else (recovered / RUG_RISK / unmeasured)
-      // still skips — probe-class stays paper.
-      const mPrecision =
-        cfg.MANDATE_SIZING_ENABLED &&
-        sig != null &&
-        // ENVELOPE PROMOTION (ratified 2026-07-25): strict not required — the
-        // crowd gate above already passed; measured in-envelope earns the slot.
-        ((sig.signature !== "RUG_RISK" &&
-          sig.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) &&
-          Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) <= cfg.INFLOW_CEILING) ||
-          // MOON SHOT slots buy the fee-viable ticket too — the shot is taken.
-          (cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
-            typeof sig.signature === "string" && sig.signature.startsWith("MOON") &&
-            !(sig.triggerMultiple != null && Number(sig.triggerMultiple) > cfg.CONVICTION_SEAT_MAX)));
+      // still skips — probe-class stays paper. (mPrecision is computed above,
+      // where the even mandate slot is applied — same predicate, one source.)
       if (mPrecision || subFloorTicket) {
         await audit("live_mandate_ticket", {
           mint,

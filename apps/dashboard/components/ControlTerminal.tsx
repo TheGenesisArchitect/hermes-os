@@ -150,11 +150,12 @@ export function ControlTerminal({ view }: { view: ControlTerminalView }) {
           <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 text-left" title={open ? "Collapse the dials" : "Open the dials"}>
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>{open ? "▾" : "▸"}</span>
             <div>
-              <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Next trade size</div>
+              <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>Next trade size · slot</div>
               <div className="flex items-baseline gap-1.5">
                 <span className="text-lg font-bold tabular" style={{ color: sizePinned ? "var(--status-warning)" : "var(--text-primary)" }}>
-                  {s.perTradeLo === s.perTradeHi ? money(s.perTradeHi) : `${money(s.perTradeLo)}–${money(s.perTradeHi)}`}
+                  {money(s.slotUsd)}
                 </span>
+                <span className="text-[10px] tabular" style={{ color: "var(--text-muted)" }}>probe {money(s.probeUsd)}</span>
                 {sizePinned && <span className="text-[9px] uppercase" style={{ color: "var(--status-warning)" }}>pinned</span>}
               </div>
             </div>
@@ -162,7 +163,29 @@ export function ControlTerminal({ view }: { view: ControlTerminalView }) {
 
           {/* the honest breakdown — no hidden haircut */}
           <div className="min-w-0 text-[11px] leading-tight tabular" style={{ color: "var(--text-secondary)" }}>
+            {/* THE REAL CHAIN — bankroll ÷ slots, then the probe fraction. This
+                replaced "$X base" off PAPER_POSITION_USD, which sizes nothing on
+                a routed entry (it read $38.24 while fills landed at $2.87). */}
             <div>
+              {money(s.bankroll)} bankroll × {(s.aggFrac * 100).toFixed(1)}% ÷ {s.slots} slots ={" "}
+              <b style={{ color: "var(--text-primary)" }}>{money(s.slotUsd)}</b>
+              {" · probe "}{(s.probeFrac * 100).toFixed(0)}% = {money(s.probeUsd)}
+            </div>
+            <div style={{ color: "var(--text-muted)" }}>
+              routed band {money(s.routedLo)}–{money(s.routedHi)} pre-clamp
+            </div>
+            {/* Same protocol, live's own balance. A divergence in FORMULA here
+                (rather than in balance) is a bug, and now it is visible. */}
+            <div style={{ color: "var(--text-secondary)" }}>
+              live {money(s.liveBalance)} balance ÷ {s.slots} ={" "}
+              <b style={{ color: "var(--text-primary)" }}>{money(s.liveSlotUsd)}</b>
+              {s.liveSlotUsd < s.liveFeeFloor && (
+                <span style={{ color: "var(--status-warning)" }}>
+                  {" "}→ fee floor {money(s.liveFeeFloor)}
+                </span>
+              )}
+            </div>
+            <div style={{ display: "none" }}>
               {money(s.base)} base
               {throttled ? (
                 <>

@@ -60,12 +60,22 @@ export interface OverrideKnob {
    * nothing is worse than no slider.
    */
   supersededBySignature?: boolean;
+  /**
+   * Set when SIGNATURE ROUTING owns this decision. A routed position sizes as
+   * `bankroll × frac(stars) × mults`, then clamps to the mandate slot — it never
+   * reads PAPER_POSITION_USD, which survives only for unrouted legacy rows. The
+   * terminal was still headlining that knob as "Next trade size" while every
+   * live trade was routed, so the number on the glass had no relationship to
+   * the number on the book (displayed $38.24 while entries filled at $2.87).
+   * Same rule as above: a dial that silently does nothing is worse than no dial.
+   */
+  supersededByRouting?: boolean;
 }
 
 // The exposed knobs, in dashboard display order. Bands are deliberately generous
 // enough to tune but tight enough to be safe (no $5,000 size, no 90% stop).
 export const OVERRIDE_KNOBS: OverrideKnob[] = [
-  { key: "PAPER_POSITION_USD", label: "Position size", hint: "base $/entry — off-hours throttle & per-candidate risk/quality apply on top", group: "size", unit: "$", min: 0.5, max: 200, step: 0.5 },
+  { key: "PAPER_POSITION_USD", label: "Position size (legacy)", hint: "unrouted rows only — routed entries size off Basket deploy ÷ slots against the live bankroll", group: "size", unit: "$", min: 0.5, max: 200, step: 0.5, supersededByRouting: true },
   { key: "OFF_HOURS_SIZE_MULT", label: "Off-hours throttle", hint: "× base size outside prime (18–23 UTC). 1.0 = full size off-hours (removes the probe cap)", group: "size", unit: "x", min: 0, max: 1, step: 0.05 },
   { key: "POSITION_FRAC_MIN", label: "Size floor", hint: "% of capital on a 0-star residual setup — the bottom of the policy range", group: "size", unit: "x", min: 0.001, max: 0.05, step: 0.001 },
   { key: "POSITION_FRAC_MAX", label: "Size ceiling", hint: "% of capital on a 2-star conviction setup — the top of the policy range", group: "size", unit: "x", min: 0.002, max: 0.15, step: 0.001 },
