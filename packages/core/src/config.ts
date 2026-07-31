@@ -1529,7 +1529,14 @@ const envSchema = z.object({
   // 1.05-1.30x wins 44.8% (rugs 35.7%) · 1.30x+ wins 71.2% (rugs 11.1%) ·
   // 2.0x+ went 18-for-18. Live requires the strong band; paper keeps trading
   // every band as the sensor that re-measures this table.
-  LIVE_MIN_INFLOW: z.coerce.number().default(1.3),
+  // 1.30 → 1.25 (operator word 2026-07-31: "set live entries to 1.25").
+  // This is the BINDING live entry line — LIVE_INFLOW_FLOOR (1.20) sits below
+  // it and never bound. Admitting 1.25-1.30 widens live's opportunity set into
+  // the band immediately under the measured-strong cell; the band table above
+  // is a 7d cut with the boundary drawn at 1.30, and the operator is buying
+  // coverage of the shoulder. Scoreboard: win% and rug% of live entries landing
+  // in [1.25,1.30) versus the 71.2%/11.1% the 1.30+ cell prints.
+  LIVE_MIN_INFLOW: z.coerce.number().default(1.25),
   // Pool-depth floor at live entry. BBC 616f (2026-07-22): a $3k dust pool
   // passed every SIGNAL gate mid-rug — live filled at the collapsed price and
   // never had a real way back out. Signals grade the trajectory; this grades

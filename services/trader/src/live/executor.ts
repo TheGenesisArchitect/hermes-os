@@ -1321,8 +1321,15 @@ export async function maybeLiveBuy(
       // +$3.64 in last night's refusal counterfactual. Scoreboard: live must
       // hold ≥4¢/$ over the first 30 fills, and the band mix must move off
       // 80% flat — if neither happens, it closes again on that evidence.
+      // THE STRONG LINE FOLLOWS THE ADMISSION LINE (operator 2026-07-31: "set
+      // live entries to 1.25 ... we should also be admitting the 1.30-2.05 band
+      // as well"). This was hardcoded 1.30 in three places while the admission
+      // band lived in LIVE_MIN_INFLOW — so lowering the band alone would have
+      // let the 1.25-1.30 shoulder past the gate and then denied it a seat,
+      // silently demoting the whole cohort to ticket size. The seat definition
+      // now tracks the operator's line.
       const strongSeat =
-        sig.liqGrowth != null && Number(sig.liqGrowth) >= 1.30 &&
+        sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.LIVE_MIN_INFLOW &&
         sig.triggerMultiple != null && sig.triggerMultiple <= 1.95;
       // SENSOR-SLICE OPENING (ratified 2026-07-27, sensor-slice-study.ts 7d/14d):
       // the "−$1.01/t" that closed the slice predates the F1 crowd gate — this
@@ -1333,10 +1340,10 @@ export async function maybeLiveBuy(
       // Without crowd-net the same cells run −10.2c/$ / 35% rug — the F1 gate
       // above is what makes this admission safe. Trigger >2.05 still declines.
       const sensorSeat =
-        sig.liqGrowth != null && Number(sig.liqGrowth) >= 1.30 &&
+        sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.LIVE_MIN_INFLOW &&
         sig.triggerMultiple != null && sig.triggerMultiple > 1.95 && sig.triggerMultiple <= 2.05;
       const sensorTicket =
-        sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) < 1.30 &&
+        sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) < cfg.LIVE_MIN_INFLOW &&
         sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && sig.triggerMultiple <= 2.05;
       if (sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && !strongSeat && !sensorSeat && !sensorTicket) {
         await audit("live_buy_skipped", {
