@@ -967,8 +967,40 @@ const envSchema = z.object({
   // signatures that we can Plug the Wallet right into"). Live trades ONLY
   // signatures whose MANAGEMENT already prints on paper (7d: BASE +$163,
   // RISER +$122, MOON_FAST +$51 improving post-ladder, MOON_VIOLENT +$29 at
-  // 31% capture — the best). RUG_RISK excluded (pays paper +$117 but IS the
-  // live drain class, −$47.60).
+  // 31% capture — the best).
+  //
+  // ── RUG_RISK ADMITTED (operator word 2026-07-31) ──────────────────────────
+  // Operator: "Even Rug Risk is not a risk when we are actually managing our
+  // trades properly… The term Rug and Risk hyperinflate your cautious posture."
+  // The name was doing the work, not the data. 7d paper, per dollar deployed:
+  //   MOON_VIOLENT 51.35%  19% rug   (allowed)
+  //   BASE          8.10%   8% rug   (allowed)
+  //   RISER         6.65%   6% rug   (allowed)
+  //   MOON_FAST     4.81%  35% rug   (allowed)
+  //   MOON_SLOW     3.03%  27% rug   (allowed)
+  //   RUG_RISK      3.01%  11% rug   ← BLOCKED, n=811, $3,197 deployed, +$96.09
+  //   MOON_STEADY  −0.27%  19% rug   (allowed — the only genome LOSING money)
+  // RUG_RISK carries the THIRD-LOWEST rug rate of the seven, under a third of
+  // MOON_FAST's, returns what MOON_SLOW returns, and produced ELEVEN 5×
+  // tokens — more than any other class. It is also the largest sample we own.
+  //
+  // The −$47.60 that convicted it was live P&L accumulated 07-21 → 07-29 with
+  // 13 write-offs across 86 positions (15%), and NOTHING since. Those
+  // write-offs are the execution class closed on 07-31: pumpportal routability,
+  // the exit latch, the sniper firing ahead of the quote, and user_cut /
+  // runner_timeout finally classified protective. A conviction expires with
+  // its cause. Scoreboard: live RUG_RISK write-off rate must stay near paper's
+  // 11%, not the 15% the old execution produced.
+  //
+  // HONEST SCOPE OF THIS LINE: adding RUG_RISK here does NOT by itself admit
+  // the class. `profileOf('RUG_RISK').trade === false` is a separate and
+  // EARLIER gate, and the qualified cell already has its own door
+  // (RUGRISK_FORMULA_ROUTE, crowd-PASS + in-envelope). That door is not the
+  // binding constraint either: on 2026-07-31, 17 candidates passed it and
+  // ZERO became live fills — 4 died on the 55% buy-share floor at 52-54%,
+  // 1 on the pool-depth floor, and TWELVE left no audit row at all. The
+  // allowlist entry is here for consistency; the real blocker is downstream
+  // and the silent declines are a defect (every live decision must carry a row).
   //
   // ── MOON_STEADY + MOON_SLOW ADMITTED (operator word 2026-07-31) ───────────
   // They were benched as "genome-broken" on a CAPTURE measurement (m·steady
@@ -983,7 +1015,7 @@ const envSchema = z.object({
   // are already inside LIQUID_WINDOW_GENOMES, so they arrive with the pool
   // release attached rather than the price trail that broke them.
   // Scoreboard: capture% on these two must beat the 16%/24% booked baseline.
-  LIVE_SIGNATURE_ALLOWLIST: z.string().default("BASE,RISER,MOON_FAST,MOON_VIOLENT,MOON_STEADY,MOON_SLOW"),
+  LIVE_SIGNATURE_ALLOWLIST: z.string().default("BASE,RISER,MOON_FAST,MOON_VIOLENT,MOON_STEADY,MOON_SLOW,RUG_RISK"),
   // THE RECOVERY CLIFF — RE-MEASURED IN $2k BINS (operator "Ship the $13k
   // floor", 2026-07-29). The original $16k came from a coarse study (>$12k =
   // 95%) plus a −25% drain assumption stacked on top. The fine curve over 152
