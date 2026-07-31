@@ -2887,7 +2887,14 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
   await refreshAutoFarm(cfg); // keep the adaptive farm list current (no-op inside refresh window)
   await scanFamilyVelocityProbes(cfg);
   const open = await db.select().from(positions).where(and(eq(positions.status, "open"), eq(positions.lane, "paper")));
-  pruneRipeClock(new Set(open.map((p) => p.id)));
+  // Prune against BOTH lanes' open books, not just paper's. decideExit is the
+  // shared genome, so its ripe clock and pool-peak maps hold LIVE position ids
+  // too — pruning on paper ids alone deleted a live position's pool peak on
+  // every tick, re-seeding the liquid window's trailing stop at the current
+  // (possibly already-declined) pool and silently disarming it on the flagship
+  // lane. Cheap query; correctness of the shared genome depends on it.
+  const openAll = await db.select({ id: positions.id }).from(positions).where(eq(positions.status, "open"));
+  pruneRipeClock(new Set(openAll.map((p) => p.id)));
   // P1: keep the ws pool watcher subscribed to exactly the open book (both
   // lanes — a live twin shares the paper mint). Fail-open: an empty pool
   // address just means no telemetry for that mint.

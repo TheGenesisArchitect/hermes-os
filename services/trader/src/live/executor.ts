@@ -1979,6 +1979,22 @@ const sellBackoff = new Map<number, { fails: number; holdouts?: number; nextAtte
 // that reject a position's sell build are excluded on subsequent attempts, so
 // the retry machinery reaches the venues that CAN exit it. Cleared on success.
 const sellExclude = new Map<number, string[]>();
+// ── THE EXIT LATCH (FLAPDOGE −$2.50 → −$118.66/10d write-offs, 2026-07-31) ──
+// A commanded protective exit used to get exactly ONE attempt. The manage loop
+// re-derives the exit from decideExit every tick, so when a floor_45 sell failed
+// on a venue reject the position went DORMANT: price ticked back above the floor,
+// decideExit stopped returning a reason, and nothing retried. FLAPDOGE sat 12
+// minutes between its failed floor_45 and the runner_timeout that finally wrote
+// it off at a FULL −$2.50 — the floor fired correctly and the book still took a
+// −100%. A protective exit is a DECISION, not a suggestion: once commanded, the
+// position stays commanded until it sells or writes off, and decideExit's opinion
+// on later ticks cannot cancel it. This is what makes the −45% standard a rail.
+interface ExitLatch { reason: string; fraction: number; slippageBps?: number; since: number }
+const exitLatch = new Map<number, ExitLatch>();
+/** Terminal exits that must complete once commanded. Opportunistic exits
+ *  (profit_trail, liquid_window, take_profit) are deliberately NOT latched — if
+ *  one fails and price recovers, continuing to ride is the correct outcome. */
+const LATCHING_EXIT = /stop|catastrophe|rug|sweep|mirror_cut|unsellable|depth_collapse|drain_guard|floor_45|user_cut|runner_timeout/i;
 const SELL_BACKOFF_BASE_MS = 5_000;
 const SELL_BACKOFF_MAX_MS = 300_000;
 // A take-profit that reverts on tight tolerance retries on a FLAT short fuse, not
@@ -2009,6 +2025,11 @@ async function liveSellPosition(
   // between: they fire while price pulls away, so landing beats price.
   const isProtective = /stop|catastrophe|rug|sweep|mirror_cut|unsellable|depth_collapse|drain_guard|floor_45/i.test(reason);
   const isTakeProfit = !isProtective && /take_profit/i.test(reason);
+  // Latch the intent BEFORE the attempt, not in the catch: a throw anywhere in
+  // the body (RPC read, quote, build, send) must leave the exit still commanded.
+  // Full exits only — a partial rung that misses is not a position in trouble.
+  if (fraction >= 0.999 && LATCHING_EXIT.test(reason) && !exitLatch.has(position.id))
+    exitLatch.set(position.id, { reason, fraction, slippageBps, since: Date.now() });
   try {
     const { PublicKey } = await import("@solana/web3.js");
     const resp = await rpcPool(cfg).read((c) =>
@@ -2251,11 +2272,13 @@ async function liveSellPosition(
     if (closing) void closeEmptyAtas(cfg, resp.value.map((v) => v.pubkey), position.mint);
     sellBackoff.delete(position.id); // it sold — clear any accumulated penalty
     sellExclude.delete(position.id);
+    if (closing) exitLatch.delete(position.id); // the commanded exit completed
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     // Venue build-rejects poison this position's route — exclude the provider
     // so the NEXT retry quotes elsewhere instead of dying on the same 400.
+    let routePoisoned = false;
     if (/build 400|no .*pool|Virtual pool|not tradable|NO_ROUTES/i.test(msg)) {
       const ex = sellExclude.get(position.id) ?? [];
       // Exclude the provider this attempt actually used; fall back to the
@@ -2264,6 +2287,7 @@ async function liveSellPosition(
       if (prov && !ex.includes(prov)) {
         ex.push(prov);
         sellExclude.set(position.id, ex);
+        routePoisoned = true; // a NEW venue is now reachable — don't make it wait
       }
     }
     // A take-profit that reverts on tolerance is the tolerance DOING ITS JOB — the
@@ -2287,7 +2311,11 @@ async function liveSellPosition(
     // from the third fail so a truly stuck position still degrades itself.
     const prevEntry = sellBackoff.get(position.id);
     const fails = (prevEntry?.fails ?? 0) + 1;
-    const waitMs = fails <= 2 ? 2_000 : Math.min(SELL_BACKOFF_MAX_MS, SELL_BACKOFF_BASE_MS * 2 ** (fails - 3));
+    // A poisoned route is not a busy venue — the exclusion means the NEXT attempt
+    // quotes somewhere else entirely, so backing off just donates the window to
+    // the drain. Retry on the very next tick; the exponential fuse still governs
+    // repeated failures once every venue has had its turn.
+    const waitMs = routePoisoned ? 0 : fails <= 2 ? 2_000 : Math.min(SELL_BACKOFF_MAX_MS, SELL_BACKOFF_BASE_MS * 2 ** (fails - 3));
     sellBackoff.set(position.id, { fails, holdouts: prevEntry?.holdouts, nextAttemptMs: Date.now() + waitMs });
     // Audit only the first few failures; a stuck position must not spam the log.
     if (fails <= 3)
@@ -2319,6 +2347,7 @@ async function liveSellPosition(
         .where(and(eq(positions.id, position.id), eq(positions.status, "open")));
       await audit("live_unsellable_writeoff", { positionId: position.id, mint: position.mint, ageMin: Math.round(ageMin), bookedLoss: -remCost, error: msg });
       releaseChamber(position.id); // writeoff frees the nonce too
+      exitLatch.delete(position.id); // terminal — the position is closed
       console.error(`🪦 LIVE WRITE-OFF ${short(position.mint)} — unsellable after ${ageMin.toFixed(0)}min, booked −$${remCost.toFixed(2)}`);
       sellBackoff.delete(position.id); // terminal — nothing left to retry
     }
@@ -2631,6 +2660,10 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
     .select()
     .from(positions)
     .where(and(eq(positions.lane, "live"), eq(positions.status, "open")));
+  // Drop latches for positions that left the open book by any other path (mirror
+  // sell, close request, recon) so the map tracks the book instead of growing.
+  const openIds = new Set(rows.map((r) => r.id));
+  for (const id of exitLatch.keys()) if (!openIds.has(id)) exitLatch.delete(id);
   if (rows.length === 0) return;
   const sol = (await solPriceUsd(cfg)) ?? 0;
   if (sol <= 0) return; // no SOL price → can't value; skip rather than risk a false read
@@ -2860,6 +2893,18 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       // API, so decideExit is fed a BETTER price than paper gets, not a worse
       // one. Imported lazily because paper.ts imports this module — a top-level
       // import would close the cycle.
+      // ── THE LATCH HOLDS (2026-07-31) ────────────────────────────────────
+      // A protective exit already commanded on this position outranks anything
+      // decideExit has to say now. Retry it until it sells or writes off — the
+      // sell self-throttles on its own backoff, so this is free when cooling.
+      const latched = exitLatch.get(lp.id);
+      if (latched) {
+        console.log(
+          `🔒 LIVE LATCH ${short(lp.mint)} — ${latched.reason} still commanded (${Math.round((Date.now() - latched.since) / 1000)}s), retrying the exit`,
+        );
+        await liveSellPosition(cfg, lp, latched.fraction, latched.reason, latched.slippageBps);
+        continue;
+      }
       if (lp.signature) {
         const { decideExit } = await import("../paper.js");
         const entry = Number(lp.entryPriceUsd) || 0;
