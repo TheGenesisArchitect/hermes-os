@@ -2750,26 +2750,72 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
   const { PublicKey } = await import("@solana/web3.js");
   // Greens collected across the pass for the basket harvest below.
   const liveGreens: { lp: (typeof rows)[number]; upl: number }[] = [];
+  // ── PHASE 1: VALUE THE WHOLE BOOK IN PARALLEL (2026-07-31) ────────────────
+  // This loop was fully serial: every position awaited an RPC balance read
+  // (~400ms) and then a Jupiter sell quote (~500ms) before the next one began.
+  // At four positions that is ~4s per pass on top of the 2s tick, and it is
+  // exactly what the tape showed — live decided on marks averaging EIGHT
+  // seconds old while paper, which batches one fetchTokenMarkets call for its
+  // whole book, decided on two. Eight seconds of staleness, then another
+  // 2.5-13.5s to land, on tokens that round-trip in twenty-five.
+  //
+  // Valuation is read-only and independent per position, so it parallelises
+  // safely. The DECISION loop below stays strictly serial — nonce contention,
+  // the in-flight claim and the double-sell guards all depend on that.
+  const valued = new Map<number, { raw: bigint; value: number | null; impliedLiq: number | null }>();
+  await Promise.all(
+    rows.map(async (lp) => {
+      try {
+        const r = await rpcPool(cfg).read((c) =>
+          c.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(lp.mint) }),
+        );
+        let raw0 = 0n;
+        for (const { account } of r.value) {
+          const amt = (account.data as { parsed?: { info?: { tokenAmount?: { amount: string } } } }).parsed?.info?.tokenAmount;
+          if (amt) raw0 += BigInt(amt.amount);
+        }
+        let value0: number | null = null;
+        let liq0: number | null = null;
+        if (raw0 > 0n) {
+          try {
+            const j = await exitJup.quote(cfg, lp.mint, WSOL_MINT, raw0, cfg.LIVE_STOP_SLIPPAGE_BPS);
+            const outSol = Number(j.outAmount) / 1e9;
+            if (outSol > 0) value0 = outSol * sol;
+            const impact = Number(j.priceImpactPct);
+            if (value0 != null && Number.isFinite(impact) && impact > 0 && impact < 100) {
+              liq0 = Math.max(0, 2 * value0 * (100 / impact - 1));
+            }
+          } catch {
+            /* no live sell route — handled below exactly as before */
+          }
+        }
+        valued.set(lp.id, { raw: raw0, value: value0, impliedLiq: liq0 });
+      } catch {
+        /* leave unset — the serial pass re-reads this one on its own */
+      }
+    }),
+  );
+
   for (const lp of rows) {
     try {
-      const resp = await rpcPool(cfg).read((c) =>
-        c.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(lp.mint) }),
-      );
-      let raw = 0n;
-      for (const { account } of resp.value) {
-        const amt = (account.data as { parsed?: { info?: { tokenAmount?: { amount: string } } } }).parsed?.info?.tokenAmount;
-        if (amt) raw += BigInt(amt.amount);
-      }
-      let decimals = 0;
-      for (const { account } of resp.value) {
-        const d = (account.data as { parsed?: { info?: { tokenAmount?: { decimals?: number } } } }).parsed?.info?.tokenAmount?.decimals;
-        if (typeof d === "number") decimals = d;
+      const pre = valued.get(lp.id);
+      let raw = pre?.raw ?? 0n;
+      if (!pre) {
+        // Pre-pass missed this row (RPC hiccup) — fall back to the original
+        // serial read so a transient failure never silently skips a position.
+        const resp = await rpcPool(cfg).read((c) =>
+          c.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PublicKey(lp.mint) }),
+        );
+        raw = 0n;
+        for (const { account } of resp.value) {
+          const amt = (account.data as { parsed?: { info?: { tokenAmount?: { amount: string } } } }).parsed?.info?.tokenAmount;
+          if (amt) raw += BigInt(amt.amount);
+        }
       }
       if (raw <= 0n) {
         await liveSellPosition(cfg, lp, 1, "live_guard_empty"); // closes the ledger honestly
         continue;
       }
-      void decimals;
       // Value by a REAL SELL QUOTE — what we'd ACTUALLY get selling right now — not
       // the price-API mark. The mark can glitch stale/low and fire a FALSE stop on a
       // healthy position (SIGNAL: the mark read −28% but the real sell was breakeven,
@@ -2796,16 +2842,22 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       // so the drain shows up here the moment it happens rather than whenever
       // the aggregator notices.
       let impliedLiq: number | null = null;
-      try {
-        const j = await exitJup.quote(cfg, lp.mint, WSOL_MINT, raw, cfg.LIVE_STOP_SLIPPAGE_BPS);
-        const outSol = Number(j.outAmount) / 1e9;
-        if (outSol > 0) value = outSol * sol;
-        const impact = Number(j.priceImpactPct);
-        if (value != null && Number.isFinite(impact) && impact > 0 && impact < 100) {
-          impliedLiq = Math.max(0, 2 * value * (100 / impact - 1));
+      if (pre) {
+        // Taken from the parallel pre-pass — same quote, ~2s old instead of ~8s.
+        value = pre.value;
+        impliedLiq = pre.impliedLiq;
+      } else {
+        try {
+          const j = await exitJup.quote(cfg, lp.mint, WSOL_MINT, raw, cfg.LIVE_STOP_SLIPPAGE_BPS);
+          const outSol = Number(j.outAmount) / 1e9;
+          if (outSol > 0) value = outSol * sol;
+          const impact = Number(j.priceImpactPct);
+          if (value != null && Number.isFinite(impact) && impact > 0 && impact < 100) {
+            impliedLiq = Math.max(0, 2 * value * (100 / impact - 1));
+          }
+        } catch {
+          /* no live sell route — the sweep/mirror handles it, don't false-cut here */
         }
-      } catch {
-        /* no live sell route — the sweep/mirror handles it, don't false-cut here */
       }
       // FEED-MARK FALLBACK, routed rows only. Jupiter is the ONLY provider that
       // can VALUE a position (PumpSwap and PumpPortal are build-only,
