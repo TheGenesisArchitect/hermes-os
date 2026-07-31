@@ -1054,8 +1054,16 @@ const envSchema = z.object({
   // pool grows, and a 20% fall from an elevated peak still leaves a deep
   // market. Scoped to the three genomes the replay covered.
   LIQUID_WINDOW_ENABLED: z.coerce.boolean().default(true),
-  LIQUID_WINDOW_POOL_FRAC: z.coerce.number().default(0.80),
-  LIQUID_WINDOW_GENOMES: z.string().default("MOON_STEADY,MOON_SLOW,RISER"),
+  // 0.70 IS THE SWEPT OPTIMUM, and the curve genuinely turns there — it is not
+  // "looser is always better" (moon-sweep.ts, 2,388 positions, 10d, all
+  // genomes): 85% $1,578 · 80% $4,989 · **70% $7,855** · 60% $7,820 ·
+  // 50% $7,691 · 40% $7,418 · 30% $6,992, against $795 booked. The prior 0.80
+  // shipped from a grid that stopped AT 0.70 while still improving.
+  LIQUID_WINDOW_POOL_FRAC: z.coerce.number().default(0.70),
+  // Empty or "*" = ALL genomes. The ownership harness covered every genome and
+  // the result did not depend on the class; scoping this to three was an
+  // artifact of which replay had been run, not a finding.
+  LIQUID_WINDOW_GENOMES: z.string().default("*"),
   BASIS_FIRST_CONVEX_SKIP: z.coerce.boolean().default(true),
   BASIS_FIRST_CONVEX_TRIGGER: z.coerce.number().default(1.65),
   BASIS_FIRST_WINDOW_SEC: z.coerce.number().default(240),

@@ -14,11 +14,45 @@
  * RPC pool (cached).
  */
 import { PublicKey } from "@solana/web3.js";
-import type { HermesConfig } from "@hermes/core";
-import type { QuoteOpts, SwapProvider, SwapQuote } from "./provider.js";
+import { resilientFetch, type HermesConfig } from "@hermes/core";
+import { NoRouteError, type QuoteOpts, type SwapProvider, type SwapQuote } from "./provider.js";
 import { WSOL_MINT } from "./jupiterHosted.js";
 import { rpcPool } from "../rpc/pool.js";
 import { swapFetch } from "./fetchRetry.js";
+
+// ── ROUTABILITY PRE-CHECK (operator "we know our trades will close", 2026-07-31)
+// `pumpportal build 400` was the #1 sell failure over 7 days — 24 of them, 2.7×
+// the next cause, and the mechanism behind FLAPDOGE's full −$2.50 write-off on a
+// meteora-damm-v2 token. The asymmetry: EVERY other direct provider resolves its
+// pool inside quote() and throws NoRouteError so the router fails over, but
+// PumpPortal accepted any mint and only discovered it could not build at
+// buildSwapTx time — and since buildSwapTx routes back to whichever provider
+// quoted, there was no failover left. A non-pump token therefore reached the
+// last-resort provider and DIED there, while Meteora sat ready to build it.
+//
+// PumpPortal serves pump.fun-family pools only, so DexScreener's dexId is a
+// sufficient and cheap test. Refuse with NoRouteError (never trips the breaker)
+// when we have positive evidence the token is not pump-family; fail OPEN when we
+// have no data at all, so a DexScreener outage cannot delete our last-resort
+// route for tokens it genuinely can sell.
+const routable = new Map<string, { ok: boolean; at: number }>();
+const ROUTABLE_TTL_MS = 10 * 60_000;
+async function pumpRoutable(mint: string): Promise<boolean> {
+  const hit = routable.get(mint);
+  if (hit && Date.now() - hit.at < ROUTABLE_TTL_MS) return hit.ok;
+  try {
+    const res = await resilientFetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, { timeoutMs: 5_000 });
+    if (!res.ok) return true; // no data → fail open
+    const body = (await res.json()) as { pairs?: { dexId?: string }[] };
+    const pairs = body.pairs ?? [];
+    if (pairs.length === 0) return true; // unindexed (brand-new curve) → fail open
+    const ok = pairs.some((p) => (p.dexId ?? "").toLowerCase().includes("pump"));
+    routable.set(mint, { ok, at: Date.now() });
+    return ok;
+  } catch {
+    return true; // network failure → fail open, never delete the last resort
+  }
+}
 
 const decimalsCache = new Map<string, number>();
 async function mintDecimals(cfg: HermesConfig, mint: string): Promise<number> {
@@ -59,6 +93,11 @@ export class PumpPortalProvider implements SwapProvider {
     // call throws there; there's no provider after PumpPortal to fail over to.
     const isBuy = inputMint === WSOL_MINT;
     const mint = isBuy ? outputMint : inputMint;
+    // Resolve routability HERE so the router can still fail over — the whole
+    // point of the seam. Throwing at build time strands the position instead.
+    if (!(await pumpRoutable(mint))) {
+      throw new NoRouteError(`not a pump-family pool: ${mint.slice(0, 8)}…`);
+    }
     const amount = isBuy ? Number(amountRaw) / 1e9 : Number(amountRaw) / 10 ** (await mintDecimals(cfg, mint));
     return {
       inputMint,

@@ -1702,16 +1702,38 @@ export function decideExit(
     return { reason: "floor_45", fraction: 1 };
   }
 
-  // ── THE LIQUID WINDOW (operator RATIFIED 2026-07-30, both lanes) ──────────
+  // ── POOL OWNERSHIP (operator "Ship to Both", 2026-07-31) ─────────────────
   // The ride ends when LIQUIDITY turns, not when price breathes. The stop
-  // trails the pool's own running peak, so it scales with the winner: 19×
-  // the booked price-trail result over 892 positions (replay above). Fires
-  // after the −45% floor (protective always wins) and before the price trail
-  // it replaces, on the genomes the replay covered.
+  // trails the pool's own running peak, so it scales with the winner.
+  //
+  // THE OWNERSHIP HARNESS (088b72b, 2,391 positions, 10d, all genomes, deaths
+  // in, floor binding) priced who should DECIDE, not just what band to use:
+  //   pool rule owns from entry  $7,856   ·  booked (actual stack)  $796
+  // and named the thief — the price trail owns 42% of the book and costs
+  // −$3,781 (993 positions, $991 booked vs $4,772 under pool ownership).
+  // The protective rails were exonerated: floor_45 +$10, hard_stop −$100.
+  // Ownership is MONOTONIC toward handing over sooner: no proof threshold
+  // beat giving the pool the position from entry, so there is no graduation.
+  //
+  // WHAT THIS SUPPRESSES: the CAPTURE exits only — ripe_sweep, runner_timeout,
+  // time_floor, fast_scratch, TP rungs, stale_take, moon_ratchet, profit_trail.
+  // Every PROTECTIVE rail still fires underneath: floor_45 and basis_first
+  // above, drain_guard_cut / hard_stop / never_armed_stop / the time and
+  // volume backstops below. The harness's $7,856 suppressed those too, so
+  // this deliberately books less than the ceiling — a position must always
+  // keep a way out, which is the whole point of the exercise.
+  //
+  // FAIL-SAFE: ownership requires a pool reading we actually trust AND an
+  // established peak (≥2 observations). Missing, zero, or first-sight
+  // liquidity hands the position straight back to the legacy stack rather
+  // than leaving it with no capture rule at all.
+  let poolOwns = false;
+  const genomeScope = cfg.LIQUID_WINDOW_GENOMES.trim();
   if (
     cfg.LIQUID_WINDOW_ENABLED &&
-    typeof position.signature === "string" &&
-    cfg.LIQUID_WINDOW_GENOMES.split(",").map((s) => s.trim()).includes(position.signature) &&
+    (genomeScope === "" || genomeScope === "*" ||
+      (typeof position.signature === "string" &&
+        genomeScope.split(",").map((s) => s.trim()).includes(position.signature))) &&
     market.liquidityUsd != null &&
     Number.isFinite(market.liquidityUsd) &&
     market.liquidityUsd > 0
@@ -1719,8 +1741,12 @@ export function decideExit(
     const seen = poolPeak.get(position.id) ?? 0;
     const pk = Math.max(seen, market.liquidityUsd);
     if (pk > seen) poolPeak.set(position.id, pk);
-    if (pk > 0 && market.liquidityUsd <= pk * cfg.LIQUID_WINDOW_POOL_FRAC) {
-      return { reason: "liquid_window", fraction: 1 };
+    if (seen > 0) {
+      // The pool is being watched and has a peak to trail — it owns the ride.
+      if (market.liquidityUsd <= pk * cfg.LIQUID_WINDOW_POOL_FRAC) {
+        return { reason: "liquid_window", fraction: 1 };
+      }
+      poolOwns = true;
     }
   }
 
@@ -1729,7 +1755,7 @@ export function decideExit(
   // faded to ≤0.90×peak, banks now — the monster-window capture mechanic
   // (+$196/+19% vs booked on 398 ripe greens; signature/hour scopes LOSE).
   // Peak clock is in-memory (restart re-learns within the ride — safe).
-  if (cfg.RIPE_SWEEP_ENABLED && entry > 0 && price > 0) {
+  if (!poolOwns && cfg.RIPE_SWEEP_ENABLED && entry > 0 && price > 0) {
     const mark = price / entry;
     const rec = ripeClock.get(position.id);
     if (!rec || mark > rec.peak) ripeClock.set(position.id, { peak: Math.max(mark, rec?.peak ?? 0), atMs: Date.now() });
@@ -1774,7 +1800,7 @@ export function decideExit(
   // decides itself inside the first fifteen minutes; holding a runner past ~1000s
   // is exposure without a thesis. The stall exit fires earlier when the position
   // stops making highs — this only catches one that keeps drifting sideways.
-  if (cfg.RUNNER_MAX_HOLD_SEC > 0 && ageSec >= cfg.RUNNER_MAX_HOLD_SEC) {
+  if (!poolOwns && cfg.RUNNER_MAX_HOLD_SEC > 0 && ageSec >= cfg.RUNNER_MAX_HOLD_SEC) {
     return { reason: "runner_timeout", fraction: 1 };
   }
 
@@ -1788,6 +1814,7 @@ export function decideExit(
   // above the floor is governed by the trail, which is strictly higher once the
   // move is real.
   if (
+    !poolOwns &&
     cfg.TIME_FLOOR_AT_SEC > 0 &&
     ageSec >= cfg.TIME_FLOOR_AT_SEC &&
     entry > 0 &&
@@ -1923,6 +1950,7 @@ export function decideExit(
     // still exists. A running tape (new highs) never triggers this, so the
     // moonshot runner keeps its leash; a 3-minutes-flat memecoin is done.
     if (
+      !poolOwns &&
       call &&
       cfg.STALE_LOCK_TICKS > 0 &&
       call.ticksSinceNewHigh >= cfg.STALE_LOCK_TICKS &&
@@ -2000,10 +2028,13 @@ export function decideExit(
       // Non-MOON classes keep the 1.02 floor; RISER keeps its trail.
       const isMoonClass = typeof position.signature === "string" && position.signature.startsWith("MOON");
       const stop = isMoonClass ? entry * msFloor : Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, entry * msFloor);
-      if (stop > 0 && price <= stop) return { reason: msFloor > 0 ? "moon_ratchet" : "profit_trail", fraction: 1 };
+      // POOL OWNERSHIP: the price trail is the measured thief (−$3,781 over
+      // 993 positions). When the pool is being watched it decides the ride's
+      // end; the trail only governs positions the pool rule cannot see.
+      if (!poolOwns && stop > 0 && price <= stop) return { reason: msFloor > 0 ? "moon_ratchet" : "profit_trail", fraction: 1 };
     } else {
       const stop = Math.max(entry * cfg.PROFIT_LOCK_FLOOR_MULT, gainLock, trailFloor);
-      if (price <= stop) return { reason: "profit_trail", fraction: 1 };
+      if (!poolOwns && price <= stop) return { reason: "profit_trail", fraction: 1 };
     }
   } else {
     // Not yet in profit — the pre-profit hard stop is the only floor.
