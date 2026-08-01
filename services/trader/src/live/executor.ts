@@ -2088,6 +2088,16 @@ async function liveSellPosition(
   if (!wallet) return false;
   const bo = sellBackoff.get(position.id);
   if (bo && Date.now() < bo.nextAttemptMs) return false; // cooling off — don't burn RPC
+  // COST-BASIS-FLOOR COOLDOWN — gates the ATTEMPT, not just its audit row.
+  // A refused sell stays latched, so without this the position re-attempts every
+  // 2s management cycle and each pass costs a balance read, a chambered fire
+  // (which reverts on its own minOut, at 3× priority fee, then sits in a 30s
+  // confirm loop stalling every other position) and a quote. That would trade
+  // "donate the inventory once" for "bleed priority fees forever". One attempt a
+  // minute is enough to catch a pool that recovers — the receipts show recovery
+  // happening over ~30 minutes, not seconds.
+  const fb = floorBlockAt.get(position.id);
+  if (fb && Date.now() - fb < 60_000) return false;
   // The provider THIS attempt actually quoted through — the failover exclusion
   // must name it exactly; router.lastRoute() is global state that the guard's
   // valuation quotes overwrite between a failure and its exclusion.
@@ -2299,17 +2309,16 @@ async function liveSellPosition(
           // fill that does land is compliant with the standard by construction.
           // Backoff is deliberately NOT bumped: escalating tolerance is exactly
           // the mechanism that broke the floor.
-          const last = floorBlockAt.get(position.id) ?? 0;
-          if (Date.now() - last > 60_000) {
-            floorBlockAt.set(position.id, Date.now());
-            await audit("live_fill_floor_block", {
-              positionId: position.id, mint: position.mint, reason,
-              basisUsd: +basisUsd.toFixed(4), floorUsd: +floorUsd.toFixed(4),
-              offeredUsd: +offeredUsd.toFixed(4),
-              offeredFrac: +(offeredUsd / basisUsd).toFixed(4),
-              provider: quote.provider,
-            });
-          }
+          // The cooldown at the top of liveSell gates the next ATTEMPT, so this
+          // audits once per attempt rather than once per 2s cycle.
+          floorBlockAt.set(position.id, Date.now());
+          await audit("live_fill_floor_block", {
+            positionId: position.id, mint: position.mint, reason,
+            basisUsd: +basisUsd.toFixed(4), floorUsd: +floorUsd.toFixed(4),
+            offeredUsd: +offeredUsd.toFixed(4),
+            offeredFrac: +(offeredUsd / basisUsd).toFixed(4),
+            provider: quote.provider,
+          });
           return false;
         }
         // (2) The pool CAN pay it. Cap the tolerance so slippage between quote
@@ -2320,15 +2329,26 @@ async function liveSellPosition(
         if (solPx > 0 && basisUsd > 0 && offeredUsd > 0) {
           const capBps = Math.floor((1 - floorUsd / offeredUsd) * 10_000);
           if (Number.isFinite(capBps) && capBps >= 0 && capBps < slip) {
-            quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, capBps, {
-              exclude: sellExclude.get(position.id),
-            });
-            usedProvider = quote.provider;
-            await audit("live_fill_floor_capped", {
-              positionId: position.id, mint: position.mint, reason,
-              slipWas: slip, slipNow: capBps, floorUsd: +floorUsd.toFixed(4),
-              offeredUsd: +offeredUsd.toFixed(4),
-            });
+            // Guarded: swapRouter.quote THROWS on a provider outage — that is the
+            // documented reason the sniper was moved in front of it. This sits
+            // inside the outer try, so an unguarded throw here would route to the
+            // catch and kill a sell we had already proven the pool can pay. On
+            // failure we keep the original quote: a fill at the wider tolerance
+            // beats no fill, and the refusal branch above already established
+            // that this route clears the floor.
+            try {
+              quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, capBps, {
+                exclude: sellExclude.get(position.id),
+              });
+              usedProvider = quote.provider;
+              await audit("live_fill_floor_capped", {
+                positionId: position.id, mint: position.mint, reason,
+                slipWas: slip, slipNow: capBps, floorUsd: +floorUsd.toFixed(4),
+                offeredUsd: +offeredUsd.toFixed(4),
+              });
+            } catch {
+              /* keep the original quote — see above */
+            }
           }
         }
       }

@@ -178,7 +178,11 @@ export async function chamberExit(
         FROM positions WHERE id = ${positionId}`)) as unknown as { sz: number; q0: number }[];
       const solPx = await fetchJupiterPrice(cfg.JUPITER_PRICE_URL, WSOL).catch(() => null);
       const outNow = Number(q.outAmount);
-      if (pos != null && pos.q0 > 0 && solPx != null && solPx > 0 && outNow > 0) {
+      // `decs > 0` is a REQUIRED guard, not defensive noise: a missing decimals
+      // read defaults to 0, which makes shareOfPos clamp to 1 and floors a
+      // partial exit against the FULL position basis — a floor several times too
+      // high, i.e. the exact failure this commit exists to remove.
+      if (pos != null && pos.q0 > 0 && decs > 0 && solPx != null && solPx > 0 && outNow > 0) {
         // Pro-rata: the round sells qtyRaw of the original qty_tokens, so it
         // must return at least that same share of 0.55 × the position's cost.
         const shareOfPos = Math.min(1, Number(qtyRaw) / 10 ** decs / pos.q0);
