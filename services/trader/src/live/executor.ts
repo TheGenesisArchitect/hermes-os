@@ -44,6 +44,9 @@ import { swapRouter } from "./swap/router.js";
 import { liveWallet } from "./wallet.js";
 import { chamberExit, fireChambered, releaseChamber, chamberAgeMs, rehydrateChambers } from "./presigned.js";
 import { persist as persistState, forget as forgetState, rehydrate as rehydrateState } from "./state.js";
+import {
+  LATCHING_EXIT, shouldPersistLatch, impactFraction, impliedLiquidityUsd, closeVerdict,
+} from "./invariants.js";
 
 // Exit pre-check probes — dedicated verifying providers (NOT the full router,
 // whose build-only PumpPortal would optimistically "pass" an unsellable token).
@@ -1632,7 +1635,13 @@ export async function maybeLiveBuy(
           from: Number(usd.toFixed(2)),
           to: Number(slotted.toFixed(2)),
           balanceUsd: Number(bal.usd.toFixed(2)),
-          reason: `even mandate slot — ${(cfg.MANDATE_AGG_FRAC * 100).toFixed(1)}% of $${bal.usd.toFixed(2)} balance ÷ ${cfg.MANDATE_SLOTS} slots (same protocol as paper, live's own balance)`,
+          // QTEA-010: this printed the PAPER mandate config (MANDATE_*) while the
+          // slot above is computed from the LIVE one (LIVE_MANDATE_*). Telemetry
+          // reported one configuration while a different one spent the money —
+          // straight through the "every dollar explainable" doctrine. The
+          // effective aggregate is stated too, because the $2.50 floor can widen
+          // it past LIVE_MANDATE_AGG_FRAC and that must be visible, not hidden.
+          reason: `even mandate slot — ${(cfg.LIVE_MANDATE_AGG_FRAC * 100).toFixed(1)}% of $${bal.usd.toFixed(2)} balance ÷ ${cfg.LIVE_MANDATE_SLOTS} slots = $${mandateSlotUsd.toFixed(2)}/slot (effective aggregate ${((mandateSlotUsd * cfg.LIVE_MANDATE_SLOTS / Math.max(1e-9, bal.usd)) * 100).toFixed(1)}%, floor-aware; same protocol as paper, live's own balance)`,
         });
       }
       usd = slotted;
@@ -1717,7 +1726,14 @@ export async function maybeLiveBuy(
     tGates = Date.now(); // every admission gate cleared — swap pipeline starts here
     let quote = await swapRouter.quote(cfg, WSOL_MINT, mint, lamports, cfg.LIVE_SLIPPAGE_BPS);
     tQuote = Date.now();
-    const impact = Math.abs(Number(quote.priceImpactPct ?? 0)) * 100;
+    // QTEA-004 canonical conversion: priceImpactPct is a FRACTION, so ×100 gives
+    // percentage points to compare against ENTRY_MAX_SLIPPAGE_PCT. This site was
+    // always right — it is the proof the field is a fraction, since reading it as
+    // percent here would reject every entry ever offered. Deliberately NOT routed
+    // through impactPct(): that returns null for ≥100% impact, which would turn a
+    // total-impact quote from "reject" into "zero impact".
+    const impactRaw = Math.abs(Number(quote.priceImpactPct ?? 0));
+    const impact = Number.isFinite(impactRaw) ? impactRaw * 100 : Number.POSITIVE_INFINITY;
     if (impact > cfg.ENTRY_MAX_SLIPPAGE_PCT) {
       await audit("live_buy_skipped", { mint, reason: `price impact ${impact.toFixed(1)}%` });
       return;
@@ -2069,7 +2085,10 @@ const floorBlockAt = new Map<number, number>();
 /** Terminal exits that must complete once commanded. Opportunistic exits
  *  (profit_trail, liquid_window, take_profit) are deliberately NOT latched — if
  *  one fails and price recovers, continuing to ride is the correct outcome. */
-const LATCHING_EXIT = /stop|catastrophe|rug|sweep|mirror_cut|unsellable|depth_collapse|drain_guard|floor_45|user_cut|runner_timeout/i;
+// LATCHING_EXIT, shouldPersistLatch, impactFraction, impliedLiquidityUsd and
+// closeVerdict now live in ./invariants.ts — pure, so invariants.test.ts can pin
+// them. See that file's header for the four QTEA defects this split exists to
+// prevent recurring.
 const SELL_BACKOFF_BASE_MS = 5_000;
 const SELL_BACKOFF_MAX_MS = 300_000;
 // A take-profit that reverts on tight tolerance retries on a FLAT short fuse, not
@@ -2128,9 +2147,21 @@ async function liveSellPosition(
   // Latch the intent BEFORE the attempt, not in the catch: a throw anywhere in
   // the body (RPC read, quote, build, send) must leave the exit still commanded.
   // Full exits only — a partial rung that misses is not a position in trouble.
-  if (fraction >= 0.999 && LATCHING_EXIT.test(reason) && !exitLatch.has(position.id))
-    exitLatch.set(position.id, { reason, fraction, slippageBps, since: Date.now() });
-    void persistState("latch", position.id, { reason, fraction, slippageBps, since: Date.now() });
+  // QTEA-001 (2026-08-01): the braces were MISSING. Only `exitLatch.set` was
+  // governed by the `if`; `persistState` ran on EVERY sell — partial TP rungs,
+  // profit_trail, liquid_window, and every retry of an already-latched exit.
+  // Those rows rehydrate on restart into a map the live manager consults BEFORE
+  // decideExit, so a partial bank could come back from a deploy as commanded
+  // terminal intent with a stale reason and a stale `since`. Caught by external
+  // audit; it had not yet fired only because there were no open live positions.
+  //
+  // Persistence is now AWAITED, not fire-and-forget: a commanded exit that the
+  // process forgets across a restart is the failure this state exists to prevent.
+  if (shouldPersistLatch({ fraction, reason, alreadyLatched: exitLatch.has(position.id) })) {
+    const latch = { reason, fraction, slippageBps, since: Date.now() };
+    exitLatch.set(position.id, latch);
+    await persistState("latch", position.id, latch);
+  }
   try {
     const { PublicKey } = await import("@solana/web3.js");
     const resp = await rpcPool(cfg).read((c) =>
@@ -2231,11 +2262,19 @@ async function liveSellPosition(
     // protective full exit is one sendRawTransaction with no network round-trip
     // in front of it.
     let res: Awaited<ReturnType<typeof executeSwap>> | null = null;
+    // QTEA-002: the quantity actually EMBEDDED in the settled transaction. The
+    // chamber signs for 99.5% of the balance (a dust margin against oversized-swap
+    // failures), so on every chambered fire this differs from `rawSell`. Booking
+    // `rawSell` recorded a 100% sale, allocated 100% of cost basis, understated
+    // the fill price by the same 0.5%, and closed a position that still held
+    // tokens. Defaults to the requested amount, which is exact on the fallback path.
+    let executedRaw = rawSell;
     if (cfg.LIVE_PRESIGNED_EXITS && isProtective && rawSell === raw) {
       // `raw` is the balance just read from chain — the guard needs it to
       // reject a round signed against a pre-bank quantity.
       const fired = await fireChambered(cfg, position.id, raw);
       if (fired) {
+        executedRaw = fired.qtyRaw; // QTEA-002 — settled quantity, not requested
         usedProvider = `sniper:${fired.provider}`;
         res = await parseSettledSwap(cfg, fired.signature, WSOL_MINT, fired.landMs);
         await audit("live_presigned_fired", {
@@ -2370,13 +2409,59 @@ async function liveSellPosition(
     }
     const sol = (await solPxP) ?? 0; // same in-flight fetch the floor used
     const proceedsUsd = res.outUi * sol;
-    const qtyUiSold = Number(rawSell) / 10 ** decimals;
+    // QTEA-002 — SETTLED quantity, not requested. On a chambered fire these differ
+    // by the sniper's 0.5% dust margin; everywhere else they are identical.
+    const qtyUiSold = Number(executedRaw) / 10 ** decimals;
     const totalQty = n(position.qtyTokens);
     const costBasis = totalQty > 0 ? n(position.sizeUsd) * (qtyUiSold / totalQty) : 0;
     const feeUsd = res.feeSol * sol;
     const pnl = proceedsUsd - costBasis - feeUsd;
-    const closing = rawSell === raw;
-    const remainingUi = Number(raw - rawSell) / 10 ** decimals;
+    const fillPxUsd = qtyUiSold > 0 ? proceedsUsd / qtyUiSold : 0;
+
+    // ── QTEA-011: CLOSE FROM CHAIN TRUTH, NOT FROM PRE-SEND INTENT ───────────
+    // `rawSell === raw` tested what we ASKED to sell. Combined with the sniper's
+    // dust margin it closed positions that still held tokens, zeroed
+    // qtyRemaining, and fired an ATA close at a non-empty account. Re-read the
+    // balance after settlement and let the verdict decide. This read is OFF the
+    // flee path — the sell has already landed — so it costs the exit nothing.
+    let postRaw: bigint | null = null;
+    try {
+      const { PublicKey: PK } = await import("@solana/web3.js");
+      const after = await rpcPool(cfg).read((c) =>
+        c.getParsedTokenAccountsByOwner(wallet.publicKey, { mint: new PK(position.mint) }),
+      );
+      let sum = 0n;
+      for (const { account } of after.value) {
+        const amt = (account.data as { parsed?: { info?: { tokenAmount?: { amount: string } } } }).parsed?.info?.tokenAmount;
+        if (amt) sum += BigInt(amt.amount);
+      }
+      postRaw = sum;
+    } catch {
+      /* read failed — closeVerdict falls back to the settlement expectation */
+    }
+    const verdict = closeVerdict({
+      preRaw: raw, executedRaw, postRaw, decimals,
+      priceUsd: fillPxUsd, dustUsd: cfg.LIVE_DUST_CLOSE_USD,
+    });
+    if (verdict.kind === "mismatch") {
+      // Unexplained divergence between settlement and chain. Never silently
+      // close on it: a wrong close is unrecoverable bookkeeping, a delayed one
+      // costs a cycle. The fill below is still journaled — it really happened.
+      await audit("live_close_reconcile_mismatch", {
+        positionId: position.id, mint: position.mint, reason,
+        preRaw: raw.toString(), executedRaw: executedRaw.toString(),
+        expectedRaw: verdict.expectedRaw.toString(), actualRaw: verdict.actualRaw.toString(),
+        remainingUi: verdict.remainingUi,
+      });
+    }
+    if (verdict.kind === "dust_close") {
+      await audit("live_close_dust", {
+        positionId: position.id, mint: position.mint, reason,
+        remainingUi: verdict.remainingUi, dustUsd: verdict.dustUsd,
+      });
+    }
+    const closing = verdict.kind === "closed" || verdict.kind === "dust_close";
+    const remainingUi = verdict.kind === "closed" ? 0 : verdict.remainingUi;
     // Sniper bookkeeping: a closed position frees its nonce; a partial sell
     // (TP banked) re-chambers for the new remaining quantity.
     if (cfg.LIVE_PRESIGNED_EXITS) {
@@ -2389,14 +2474,14 @@ async function liveSellPosition(
       positionId: position.id,
       side: "sell",
       qtyTokens: String(qtyUiSold),
-      priceUsd: String(qtyUiSold > 0 ? proceedsUsd / qtyUiSold : 0),
+      priceUsd: String(fillPxUsd),
       feeUsd: String(feeUsd),
       txSignature: res.signature,
       reason,
     }).returning({ id: fills.id });
     if (lsFill) void journalFill({ fillId: lsFill.id, book: "live", side: "sell", filledAt: new Date(),
       positionId: position.id, mint: position.mint, qty: qtyUiSold,
-      priceUsd: qtyUiSold > 0 ? proceedsUsd / qtyUiSold : 0, feeUsd,
+      priceUsd: fillPxUsd, feeUsd,
       entryPriceUsd: n(position.entryPriceUsd), reason, txSignature: res.signature });
     const closePatch = {
       qtyRemaining: String(Math.max(0, remainingUi)),
@@ -2404,7 +2489,7 @@ async function liveSellPosition(
       // Persist the realized exit price (proceeds per token) so the paired ledger
       // reads exit apples-to-apples without reconstructing from fills.
       ...(closing
-        ? { status: "closed" as const, closedAt: new Date(), exitReason: reason, exitPriceUsd: String(qtyUiSold > 0 ? proceedsUsd / qtyUiSold : 0) }
+        ? { status: "closed" as const, closedAt: new Date(), exitReason: reason, exitPriceUsd: String(fillPxUsd) }
         : {}),
     };
     try {
@@ -2916,10 +3001,10 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
             const j = await exitJup.quote(cfg, lp.mint, WSOL_MINT, raw0, cfg.LIVE_STOP_SLIPPAGE_BPS);
             const outSol = Number(j.outAmount) / 1e9;
             if (outSol > 0) value0 = outSol * sol;
-            const impact = Number(j.priceImpactPct);
-            if (value0 != null && Number.isFinite(impact) && impact > 0 && impact < 100) {
-              liq0 = Math.max(0, 2 * value0 * (100 / impact - 1));
-            }
+            // QTEA-004: priceImpactPct is a FRACTION. This read it as percentage
+            // points, inflating implied depth ~100× and standing down every
+            // depth-based protection against a phantom-deep pool.
+            if (value0 != null) liq0 = impliedLiquidityUsd(value0, impactFraction(j.priceImpactPct));
           } catch {
             /* no live sell route — handled below exactly as before */
           }
@@ -2986,10 +3071,8 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
           const j = await exitJup.quote(cfg, lp.mint, WSOL_MINT, raw, cfg.LIVE_STOP_SLIPPAGE_BPS);
           const outSol = Number(j.outAmount) / 1e9;
           if (outSol > 0) value = outSol * sol;
-          const impact = Number(j.priceImpactPct);
-          if (value != null && Number.isFinite(impact) && impact > 0 && impact < 100) {
-            impliedLiq = Math.max(0, 2 * value * (100 / impact - 1));
-          }
+          // QTEA-004 — see the parallel pre-pass above. Fraction, not percent.
+          if (value != null) impliedLiq = impliedLiquidityUsd(value, impactFraction(j.priceImpactPct));
         } catch {
           /* no live sell route — the sweep/mirror handles it, don't false-cut here */
         }

@@ -1678,6 +1678,12 @@ const envSchema = z.object({
   // rather than booked at −100%. Same dollar outcome in the true-rug case, but
   // it stops us donating inventory at 8 picodollars, and every fill that DOES
   // land is compliant with the standard by construction.
+  // QTEA-011 (2026-08-01): a live position closes on VERIFIED chain balance, not
+  // on pre-send intent. A residual worth less than this is journaled as dust and
+  // the position closes; anything above it keeps the position open. Set at $0.02
+  // — below any fee-viable sell, so we never strand a position over a remainder
+  // that could not be sold for more than it costs to sell.
+  LIVE_DUST_CLOSE_USD: z.coerce.number().default(0.02),
   LIVE_FILL_FLOOR_ENABLED: z.coerce.boolean().default(true),
   LIVE_FILL_FLOOR_FRAC: z.coerce.number().default(0.55), // = the −45% standard
   LIVE_SESSION_TRADE_CAP: z.coerce.number().default(10),
