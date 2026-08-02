@@ -2160,7 +2160,7 @@ const exitLatch = new Map<number, ExitLatch>();
  *  exit stays latched and retries every cycle, so the audit row is throttled to
  *  once a minute — the signal is "this position cannot pay the standard", not
  *  one row per retry. */
-const floorBlockAt = new Map<number, number>();
+const floorBlockAt = new Map<number, { at: number; count: number; since: number }>();
 /** Terminal exits that must complete once commanded. Opportunistic exits
  *  (profit_trail, liquid_window, take_profit) are deliberately NOT latched — if
  *  one fails and price recovers, continuing to ride is the correct outcome. */
@@ -2195,7 +2195,7 @@ async function liveSellPosition(
   // minute is enough to catch a pool that recovers — the receipts show recovery
   // happening over ~30 minutes, not seconds.
   const fb = floorBlockAt.get(position.id);
-  if (fb && Date.now() - fb < 60_000) return false;
+  if (fb && Date.now() - fb.at < 60_000) return false;
   // The provider THIS attempt actually quoted through — the failover exclusion
   // must name it exactly; router.lastRoute() is global state that the guard's
   // valuation quotes overwrite between a failure and its exclusion.
@@ -2427,9 +2427,43 @@ async function liveSellPosition(
           // fill that does land is compliant with the standard by construction.
           // Backoff is deliberately NOT bumped: escalating tolerance is exactly
           // the mechanism that broke the floor.
-          // The cooldown at the top of liveSell gates the next ATTEMPT, so this
-          // audits once per attempt rather than once per 2s cycle.
-          floorBlockAt.set(position.id, Date.now());
+          // ── A FLOOR BLOCK IS UNSELLABILITY EVIDENCE (operator 2026-08-02) ──
+          // JORDAN #7110 sat open 11.9h and PIZZA #7127 10.1h, each blocked once
+          // a minute, because the write-off lives in the CATCH block and a floor
+          // block returns false instead of throwing: `fails` never incremented,
+          // deadByEvidence never became true, and nothing ever closed. Two of
+          // four slots frozen for half a day. The code already warned about this
+          // class ("ANY persistently unsellable position must eventually be
+          // written off") — the floor invented a new way to be unsellable that
+          // walked around the counter.
+          //
+          // Writing off is NOT selling: no tokens are handed over at a bad
+          // price, so the floor's purpose is intact. We simply stop calling a
+          // worthless bag an open position, and the SLOT comes back — which in a
+          // presence strategy is the asset actually being stolen.
+          const prevFb = floorBlockAt.get(position.id);
+          const fbCount = (prevFb?.count ?? 0) + 1;
+          floorBlockAt.set(position.id, { at: Date.now(), count: fbCount, since: prevFb?.since ?? Date.now() });
+          const blockedMin = (Date.now() - (prevFb?.since ?? Date.now())) / 60_000;
+          if (fbCount >= cfg.LIVE_SELL_MAX_FAILS) {
+            const remCost = n(position.sizeUsd) * (n(position.qtyRemaining) / Math.max(n(position.qtyTokens), 1e-9));
+            await db.update(positions)
+              .set({ status: "closed", closedAt: new Date(), exitReason: "live_unsellable",
+                     realizedPnlUsd: String(n(position.realizedPnlUsd) - remCost), qtyRemaining: "0" })
+              .where(and(eq(positions.id, position.id), eq(positions.status, "open")));
+            await audit("live_unsellable_writeoff", {
+              positionId: position.id, mint: position.mint, via: "cost_basis_floor",
+              blocks: fbCount, blockedMin: Math.round(blockedMin), bookedLoss: -remCost,
+              offeredFrac: +(offeredUsd / basisUsd).toFixed(4),
+              reason: "route could not pay the −45% floor across consecutive attempts — slot reclaimed",
+            });
+            releaseChamber(position.id);
+            exitLatch.delete(position.id); void forgetState("latch", position.id);
+            floorBlockAt.delete(position.id);
+            sellBackoff.delete(position.id);
+            console.error(`🪦 LIVE WRITE-OFF ${short(position.mint)} — floor unpayable ${fbCount}× over ${blockedMin.toFixed(0)}min, booked −$${remCost.toFixed(2)}`);
+            return true; // terminal
+          }
           await audit("live_fill_floor_block", {
             positionId: position.id, mint: position.mint, reason,
             basisUsd: +basisUsd.toFixed(4), floorUsd: +floorUsd.toFixed(4),
