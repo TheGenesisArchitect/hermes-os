@@ -240,6 +240,13 @@ describe("admission doors stay closed", () => {
       assert.ok(after.includes(rail), `solvency rail "${rail}" must follow the strategy regions`);
       assert.ok(!wrapped.includes(rail), `solvency rail "${rail}" must not be gated by LIVE_STRATEGY_GATES`);
     }
+    // The gate CALL itself — kill switch, daily cap, concurrency/session caps,
+    // already-held, venue executability, honeypot, sell-route probe — must never
+    // be strategy-gated. 2026-08-02: region 2 captured it, and live bought
+    // through an ENGAGED kill on a FAILED honeypot probe (RABBIT #7280,
+    // unsellable in 19 minutes).
+    assert.ok(after.includes("await liveBuyGate("), "liveBuyGate call must follow the strategy regions");
+    assert.ok(!wrapped.includes("liveBuyGate("), "liveBuyGate must not be inside a LIVE_STRATEGY_GATES wrap");
     // ...and these selection opinions MUST be inside.
     for (const gate of ["REGIME CLASS GATE", "CLONE-WAVE GATE", "BUY-SHARE FLOOR", "CLIFF-SAFE DOOR"]) {
       assert.ok(wrapped.includes(gate), `strategy gate "${gate}" must be inside a wrap`);
@@ -303,5 +310,71 @@ describe("QTEA-010 mandate telemetry", () => {
     // the paper keys must not appear on the LIVE sizing audit row
     assert.doesNotMatch(line, /cfg\.MANDATE_AGG_FRAC/);
     assert.doesNotMatch(line, /cfg\.MANDATE_SLOTS/);
+  });
+});
+
+// ─── THE FORMULA MANIFEST ────────────────────────────────────────────────────
+// INVARIANT (operator-ratified 2026-08-02): selection lives in ONE versioned
+// manifest. The verdict is pure and fail-open; a refusal always names both
+// tiers' reasons; solvency rails stay upstream of it.
+describe("formula manifest", () => {
+  const M = {
+    version: 2,
+    ratifiedAt: "2026-08-02T17:00:00Z",
+    genomes: { BASE: 1.5, MOON_SLOW: 1.25, MOON_FAST: 0.6, RISER: 0.6, MOON_VIOLENT: 1.0 },
+    elite: { inflowMin: 1.2, buyShareMin: 0.55, crowdNetWinners: true, venues: ["pumpswap", "fluxbeam"] },
+    filler: { inflowMin: 1.2, inflowMax: 2.05, buyShareMin: 0.55, crowdNetWinners: true, venues: ["pumpswap", "fluxbeam", "meteora-damm-v2"] },
+  };
+  const base = { signature: "BASE", inflow: 1.4, buyShare: 0.7, winnerHits: 2, rugHits: 0, venue: "pumpswap" };
+
+  it("no manifest → fail-open pass-through, never a refusal", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    assert.deepEqual(manifestVerdict(null, base), { kind: "no-manifest" });
+  });
+
+  it("elite seat when every elite term holds", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    const v = manifestVerdict(M as any, base);
+    assert.deepEqual(v, { kind: "seat", tier: "elite", weight: 1.5, version: 2 });
+  });
+
+  it("falls to filler on venue, refuses above the filler envelope", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    const damm = manifestVerdict(M as any, { ...base, venue: "meteora-damm-v2" });
+    assert.equal((damm as any).tier, "filler");
+    // inflow 3.0 on damm-v2: elite fails on venue, filler on the 2.05 ceiling
+    const hot = manifestVerdict(M as any, { ...base, venue: "meteora-damm-v2", inflow: 3.0 });
+    assert.equal(hot.kind, "refuse");
+    assert.match((hot as any).reason, /elite → venue/);
+    assert.match((hot as any).reason, /filler → inflow/);
+  });
+
+  it("crowd W>R binds: measured-equal refuses, unmeasured refuses", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    assert.equal(manifestVerdict(M as any, { ...base, winnerHits: 1, rugHits: 1 }).kind, "refuse");
+    assert.equal(manifestVerdict(M as any, { ...base, winnerHits: null, rugHits: null }).kind, "refuse");
+  });
+
+  it("genome outside the manifest refuses; unrouted refuses", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    assert.equal(manifestVerdict(M as any, { ...base, signature: "MOON_STEADY" }).kind, "refuse");
+    assert.equal(manifestVerdict(M as any, { ...base, signature: null }).kind, "refuse");
+  });
+
+  it("unmeasured inflow and buy share pass (absence isn't evidence)", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    const v = manifestVerdict(M as any, { ...base, inflow: null, buyShare: null });
+    assert.equal(v.kind, "seat");
+  });
+
+  it("the manifest gate is flag-gated, refusals audit + return, and it never wraps the solvency gate", async () => {
+    const s = await (await import("node:fs")).readFileSync(new URL("../src/live/executor.ts", import.meta.url), "utf8");
+    const i = s.indexOf("if (cfg.FORMULA_MANIFEST_ENABLED)");
+    assert.ok(i > 0, "manifest gate must be flag-gated");
+    const branch = s.slice(i, i + 1600);
+    assert.match(branch, /audit\("live_buy_skipped"/, "manifest refusal must audit");
+    assert.match(branch, /\n\s*return;/, "manifest refusal must return");
+    assert.ok(!branch.includes("liveBuyGate"), "the solvency gate must not live inside the manifest branch");
+    assert.ok(i < s.indexOf("await liveBuyGate("), "manifest (selection) must sit before the solvency gate, never around it");
   });
 });

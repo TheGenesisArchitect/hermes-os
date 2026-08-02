@@ -47,6 +47,12 @@ export async function fastDrainExit(cfg: HermesConfig, mint: string): Promise<vo
   if (drainInFlight.has(mint)) return;
   drainInFlight.add(mint);
   try {
+    // LIVE SEAT FIRST. Live trades its own signals now, so a drained mint may
+    // hold a live seat with no paper twin — and the paper-row / market-fetch
+    // early-returns below must never gate the live cut (a pulled pool is
+    // exactly when the aggregator has no market). liveSellPosition quotes its
+    // own route; a mint with no open live row is a no-op.
+    void mirrorLiveSell(cfg, mint, 1, "depth_collapse_cut");
     const open = await db
       .select()
       .from(positions)
@@ -63,7 +69,6 @@ export async function fastDrainExit(cfg: HermesConfig, mint: string): Promise<vo
         reason: "ws pool drain ≥50%/30s — event-speed cut (measured cut tax 13-16% at poll speed)",
       });
       await sell(position, market, 1, "depth_collapse_cut");
-      void mirrorLiveSell(cfg, mint, 1, "depth_collapse_cut");
     }
   } catch (err) {
     console.error(`fast drain exit failed (poll rail still armed): ${err instanceof Error ? err.message : err}`);

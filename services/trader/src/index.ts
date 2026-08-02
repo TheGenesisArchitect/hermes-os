@@ -181,6 +181,6 @@ while (true) {
   const subPolls = cfg.FAST_FLOOR_ENABLED ? Math.max(1, Math.round(cfg.MANAGE_POLL_MS / Math.max(250, cfg.FAST_FLOOR_MS))) : 1;
   for (let i = 0; i < subPolls; i++) {
     await new Promise((r) => setTimeout(r, cfg.MANAGE_POLL_MS / subPolls));
-    if (cfg.FAST_FLOOR_ENABLED) await fastFloorSweep(cfg);
+    if (cfg.FAST_FLOOR_ENABLED) await fastFloorSweep(latestEff); // eff, not cfg — the sweep must see dashboard overrides like every other call in the loop
   }
 }

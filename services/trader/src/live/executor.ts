@@ -44,6 +44,7 @@ import { swapRouter } from "./swap/router.js";
 import { liveWallet } from "./wallet.js";
 import { chamberExit, fireChambered, releaseChamber, chamberAgeMs, rehydrateChambers } from "./presigned.js";
 import { persist as persistState, forget as forgetState, rehydrate as rehydrateState } from "./state.js";
+import { loadManifest, manifestVerdict } from "./manifest.js";
 import {
   LATCHING_EXIT, shouldPersistLatch, impactFraction, impliedLiquidityUsd, closeVerdict,
   classifySwapFailure,
@@ -1098,6 +1099,47 @@ export async function maybeLiveBuy(
         }
       }
     }
+    // ── THE FORMULA MANIFEST (operator-ratified 2026-08-02) ──────────────────
+    // Paper is the laboratory; live inherits the ratified winning architecture.
+    // Two tiers from the rug-adjusted combination sweep (formula-combo.ts):
+    // ELITE (+$5.89/t adj, canon-era replicated) and canon FILLER (5% dead
+    // cohort). Venue verdicts carry the 2026-08-02 architecture fence — the
+    // pre-fix unsellable tape does not convict the fixed lane, so damm-v2
+    // re-qualifies through the filler tier under clean fills. Every refusal
+    // audits with both tiers' reasons; the counterfactual watch reads them.
+    let manifestTier: "elite" | "filler" | null = null;
+    let manifestWeight = 1;
+    if (cfg.FORMULA_MANIFEST_ENABLED) {
+      const manifest = await loadManifest();
+      if (manifest) {
+        const [tk] = await db.select({ dex: tokens.dex }).from(tokens).where(eq(tokens.mint, mint)).limit(1);
+        const v = manifestVerdict(manifest, {
+          signature: sig?.signature ?? null,
+          inflow: sig?.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null,
+          buyShare: sig?.triggerBuyShare != null && Number.isFinite(Number(sig.triggerBuyShare)) ? Number(sig.triggerBuyShare) : null,
+          winnerHits: sig?.walletWinnerHits ?? null,
+          rugHits: sig?.walletRugHits ?? null,
+          venue: tk?.dex ?? null,
+        });
+        if (v.kind === "refuse") {
+          await audit("live_buy_skipped", { mint, reason: v.reason });
+          return;
+        }
+        if (v.kind === "seat") {
+          manifestTier = v.tier;
+          manifestWeight = v.weight;
+          await audit("live_manifest_seat", {
+            mint,
+            tier: v.tier,
+            weight: v.weight,
+            manifestVersion: v.version,
+            signature: sig?.signature ?? null,
+            reason: `manifest v${v.version} ${v.tier} seat — genome weight ×${v.weight.toFixed(2)}`,
+          });
+        }
+        // kind === "no-manifest" cannot reach here (manifest was non-null)
+      }
+    }
     // ══ STRATEGY GATE LAYER, REGION 2 of 2 (see LIVE_STRATEGY_GATES) ═════════
     // Clone-wave, wallet-graph anti-gate, F1 formula/crowd, RECOVERED tier and
     // its cliff-safe door, sub-floor doors, build-back, golden window, trigger
@@ -1534,13 +1576,20 @@ export async function maybeLiveBuy(
       await audit("live_buy_skipped", { mint, reason: `${sig.stars ?? 0}★ — below live evidence bar (0★ ran −55.3% on deployed)` });
       return;
     }
+    } // ══ end strategy region 2 ═══════════════════════════════════════════════
+
+    // ── SOLVENCY + EXECUTABILITY GATE — NEVER STRATEGY-GATED ─────────────────
+    // Kill switch, daily cap, concurrency/session caps, already-held, venue
+    // executability, honeypot block, sell-route probe. A selection flag must not
+    // be able to disarm these: 2026-08-02 the call sat inside the region above
+    // and live bought through an ENGAGED kill — RABBIT #7280 entered on a FAILED
+    // honeypot probe and was unsellable in 19 minutes.
     const gate = await liveBuyGate(cfg, mint, sig != null);
     if (!gate.ok) {
       if (cfg.LIVE_TRADING_ENABLED && gate.reason !== "disabled")
         await audit("live_buy_skipped", { mint, reason: gate.reason });
       return;
     }
-    } // ══ end strategy region 2 ═══════════════════════════════════════════════
 
     // ── FROM HERE DOWN: EXECUTABILITY + SOLVENCY ONLY ────────────────────────
     // SOL price, balance read, SOL reserve floor, exposure headroom, slot size,
@@ -1698,7 +1747,15 @@ export async function maybeLiveBuy(
       : rawSlotUsd;
     let usd = sized;
     if (mPrecision && mandateSlotUsd > 0) {
-      const slotted = Math.min(mandateSlotUsd, Math.max(mandateSlotUsd, sized)); // even tickets, as paper
+      // Even tickets, as paper — the mandate slot REPLACES the sizer's number,
+      // but never past the exposure/reserve room already computed above (the
+      // old Math.min(m, Math.max(m, sized)) identity skipped that clamp, so a
+      // floor-aware slot could breach LIVE_MAX_EXPOSURE_FRAC on a tight book).
+      // The manifest's ALLOCATE term rides the slot: genome weight scales the
+      // even ticket. Sub-floor products fall to the mandate-ticket branch
+      // below, so at fee-floor balances the weights stay dormant — they
+      // express as the balance grows, exactly as the doctrine specifies.
+      const slotted = Math.min(mandateSlotUsd * manifestWeight, affordable);
       if (Math.abs(slotted - usd) > 0.005) {
         await audit("live_mandate_size", {
           mint,
@@ -1784,7 +1841,10 @@ export async function maybeLiveBuy(
     }
 
     const wallet = liveWallet();
-    if (!wallet) return;
+    if (!wallet) {
+      await audit("live_buy_skipped", { mint, reason: "no wallet key at swap stage" });
+      return;
+    }
     // ── ENTRY FRICTION LOOP (2026-07-23): 81 buy failures/48h, 69% of those
     // mints won. Two failure classes, two answers: a venue BUILD REJECT (400 /
     // no pool / migrated) fails over to the next provider's quote; a SLIPPAGE
@@ -1932,6 +1992,9 @@ export async function maybeLiveBuy(
     requeueUntil.delete(mint); // a landed fill closes any retry window
     await audit("live_open", {
       mint, usd, regime, convictionMult, anticipationMult: antiMult, qty: res.outUi, signature: res.signature, feeSol: res.feeSol,
+      // the manifest seat that admitted this entry — the counterfactual watch
+      // attributes every outcome by tier (null = manifest off / fail-open)
+      manifestTier, manifestWeight,
       // land-rate scoreboard (2026-07-27): which build path filled and how fast
       provider: quote.provider, landMs: res.landMs,
       // the stage clock — where this entry's milliseconds went
@@ -3087,6 +3150,7 @@ async function liveLatestLiq(mint: string): Promise<number | null> {
 // Highest REAL sell-quote value / cost seen per live position — the live lane's
 // own peak, used to arm the profit floor without waiting on the paper mirror.
 const livePeakMark = new Map<number, number>();
+let lastNoSolPriceAudit = 0;
 async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
   const wallet = liveWallet();
   if (!wallet) return;
@@ -3098,9 +3162,20 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
   // sell, close request, recon) so the map tracks the book instead of growing.
   const openIds = new Set(rows.map((r) => r.id));
   for (const id of exitLatch.keys()) if (!openIds.has(id)) { exitLatch.delete(id); void forgetState("latch", id); }
+  for (const id of livePeakMark.keys()) if (!openIds.has(id)) { livePeakMark.delete(id); void forgetState("peak", id); }
   if (rows.length === 0) return;
   const sol = (await solPriceUsd(cfg)) ?? 0;
-  if (sol <= 0) return; // no SOL price → can't value; skip rather than risk a false read
+  if (sol <= 0) {
+    // No SOL price → can't value; skip rather than risk a false read. But a
+    // skipped guard pass leaves the WHOLE live book unwatched, so it must leave
+    // a trace (law 8: a silent decline is a defect). Throttled — feed outages
+    // last minutes and the guard retries every LIVE_GUARD_MS.
+    if (Date.now() - lastNoSolPriceAudit > 5 * 60_000) {
+      lastNoSolPriceAudit = Date.now();
+      await audit("live_guard_skipped", { reason: "no SOL price — whole-book guard pass skipped", openPositions: rows.length });
+    }
+    return;
+  }
   const { PublicKey } = await import("@solana/web3.js");
   // Greens collected across the pass for the basket harvest below.
   const liveGreens: { lp: (typeof rows)[number]; upl: number }[] = [];
@@ -3251,6 +3326,7 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
             const plausible = Number(ct.liq ?? 0) >= 1_000 && feedMark <= Math.max(prevPeak, 1) * 3;
             const feedPeak = plausible ? Math.max(prevPeak, feedMark) : prevPeak;
             livePeakMark.set(lp.id, feedPeak);
+            if (feedPeak > prevPeak) void persistState("peak", lp.id, feedPeak);
             void db
               .insert(positionTicks)
               .values({
@@ -3352,8 +3428,10 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
       // the trigger reflect what we could actually have realised. Fires
       // independently of the mirror: live owns its own profit protection.
       const markNow = cost > 0 ? value / cost : 1;
-      const peakMark = Math.max(livePeakMark.get(lp.id) ?? 1, markNow);
+      const prevPeakMark = livePeakMark.get(lp.id) ?? 1;
+      const peakMark = Math.max(prevPeakMark, markNow);
       livePeakMark.set(lp.id, peakMark);
+      if (peakMark > prevPeakMark) void persistState("peak", lp.id, peakMark);
       // TELEMETRY, 1:1 WITH PAPER. Paper persists a position_tick every manage
       // poll; live never did — 27 live positions, 0 ticks — so the Trade Matrix
       // silently dropped every live bar (`if (!points.length) continue`) and a
@@ -3554,7 +3632,7 @@ export async function snapshotLiveEquity(cfg: HermesConfig): Promise<void> {
 // throws into the tick.
 let sniperLoopStarted = false;
 export function startSniperRefresh(cfg: HermesConfig): void {
-  if (sniperLoopStarted || !cfg.LIVE_PRESIGNED_EXITS) return;
+  if (sniperLoopStarted) return;
   sniperLoopStarted = true;
   // ── REHYDRATE TACTICAL STATE BEFORE THE FIRST TICK (QTES Phase A #1) ──────
   // A restart used to erase every chamber, latch and poisoned route. Measured
@@ -3562,26 +3640,34 @@ export function startSniperRefresh(cfg: HermesConfig): void {
   // durable-nonce signed and stay valid indefinitely, so there was never a
   // reason to throw them away — and a latched protective exit that a deploy
   // forgets is a position left un-commanded.
+  // Runs regardless of LIVE_PRESIGNED_EXITS: latches, exclusions and peaks are
+  // guard-loop state, not sniper state — turning the sniper off must not make
+  // commanded protective exits forget across restarts.
   void (async () => {
     try {
-      const n = await rehydrateChambers();
+      const n = cfg.LIVE_PRESIGNED_EXITS ? await rehydrateChambers() : 0;
       for (const [pid, v] of await rehydrateState<{ reason: string; fraction: number; slippageBps?: number; since: number }>("latch")) {
         exitLatch.set(Number(pid), v);
       }
       for (const [pid, v] of await rehydrateState<string[]>("exclude")) {
         sellExclude.set(Number(pid), v);
       }
-      if (n > 0 || exitLatch.size > 0 || sellExclude.size > 0) {
+      for (const [pid, v] of await rehydrateState<number>("peak")) {
+        const p = Number(v);
+        if (Number.isFinite(p) && p > 1) livePeakMark.set(Number(pid), p);
+      }
+      if (n > 0 || exitLatch.size > 0 || sellExclude.size > 0 || livePeakMark.size > 0) {
         await audit("live_state_rehydrated", {
-          chambers: n, latches: exitLatch.size, excludes: sellExclude.size,
+          chambers: n, latches: exitLatch.size, excludes: sellExclude.size, peaks: livePeakMark.size,
           reason: "tactical state restored across restart (GTPED P3 — deterministic decisions)",
         });
-        console.log(`♻️  live state rehydrated — ${n} chamber(s), ${exitLatch.size} latch(es), ${sellExclude.size} exclusion(s)`);
+        console.log(`♻️  live state rehydrated — ${n} chamber(s), ${exitLatch.size} latch(es), ${sellExclude.size} exclusion(s), ${livePeakMark.size} peak(s)`);
       }
     } catch (err) {
       console.warn(`live state rehydrate failed (in-memory only): ${err instanceof Error ? err.message.slice(0, 60) : err}`);
     }
   })();
+  if (!cfg.LIVE_PRESIGNED_EXITS) return; // the 90s re-chamber loop is sniper-only
   setInterval(() => {
     void (async () => {
       try {
