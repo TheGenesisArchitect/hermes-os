@@ -1700,6 +1700,32 @@ const envSchema = z.object({
   // JORDAN #7110 entered at pool $19,991 and was unquotable 12 seconds later,
   // $0 within two minutes. 11 of 15 live_unsellable write-offs entered here.
   // Same coercion footgun as below: reopen with LIVE_CLIFFSAFE_DOOR=1.
+  // ── THE STRATEGY GATE LAYER — OFF (operator 2026-08-02) ────────────────────
+  // "Strip the strategy gates and doors, keep executability and solvency."
+  //
+  // THE MEASUREMENT THAT SETTLED IT (7d, scored by paper's own result on the
+  // same mints, so selection is compared like-for-like):
+  //     REFUSED by live   1,316 mints   paper +$1,205.33   +$0.916/t   62% win
+  //     TAKEN   by live     134 mints   paper   −$173.28   −$1.293/t   52% win
+  // And of live's own entries, 122 of 143 (85%) arrived through an exception
+  // door, that cohort running −$90.87; clean front-door admissions numbered 21.
+  //
+  // The gate layer was not filtering badly, it was INVERTED: it refused the
+  // profitable mean and re-admitted narrow carve-outs that lost. The mechanism
+  // is a one-way ratchet — every gate was fitted in-sample to a cohort that had
+  // already lost, every door fitted in-sample to a pocket a gate over-cut, and
+  // nothing was ever removed because a WIN produces no artifact to remove it.
+  //
+  // With this false, live keeps only what real capital genuinely needs that
+  // paper does not: EXECUTABILITY (honeypot, sell route, pool deep enough to
+  // exit at size, fee-viable) and SOLVENCY (slot size, exposure, concurrency,
+  // SOL reserve, daily cap, kill switch). Selection is paper's job; paper's
+  // selection is the measured edge. Risk moves to the portfolio level, where
+  // exposure and kill are load-bearing, instead of a thousand small refusals.
+  //
+  // Set LIVE_STRATEGY_GATES=1 to restore the old behaviour (the coercion
+  // footgun applies: the string "false" reads as TRUE).
+  LIVE_STRATEGY_GATES: z.coerce.boolean().default(false),
   LIVE_CLIFFSAFE_DOOR: z.coerce.boolean().default(false),
   LIVE_SUBFLOOR_DOOR: z.coerce.boolean().default(false),
   LIVE_DUST_CLOSE_USD: z.coerce.number().default(0.02),

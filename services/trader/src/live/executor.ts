@@ -966,6 +966,11 @@ export async function maybeLiveBuy(
     const winnerRepCrowd =
       mirrorEntry ||
       (sig?.walletWinnerHits != null && sig?.walletRugHits != null && sig.walletWinnerHits - sig.walletRugHits >= 1);
+    // ══ STRATEGY GATE LAYER, REGION 1 of 2 (see LIVE_STRATEGY_GATES) ═════════
+    // Everything inside this block is a SELECTION opinion — the layer measured
+    // at +$1,205 refused vs −$173 taken. Skipped wholesale when the flag is off;
+    // the executability and solvency rails below are deliberately OUTSIDE it.
+    if (cfg.LIVE_STRATEGY_GATES) {
     // ── REGIME CLASS GATE ────────────────────────────────────────────────────
     // The market is regime-centric (operator, 2026-07-22): CLIMBER went green
     // in the very window after the static audit blocked it. So live capital
@@ -997,7 +1002,11 @@ export async function maybeLiveBuy(
       });
       return;
     }
-    // ── POOL-DEPTH FLOOR ─────────────────────────────────────────────────────
+    } // ══ end strategy region 1 ═══════════════════════════════════════════════
+
+    // ── POOL-DEPTH FLOOR ── KEPT: EXECUTABILITY, NOT STRATEGY ────────────────
+    // This is the one question paper never has to answer: can we get OUT at
+    // size? A pool below the floor has no exit, whatever the signals say.
     // BBC 616f: a $3k dust pool cleared every signal gate mid-rug; live filled
     // at the collapsed price and the position never had an exit at size. The
     // freshest tick's liquidity is the exit-side question the signals don't ask.
@@ -1089,6 +1098,14 @@ export async function maybeLiveBuy(
         }
       }
     }
+    // ══ STRATEGY GATE LAYER, REGION 2 of 2 (see LIVE_STRATEGY_GATES) ═════════
+    // Clone-wave, wallet-graph anti-gate, F1 formula/crowd, RECOVERED tier and
+    // its cliff-safe door, sub-floor doors, build-back, golden window, trigger
+    // and sensor seats, buy-share floor, signature allowlist, stars bar. Every
+    // one is a selection opinion; none of them asks whether the trade can be
+    // executed or afforded. All seven exception doors live in here too, and go
+    // with the gates — a door exists only to punch back through a gate.
+    if (cfg.LIVE_STRATEGY_GATES) {
     // ── CLONE-WAVE GATE (live only) ──────────────────────────────────────────
     // Bear Ripper ×2 (2026-07-22): same ticker relaunched minutes after its
     // sibling rugged; both live entries died −$4 unsellable while the paper
@@ -1523,6 +1540,12 @@ export async function maybeLiveBuy(
         await audit("live_buy_skipped", { mint, reason: gate.reason });
       return;
     }
+    } // ══ end strategy region 2 ═══════════════════════════════════════════════
+
+    // ── FROM HERE DOWN: EXECUTABILITY + SOLVENCY ONLY ────────────────────────
+    // SOL price, balance read, SOL reserve floor, exposure headroom, slot size,
+    // fee viability, session trade cap. These are the rails real capital needs
+    // and paper does not; they are never gated by LIVE_STRATEGY_GATES.
     const sol = await solP;
     if (!sol || sol <= 0) {
       await audit("live_buy_skipped", { mint, reason: "no SOL price" });

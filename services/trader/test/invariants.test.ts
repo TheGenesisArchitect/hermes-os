@@ -220,6 +220,32 @@ describe("admission doors stay closed", () => {
     }
   });
 
+  it("executability and solvency rails are OUTSIDE the strategy wraps", async () => {
+    const s = await read("../src/live/executor.ts");
+    // The two wraps are NOT contiguous — the pool-depth floor sits between them,
+    // deliberately outside both. Slice each region separately.
+    const a0 = s.indexOf("STRATEGY GATE LAYER, REGION 1");
+    const a1 = s.indexOf("end strategy region 1");
+    const b0 = s.indexOf("STRATEGY GATE LAYER, REGION 2");
+    const b1 = s.indexOf("end strategy region 2");
+    assert.ok(a0 > 0 && a1 > a0 && b0 > a1 && b1 > b0, "both strategy regions must be marked, in order");
+    const wrapped = s.slice(a0, a1) + s.slice(b0, b1);
+    const after = s.slice(b1);
+    // the depth floor must live in the gap BETWEEN the two wraps
+    assert.match(s.slice(a1, b0), /no exit at size/, "pool-depth floor must sit between the wraps, ungated");
+
+    // These MUST NOT be inside the wrapped strategy regions — they are the
+    // rails real capital needs and paper does not.
+    for (const rail of ["SOL reserve floor", "no balance read", "no room (exposure", "no SOL price"]) {
+      assert.ok(after.includes(rail), `solvency rail "${rail}" must follow the strategy regions`);
+      assert.ok(!wrapped.includes(rail), `solvency rail "${rail}" must not be gated by LIVE_STRATEGY_GATES`);
+    }
+    // ...and these selection opinions MUST be inside.
+    for (const gate of ["REGIME CLASS GATE", "CLONE-WAVE GATE", "BUY-SHARE FLOOR", "CLIFF-SAFE DOOR"]) {
+      assert.ok(wrapped.includes(gate), `strategy gate "${gate}" must be inside a wrap`);
+    }
+  });
+
   it("neither door defaults to open", async () => {
     const cfgSrc = await read("../../../packages/core/src/config.ts");
     for (const key of ["LIVE_SUBFLOOR_DOOR", "LIVE_CLIFFSAFE_DOOR"]) {
