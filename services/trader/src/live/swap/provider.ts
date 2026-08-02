@@ -28,6 +28,10 @@ export interface QuoteOpts {
    * rejected the build (58 of 81 buy failures in 48h were one venue's 400s
    * on migrated tokens, 69% of which went on to win). */
   exclude?: string[];
+  /** A protective exit walks past OPEN breakers (QTEA-007): a breaker tripped
+   * by buy-path failures must never suppress a provider during a flee. The
+   * provider is still tried in order and still records new trips. */
+  protective?: boolean;
 }
 
 export interface SwapProvider {
@@ -47,6 +51,13 @@ export interface SwapProvider {
   ): Promise<SwapQuote>;
   /** Build a signed-ready base64 VersionedTransaction for this quote + wallet. */
   buildSwapTx(cfg: HermesConfig, quote: SwapQuote, userPublicKey: string): Promise<string>;
+  /** QTEA-003 — EXECUTABLE MARK. A direct provider that can price a sell from
+   *  its own pool state implements this: read reserves, run the venue's swap
+   *  math, return a real outAmount (lamports) + impact FRACTION — no tx built,
+   *  no breaker touched. The router's valuation walk prefers cheap aggregator
+   *  quotes and falls to these exactly in the fresh-pool window where the
+   *  aggregator is blind — the minutes where these tokens live and die. */
+  quoteSellValue?(cfg: HermesConfig, mint: string, amountRaw: bigint): Promise<SwapQuote>;
 }
 
 /**

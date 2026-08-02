@@ -53,6 +53,58 @@ export class PumpSwapProvider implements SwapProvider {
     return cfg.PUMPSWAP_ENABLED;
   }
 
+  /** Pool resolution shared by build quotes and the executable mark:
+   *  DexScreener pairAddress first, canonical PDA fallback for the
+   *  migration window (CATE Dg5P — a live pool minutes before indexing). */
+  private async resolvePool(cfg: HermesConfig, mint: string): Promise<string | null> {
+    const pool = await pumpswapPool(mint);
+    if (pool) return pool;
+    try {
+      const { canonicalPumpPoolPda } = await import("@pump-fun/pump-sdk");
+      const derived = canonicalPumpPoolPda(new PublicKey(mint));
+      const info = await rpcPool(cfg).read((c) => c.getAccountInfo(derived, "confirmed"));
+      if (info) return derived.toBase58();
+    } catch {
+      /* derivation/read failed — fall through to NoRoute */
+    }
+    return null;
+  }
+
+  /** QTEA-003 — EXECUTABLE MARK from the pool's own reserves. One
+   *  swapSolanaState read gives orientation + both reserves; constant-product
+   *  math with the ~30bps venue fee prices the sell the way the chain would.
+   *  This is what un-blinds the guard in the pre-index window where the elite
+   *  tier's tokens actually live and die. */
+  async quoteSellValue(cfg: HermesConfig, mint: string, amountRaw: bigint): Promise<SwapQuote> {
+    const pool = await this.resolvePool(cfg, mint);
+    if (!pool) throw new NoRouteError("no pumpswap pool");
+    const conn = rpcConnection(cfg);
+    const online = new OnlinePumpAmmSdk(conn);
+    const poolKey = new PublicKey(pool);
+    // Any pubkey works as `user` for a read — user account infos are nullable.
+    const state = await online.swapSolanaState(poolKey, poolKey);
+    const baseIsToken = state.baseMint.toBase58() === mint;
+    const quoteIsToken = state.pool.quoteMint.toBase58() === mint;
+    if (!baseIsToken && !quoteIsToken) throw new NoRouteError("pumpswap pool not token↔WSOL");
+    const reserveIn = BigInt((baseIsToken ? state.poolBaseAmount : state.poolQuoteAmount).toString());
+    const reserveOut = BigInt((baseIsToken ? state.poolQuoteAmount : state.poolBaseAmount).toString());
+    if (reserveIn <= 0n || reserveOut <= 0n) throw new NoRouteError("pumpswap pool empty");
+    // x·y=k out, then the ~0.30% pumpswap fee stack (20bps LP + protocol/creator).
+    const grossOut = (reserveOut * amountRaw) / (reserveIn + amountRaw);
+    const netOut = (grossOut * 9970n) / 10_000n;
+    const impactFraction = Number(amountRaw) / (Number(reserveIn) + Number(amountRaw));
+    return {
+      inputMint: mint,
+      outputMint: WSOL_MINT,
+      inAmount: String(amountRaw),
+      outAmount: netOut.toString(),
+      priceImpactPct: String(impactFraction), // FRACTION, per QTEA-004 contract
+      provider: this.name,
+      raw: null,
+      canValue: true,
+    };
+  }
+
   async quote(
     cfg: HermesConfig,
     inputMint: string,
@@ -69,24 +121,7 @@ export class PumpSwapProvider implements SwapProvider {
     // Resolve the pool here so a non-pumpswap token (e.g. a bonding-curve %pump)
     // throws and the router fails over to PumpPortal — clean venue separation
     // without a hardcoded venue check.
-    let pool = await pumpswapPool(mint);
-    if (!pool) {
-      // MIGRATION-WINDOW FALLBACK (2026-07-27, specimen CATE Dg5P −$1.88):
-      // a token that graduates MID-TRADE has a live PumpSwap pool minutes
-      // before DexScreener indexes it — the curve provider correctly declines
-      // ("complete"), pumpportal 400s (migrated), and this provider blinded
-      // itself by asking only DexScreener. Derive the canonical pool PDA
-      // locally and verify it EXISTS on-chain (quote-time verification — a
-      // phantom pool must NoRoute here, never strand the build).
-      try {
-        const { canonicalPumpPoolPda } = await import("@pump-fun/pump-sdk");
-        const derived = canonicalPumpPoolPda(new PublicKey(mint));
-        const info = await rpcPool(cfg).read((c) => c.getAccountInfo(derived, "confirmed"));
-        if (info) pool = derived.toBase58();
-      } catch {
-        /* derivation/read failed — fall through to NoRoute */
-      }
-    }
+    const pool = await this.resolvePool(cfg, mint);
     if (!pool) throw new NoRouteError("no pumpswap pool");
     const raw: PumpSwapRaw = { isBuy, mint, pool, amountRaw: amountRaw.toString(), slippageBps };
     return {

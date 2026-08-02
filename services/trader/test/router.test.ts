@@ -1,0 +1,196 @@
+/**
+ * ROUTER + OPTIMIZER INVARIANTS — the QTEA-003/007/008 corrections and the
+ * self-optimization governance, pinned with fake providers (the SwapRouter
+ * constructor takes an injected provider list for exactly this).
+ */
+import { strict as assert } from "node:assert";
+import { describe, it } from "node:test";
+import { SwapRouter } from "../src/live/swap/router.js";
+import { NoRouteError, type SwapProvider, type SwapQuote } from "../src/live/swap/provider.js";
+import { proposeManifest } from "../src/live/optimizer.js";
+import type { FormulaManifest } from "../src/live/manifest.js";
+
+const WSOL = "So11111111111111111111111111111111111111112";
+const MINT = "TokenMint111111111111111111111111111111111";
+const CFG = {} as never;
+
+function fake(
+  name: string,
+  behave: (inputMint: string, outputMint: string) => SwapQuote,
+  opts?: { failTimes?: { buy?: number; sell?: number }; canValue?: boolean; sellValue?: string },
+): SwapProvider & { calls: string[] } {
+  const state = { buyFails: opts?.failTimes?.buy ?? 0, sellFails: opts?.failTimes?.sell ?? 0 };
+  const p: SwapProvider & { calls: string[] } = {
+    name,
+    calls: [],
+    async quote(_cfg, inputMint, outputMint) {
+      const side = outputMint === WSOL ? "sell" : "buy";
+      p.calls.push(`quote:${side}`);
+      if (side === "buy" && state.buyFails > 0) { state.buyFails--; throw new Error(`${name} buy down`); }
+      if (side === "sell" && state.sellFails > 0) { state.sellFails--; throw new Error(`${name} sell down`); }
+      const q = behave(inputMint, outputMint);
+      return opts?.canValue === false ? { ...q, canValue: false } : q;
+    },
+    async buildSwapTx() { return "b64"; },
+  };
+  if (opts?.sellValue) {
+    p.quoteSellValue = async (_cfg, mint, amountRaw) => {
+      p.calls.push("sellValue");
+      return { inputMint: mint, outputMint: WSOL, inAmount: String(amountRaw), outAmount: opts.sellValue!, priceImpactPct: "0.01", provider: name, raw: null, canValue: true };
+    };
+  }
+  return p;
+}
+const q = (name: string, out = "1000"): ((i: string, o: string) => SwapQuote) =>
+  (inputMint, outputMint) => ({ inputMint, outputMint, inAmount: "1", outAmount: out, priceImpactPct: "0.01", provider: name, raw: null });
+
+describe("QTEA-007 side-scoped breakers", () => {
+  it("three buy-path failures do NOT suppress the provider's sell side", async () => {
+    const a = fake("alpha", q("alpha"), { failTimes: { buy: 3 } });
+    const b = fake("beta", q("beta"));
+    const r = new SwapRouter([a, b]);
+    for (let i = 0; i < 3; i++) await r.quote(CFG, WSOL, MINT, 1n, 100); // buys: alpha fails ×3 → buy breaker OPEN
+    const buy = await r.quote(CFG, WSOL, MINT, 1n, 100);
+    assert.equal(buy.provider, "beta", "alpha's BUY side must be open (skipped)");
+    const sell = await r.quote(CFG, MINT, WSOL, 1n, 100);
+    assert.equal(sell.provider, "alpha", "alpha's SELL side must still route — the sides trip apart");
+  });
+
+  it("a protective sell walks past an OPEN sell-side breaker", async () => {
+    const a = fake("alpha", q("alpha"), { failTimes: { sell: 3 } });
+    const b = fake("beta", q("beta"));
+    const r = new SwapRouter([a, b]);
+    for (let i = 0; i < 3; i++) await r.quote(CFG, MINT, WSOL, 1n, 100); // alpha sell breaker OPEN (beta filled them)
+    const ordinary = await r.quote(CFG, MINT, WSOL, 1n, 100);
+    assert.equal(ordinary.provider, "beta", "ordinary sell respects the open breaker");
+    const protective = await r.quote(CFG, MINT, WSOL, 1n, 100, { protective: true });
+    assert.equal(protective.provider, "alpha", "protective walks past the open breaker and alpha now answers");
+  });
+});
+
+describe("QTEA-003 read-only valuation walk", () => {
+  it("skips build-only quotes and falls to reserve-math sellValue", async () => {
+    const buildOnly = fake("direct", q("direct"), { canValue: false, sellValue: "555" });
+    const r = new SwapRouter([buildOnly]);
+    const v = await r.quoteValue(CFG, MINT, 1n, 100);
+    assert.equal(v.outAmount, "555", "the mark must come from quoteSellValue, not the build-only quote");
+  });
+
+  it("never mutates lastRoute and never trips a breaker", async () => {
+    const a = fake("alpha", q("alpha"));
+    const r = new SwapRouter([a]);
+    await r.quote(CFG, MINT, WSOL, 1n, 100);
+    assert.equal(r.lastRoute(), "alpha");
+    const failing = fake("omega", q("omega"), { failTimes: { sell: 99 } });
+    const r2 = new SwapRouter([failing, a]);
+    await r2.quote(CFG, MINT, WSOL, 1n, 100); // sets lastRoute (alpha; omega fails once)
+    const before = r2.lastRoute();
+    for (let i = 0; i < 5; i++) await r2.quoteValue(CFG, MINT, 1n, 100).catch(() => {});
+    assert.equal(r2.lastRoute(), before, "valuation must not move lastRoute");
+    // omega failed 1 (execution) + 5 (valuation) times; valuation must not have
+    // contributed to the breaker: two MORE execution failures are needed to trip.
+    const sell = await r2.quote(CFG, MINT, WSOL, 1n, 100);
+    assert.equal(sell.provider, "alpha");
+    const health = r2.providerHealth().find((h) => h.name === "omega");
+    assert.equal(health?.healthy, true, "5 valuation failures must not open omega's breaker");
+  });
+});
+
+describe("QTEA-008 best-sell routing", () => {
+  it("takes the higher outAmount of two parallel quotes", async () => {
+    const low = fake("low", q("low", "100"));
+    const high = fake("high", q("high", "900"));
+    const r = new SwapRouter([low, high]);
+    const best = await r.quoteBestSell(CFG, MINT, 1n, 100);
+    assert.equal(best.provider, "high");
+    assert.equal(best.outAmount, "900");
+  });
+
+  it("falls back to the ordered walk when the parallel pair is empty", async () => {
+    const a = fake("alpha", q("alpha"), { failTimes: { sell: 1 } });
+    const r = new SwapRouter([a]);
+    const got = await r.quoteBestSell(CFG, MINT, 1n, 100); // parallel attempt fails once, walk retries
+    assert.equal(got.provider, "alpha");
+  });
+});
+
+describe("optimizer governance (L1 — propose, never apply)", () => {
+  const ACTIVE: FormulaManifest = {
+    version: 2,
+    ratifiedAt: "2026-08-02",
+    genomes: { BASE: 1.5, RISER: 0.6 },
+    elite: { venues: ["pumpswap"] },
+    filler: { venues: ["pumpswap"] },
+  };
+
+  it("a genome turning negative on the rolling tape becomes a DROP delta", () => {
+    const { proposal, material } = proposeManifest(ACTIVE, {
+      BASE: { n: 100, adjEv: 300, evPerTrade: 3 },
+      RISER: { n: 80, adjEv: -40, evPerTrade: -0.5 },
+    });
+    assert.equal(material, true);
+    assert.ok(proposal.deltas.some((d) => d.startsWith("DROP RISER")));
+  });
+
+  it("a new positive genome becomes an ADD delta; under-powered stays silent", () => {
+    const { proposal } = proposeManifest(ACTIVE, {
+      BASE: { n: 100, adjEv: 300, evPerTrade: 3 },
+      MOON_SLOW: { n: 60, adjEv: 90, evPerTrade: 1.5 },
+      CLIMBER: { n: 5, adjEv: 50, evPerTrade: 10 },
+    });
+    assert.ok(proposal.deltas.some((d) => d.startsWith("ADD MOON_SLOW")));
+    assert.ok(!proposal.deltas.some((d) => d.includes("CLIMBER")), "n=5 cannot propose anything");
+  });
+
+  it("an unchanged book proposes nothing", () => {
+    // BASE alone: mean EV = its own EV → weight 1.0? No — clamped relative to
+    // itself gives 1.0, active is 1.5 → delta 0.5 IS material. Use two genomes
+    // whose relative weights reproduce the active manifest exactly.
+    const { material } = proposeManifest(ACTIVE, {
+      BASE: { n: 100, adjEv: 300, evPerTrade: 3.0 },
+      RISER: { n: 0, adjEv: 0, evPerTrade: 0 }, // insufficient-n → no delta
+    });
+    // BASE: mean of promoted = 3.0 → weight 1.0 vs active 1.5 → REWEIGHT fires.
+    // That is correct behaviour: a one-genome book SHOULD renormalize. So the
+    // "no material delta" case is the reweight landing inside the threshold:
+    const res2 = proposeManifest(
+      { ...ACTIVE, genomes: { BASE: 1.0 } },
+      { BASE: { n: 100, adjEv: 300, evPerTrade: 3.0 } },
+    );
+    assert.equal(res2.material, false, "weight already at the recomputed value → silence");
+  });
+});
+
+// ─── MODEL RISK MANAGEMENT ───────────────────────────────────────────────────
+// INVARIANT (operator review, 2026-08-02): under a MAJOR regime shift the
+// optimizer proposes retreat only — "the market has changed, I am no longer
+// confident" — never promotions fitted to the regime that just ended.
+describe("model risk — PSI drift guard", () => {
+  it("identical distributions score ~0; a hard shift scores major", async () => {
+    const { psi } = await import("../src/live/optimizer.js");
+    assert.ok(psi([50, 30, 20], [50, 30, 20]) < 1e-9);
+    assert.ok(psi([50, 30, 20], [48, 32, 20]) < 0.1, "small drift stays under moderate");
+    assert.ok(psi([80, 15, 5], [10, 30, 60]) > 0.25, "an inverted mix is a major shift");
+  });
+
+  it("empty windows are not evidence of drift", async () => {
+    const { psi } = await import("../src/live/optimizer.js");
+    assert.equal(psi([0, 0, 0], [10, 20, 30]), 0);
+    assert.equal(psi([], []), 0);
+  });
+
+  it("major drift withholds ADD/REWEIGHT and keeps DROP", async () => {
+    const { applyDriftGate } = await import("../src/live/optimizer.js");
+    const deltas = [
+      "ADD MOON_SLOW — adjEV $90 over n=60 (not in active manifest)",
+      "REWEIGHT BASE ×1.5 → ×1.0 (adjEV/t $2.00, n=100)",
+      "DROP RISER — adjEV $-40.00 over n=80 (active weight ×0.6)",
+    ];
+    const major = applyDriftGate(deltas, { perFeature: {}, max: 0.4, verdict: "major" });
+    assert.deepEqual(major.deltas, ["DROP RISER — adjEV $-40.00 over n=80 (active weight ×0.6)"]);
+    assert.equal(major.withheld.length, 2);
+    const stable = applyDriftGate(deltas, { perFeature: {}, max: 0.05, verdict: "stable" });
+    assert.deepEqual(stable.deltas, deltas, "stable regime passes everything through");
+    assert.equal(stable.withheld.length, 0);
+  });
+});

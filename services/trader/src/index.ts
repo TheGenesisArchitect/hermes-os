@@ -15,6 +15,7 @@ import { setDrainHandler } from "./slotWatch.js";
 let latestEff = loadConfig();
 setDrainHandler((mint) => void fastDrainExit(latestEff, mint));
 import { readEffectiveConfig, refreshAdaptivePolicy } from "./adaptive.js";
+import { startManifestOptimizer } from "./live/optimizer.js";
 import { guardLiveBook, liveLaneStatus, scanLiveIndependent, processLiveCloseRequests, processLiveRequeues, processWalletSends, snapshotLiveEquity, startSniperRefresh, sweepLiveBook } from "./live/executor.js";
 
 async function killSwitchEngaged(): Promise<boolean> {
@@ -54,6 +55,9 @@ console.log(
 );
 console.log(liveLaneStatus(cfg));
 startSniperRefresh(cfg);
+// The self-optimizing loop (L1): rolling rug-adjusted recompute → PROPOSALS
+// against the active manifest. Arming a proposal stays the operator's word.
+startManifestOptimizer(cfg);
 if (cfg.LIVE_TRADING_ENABLED) {
   console.warn(
     "⚠️  LIVE LANE ENABLED — real capital. Confirm docs/GO_LIVE_GATE.md gates G1–G6 all PASS before funding.",

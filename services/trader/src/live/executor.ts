@@ -38,8 +38,7 @@ import {
 import { auditLog, candidateOutcomes, candidateTicks, db, fills, journalFill, pnlSnapshots, positionTicks, positions, safetyChecks, tokens } from "@hermes/db";
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { rpcPool } from "./rpc/pool.js";
-import { JupiterHostedProvider, WSOL_MINT } from "./swap/jupiterHosted.js";
-import { PumpSwapProvider } from "./swap/pumpswap.js";
+import { WSOL_MINT } from "./swap/jupiterHosted.js";
 import { swapRouter } from "./swap/router.js";
 import { liveWallet } from "./wallet.js";
 import { chamberExit, fireChambered, releaseChamber, chamberAgeMs, rehydrateChambers } from "./presigned.js";
@@ -50,10 +49,9 @@ import {
   classifySwapFailure,
 } from "./invariants.js";
 
-// Exit pre-check probes — dedicated verifying providers (NOT the full router,
-// whose build-only PumpPortal would optimistically "pass" an unsellable token).
-const exitJup = new JupiterHostedProvider();
-const exitPs = new PumpSwapProvider();
+// Exit probes now ride swapRouter.quoteValue (QTEA-003) — a READ-ONLY walk that
+// skips build-only payloads (canValue:false), so PumpPortal can never
+// optimistically "pass" an unsellable token. The dedicated instances are gone.
 
 /**
  * Is there a REAL sell route for this token right now? Prevents entering a token
@@ -64,19 +62,15 @@ const exitPs = new PumpSwapProvider();
  */
 async function canExitLive(cfg: HermesConfig, mint: string, tokenAmt: bigint): Promise<boolean> {
   if (mint.endsWith("pump")) return true; // pump.fun-origin — always sellable, no probe
+  // QTEA-003: the probe walks the WHOLE provider universe (PumpSwap first, then
+  // Jupiter, Fluxbeam, Meteora, the curve) — the same set that would build the
+  // exit. Only skips when NOTHING can sell it.
   try {
-    await exitPs.quote(cfg, mint, WSOL_MINT, tokenAmt, cfg.LIVE_SELL_SLIPPAGE_BPS);
-    return true; // a live PumpSwap pool exists
+    const q = await swapRouter.quoteValue(cfg, mint, tokenAmt, cfg.LIVE_SELL_SLIPPAGE_BPS);
+    return Number(q.outAmount) > 0;
   } catch {
-    /* no pumpswap pool — try the aggregator */
+    return false;
   }
-  try {
-    const j = await exitJup.quote(cfg, mint, WSOL_MINT, tokenAmt, cfg.LIVE_SELL_SLIPPAGE_BPS);
-    if (Number(j.outAmount) > 0) return true; // Jupiter routes a sell somewhere
-  } catch {
-    /* Jupiter no-route or unreachable */
-  }
-  return false;
 }
 
 const n = (v: string | number | null | undefined): number => Number(v ?? 0);
@@ -2259,6 +2253,14 @@ async function liveSellPosition(
   // happening over ~30 minutes, not seconds.
   const fb = floorBlockAt.get(position.id);
   if (fb && Date.now() - fb.at < 60_000) return false;
+  // ── SELL-PATH STAGE CLOCK (GTPED §8 gap 2) ────────────────────────────────
+  // The buy path has carried latencyMs since 2026-07-27; the sell path — where
+  // the money is actually kept or lost — had NONE, and an 8s mark age had to be
+  // found by inference. Every live_sell row now carries where its milliseconds
+  // went: decide→quote, quote→confirm, total, plus the tolerance and class that
+  // priced it.
+  const tSell0 = Date.now();
+  let tQuote = 0;
   // The provider THIS attempt actually quoted through — the failover exclusion
   // must name it exactly; router.lastRoute() is global state that the guard's
   // valuation quotes overwrite between a failure and its exclusion.
@@ -2418,6 +2420,7 @@ async function liveSellPosition(
       if (fired) {
         executedRaw = fired.qtyRaw; // QTEA-002 — settled quantity, not requested
         usedProvider = `sniper:${fired.provider}`;
+        tQuote = Date.now(); // chambered: zero quote time by design — the round was pre-signed
         res = await parseSettledSwap(cfg, fired.signature, WSOL_MINT, fired.landMs);
         await audit("live_presigned_fired", {
           mint: position.mint, positionId: position.id, landMs: fired.landMs, provider: fired.provider, reason,
@@ -2457,10 +2460,20 @@ async function liveSellPosition(
     if (!res) {
       // FALLBACK PATH ONLY — the chamber either had no round or missed. Quoting
       // lives here now so a provider outage can never block the pre-signed exit.
-      let quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip, {
-        exclude: sellExclude.get(position.id),
-      });
+      // QTEA-007: protective sells walk past OPEN breakers — a cooldown earned
+      // on the buy path never suppresses a flee provider. QTEA-008: profit
+      // exits (TP/trail/ordinary) take the best of two parallel quotes —
+      // proceeds-optimal; protective stays on the ordered walk — time-optimal.
+      let quote = isProtective
+        ? await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip, {
+            exclude: sellExclude.get(position.id),
+            protective: true,
+          })
+        : await swapRouter.quoteBestSell(cfg, position.mint, rawSell, slip, {
+            exclude: sellExclude.get(position.id),
+          });
       usedProvider = quote.provider;
+      tQuote = Date.now();
 
       // ── THE −45% STANDARD, ENFORCED (operator "let's fix now", 2026-07-31) ──
       // floor_45 fired as a DECISION and then handed execution a tolerance
@@ -2478,11 +2491,24 @@ async function liveSellPosition(
         const totQty = n(position.qtyTokens);
         const basisUsd = totQty > 0 ? n(position.sizeUsd) * (qtyUi / totQty) : 0;
         const floorUsd = basisUsd * cfg.LIVE_FILL_FLOOR_FRAC;
-        const offeredUsd = (Number(quote.outAmount) / 1e9) * solPx;
+        // ── BROKER #7319 (2026-08-02): a BUILD-ONLY execution quote carries
+        // outAmount 0 — reading it as the offer priced a $15k LIVE pool at $0,
+        // blocked six payable sells a minute apart and wrote off a position
+        // that printed +41% mid-freeze. When the build quote cannot value,
+        // the offer comes from the executable mark (reserve math included);
+        // if NOTHING can value it, the floor is unpriceable and fails OPEN —
+        // the build's own on-chain minOut still protects the fill, and
+        // freezing the exit is the failure mode that just cost the ticket.
+        let offerRaw = Number(quote.outAmount);
+        if (!(offerRaw > 0) || quote.canValue === false) {
+          const val = await swapRouter.quoteValue(cfg, position.mint, rawSell, slip).catch(() => null);
+          offerRaw = val ? Number(val.outAmount) : 0;
+        }
+        const offeredUsd = (offerRaw / 1e9) * solPx;
         // FAIL-OPEN on a price-fetch failure (solPx = 0) — deliberate. A floor
         // that blocks every sell when Jupiter's price endpoint blips would trap
         // the book, which is strictly worse than the leak it prevents.
-        if (solPx > 0 && basisUsd > 0 && offeredUsd < floorUsd) {
+        if (solPx > 0 && basisUsd > 0 && offerRaw > 0 && offeredUsd < floorUsd) {
           // (1) The pool CANNOT pay the standard. Refuse rather than donate.
           // The position stays latched and retries; if it never recovers it is
           // written off at the SAME dollar cost we would have booked by selling
@@ -2554,6 +2580,7 @@ async function liveSellPosition(
             try {
               quote = await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, capBps, {
                 exclude: sellExclude.get(position.id),
+                protective: true, // this path only exists for protective exits
               });
               usedProvider = quote.provider;
               await audit("live_fill_floor_capped", {
@@ -2737,6 +2764,19 @@ async function liveSellPosition(
       pnl,
       reason,
       signature: res.signature,
+      // GTPED §8 gap 2 — the sell-path stage clock. quote=0 on a chambered
+      // fire (the round was pre-signed; that IS the design working).
+      class: isProtective ? "protective" : isTakeProfit ? "take_profit" : "ordinary",
+      toleranceBps: slip,
+      provider: usedProvider,
+      landMs: res.landMs,
+      chambered: usedProvider?.startsWith("sniper:") ?? false,
+      escalation: { fails: escFails, holdouts: escHold },
+      latencyMs: {
+        quote: tQuote > 0 ? tQuote - tSell0 : null,
+        swapAndConfirm: tQuote > 0 ? Date.now() - tQuote : null,
+        total: Date.now() - tSell0,
+      },
     });
     console.log(
       `💸 LIVE SELL ${short(position.mint)} ${(f * 100).toFixed(0)}% → $${proceedsUsd.toFixed(2)} (pnl ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}, ${reason})`,
@@ -3207,7 +3247,10 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
         let liq0: number | null = null;
         if (raw0 > 0n) {
           try {
-            const j = await exitJup.quote(cfg, lp.mint, WSOL_MINT, raw0, cfg.LIVE_STOP_SLIPPAGE_BPS);
+            // QTEA-003: the mark comes from the whole provider universe, not
+            // Jupiter alone — a fresh direct-DEX pool Jupiter hasn't indexed
+            // no longer leaves the seat valued off the recorder feed.
+            const j = await swapRouter.quoteValue(cfg, lp.mint, raw0, cfg.LIVE_STOP_SLIPPAGE_BPS);
             const outSol = Number(j.outAmount) / 1e9;
             if (outSol > 0) value0 = outSol * sol;
             // QTEA-004: priceImpactPct is a FRACTION. This read it as percentage
@@ -3277,7 +3320,8 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
         impliedLiq = pre.impliedLiq;
       } else {
         try {
-          const j = await exitJup.quote(cfg, lp.mint, WSOL_MINT, raw, cfg.LIVE_STOP_SLIPPAGE_BPS);
+          // QTEA-003 — router-wide executable mark, not Jupiter-only.
+          const j = await swapRouter.quoteValue(cfg, lp.mint, raw, cfg.LIVE_STOP_SLIPPAGE_BPS);
           const outSol = Number(j.outAmount) / 1e9;
           if (outSol > 0) value = outSol * sol;
           // QTEA-004 — see the parallel pre-pass above. Fraction, not percent.
@@ -3286,9 +3330,10 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
           /* no live sell route — the sweep/mirror handles it, don't false-cut here */
         }
       }
-      // FEED-MARK FALLBACK, routed rows only. Jupiter is the ONLY provider that
-      // can VALUE a position (PumpSwap and PumpPortal are build-only,
-      // canValue:false) and it does not index a fresh pool for minutes — so a
+      // FEED-MARK FALLBACK, routed rows only. The valuation walk now reaches
+      // the direct providers' own pool state (QTEA-003), so this fallback owns
+      // a much narrower window: venues with no reserve-math valuation yet
+      // (meteora, curve) in their pre-index minutes — so a
       // just-opened live position had no mark at all: no tick telemetry, no
       // genome exits, nothing but the clock, in exactly the minutes where these
       // tokens live and die. But the recorder is already watching this mint

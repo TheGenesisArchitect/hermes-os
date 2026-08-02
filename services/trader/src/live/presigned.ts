@@ -177,7 +177,21 @@ export async function chamberExit(
         SELECT size_usd::float AS sz, qty_tokens::float AS q0
         FROM positions WHERE id = ${positionId}`)) as unknown as { sz: number; q0: number }[];
       const solPx = await fetchJupiterPrice(cfg.JUPITER_PRICE_URL, WSOL).catch(() => null);
-      const outNow = Number(q.outAmount);
+      // BROKER #7319 (2026-08-02): the execution quote from a BUILD-ONLY
+      // provider (pumpswap, outAmount 0) made canFloor false on a $15k LIVE
+      // pool — the sniper never armed on the elite venue at all. Price the
+      // floor from the EXECUTABLE MARK instead; the build still rides `q`,
+      // and the bps computed below embeds the same floor in its minOut. If
+      // valuation also finds nothing, the fail-closed refusal below stands —
+      // that is the JORDAN case, a pool that genuinely cannot pay.
+      const outNowBuild = Number(q.outAmount);
+      const outNow =
+        outNowBuild > 0
+          ? outNowBuild
+          : Number(
+              (await swapRouter.quoteValue(cfg, mint, qtyRaw, cfg.LIVE_STOP_SLIPPAGE_BPS).catch(() => null))
+                ?.outAmount ?? 0,
+            );
       // `decs > 0` is a REQUIRED guard, not defensive noise: a missing decimals
       // read defaults to 0, which makes shareOfPos clamp to 1 and floors a
       // partial exit against the FULL position basis — a floor several times too
