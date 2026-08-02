@@ -1683,6 +1683,18 @@ const envSchema = z.object({
   // the position closes; anything above it keeps the position open. Set at $0.02
   // — below any fee-viable sell, so we never strand a position over a remainder
   // that could not be sold for more than it costs to sell.
+  // SUB-FLOOR DOOR — CLOSED (operator 2026-08-01: "close the sub-floor door").
+  // Two doors admitted candidates whose measured inflow sat BELOW INFLOW_FLOOR,
+  // at ticket size instead of refusing: the MOONSHOT door and the RUG_RISK door.
+  // The first live attempt after arming came through the MOONSHOT door at
+  // 1.198× — under the 1.2× floor and under the 1.25× admission bar — and every
+  // exception-door cohort measured P&L-negative in 697a8d7.
+  //
+  // NOTE the coercion footgun: z.coerce.boolean() reads the STRING "false" as
+  // true. To reopen this door, set LIVE_SUBFLOOR_DOOR=1 in .env; removing the
+  // line (or setting it to anything at all, including "false") is not how you
+  // turn it on — only the default below keeps it shut.
+  LIVE_SUBFLOOR_DOOR: z.coerce.boolean().default(false),
   LIVE_DUST_CLOSE_USD: z.coerce.number().default(0.02),
   LIVE_FILL_FLOOR_ENABLED: z.coerce.boolean().default(true),
   LIVE_FILL_FLOOR_FRAC: z.coerce.number().default(0.55), // = the −45% standard

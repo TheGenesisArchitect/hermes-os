@@ -96,6 +96,72 @@ export function impliedLiquidityUsd(tradeValueUsd: number, frac: number | null):
 }
 
 /**
+ * QTEA-014 — SWAP FAILURE CLASSIFICATION, keyed by PROGRAM not by magic number.
+ *
+ * The buy path classified retryable failures with `/6001|ExceededSlippage/`.
+ * That was wrong in both directions, and it cost us the first live trade after
+ * arming on 2026-08-01: a pumpswap buy died `Custom:6004`, matched neither
+ * pattern, and threw on attempt one — no tolerance bump, no failover, no retry.
+ *
+ * The real tables, read from the IDLs SHIPPED IN node_modules (@pump-fun/pump-sdk
+ * src/idl/pump_amm.json and pump.json) — not inferred, not from memory:
+ *
+ *   code  pump_amm (pumpswap)             pump.fun bonding curve
+ *   6001  ZeroBaseAmount                  AlreadyInitialized
+ *   6002  ZeroQuoteAmount                 TooMuchSolRequired      ← slippage, buy
+ *   6003  TooLittlePoolTokenLiquidity     TooLittleSolReceived    ← slippage, sell
+ *   6004  ExceededSlippage   ← slippage   MintDoesNotMatchBondingCurve
+ *
+ * Two things follow. First, the old regex MISSED every genuine slippage code.
+ * Second, it MATCHED 6001 — which on pumpswap is ZeroBaseAmount, a permanent
+ * condition we were answering by widening tolerance and trying again. The
+ * "6001 = ExceededSlippage" belief is written into three comments in executor.ts
+ * and is simply false; 6001 is just where many Anchor programs put their second
+ * error, which is exactly why a bare number cannot be classified on its own.
+ *
+ * Note 6003: SLIPPAGE on the curve, THIN POOL on pump-amm. The same integer,
+ * opposite handling. That is the whole argument for keying on the program.
+ */
+export type SwapFailureKind = "slippage" | "venue_reject" | "thin_pool" | "unknown";
+
+const SLIPPAGE_CODES: Array<{ program: RegExp; codes: number[] }> = [
+  { program: /pumpswap|pump-?amm/i, codes: [6004] },
+  { program: /pumpfun|pump-?curve|bonding/i, codes: [6002, 6003] },
+];
+const THIN_POOL_CODES: Array<{ program: RegExp; codes: number[] }> = [
+  { program: /pumpswap|pump-?amm/i, codes: [6003] },
+];
+
+/** Pull the Anchor custom error code out of a failure message, in either the
+ *  JSON shape (`{"Custom":6004}`) or the log shape (`Custom:6004`). */
+export function customErrorCode(msg: string): number | null {
+  const m = /"Custom"\s*:\s*(\d+)/.exec(msg) ?? /Custom:\s*(\d+)/.exec(msg);
+  return m?.[1] != null ? Number(m[1]) : null;
+}
+
+/** The router stamps `[via <provider>]` onto thrown messages. */
+export function providerFromMessage(msg: string): string | null {
+  return /\[via ([^\]]+)\]/.exec(msg)?.[1] ?? null;
+}
+
+export function classifySwapFailure(msg: string, provider?: string | null): SwapFailureKind {
+  if (!msg) return "unknown";
+  // Named conditions first — they are unambiguous across programs.
+  if (/build 400|no .*pool|Virtual pool|not tradable|NO_ROUTES/i.test(msg)) return "venue_reject";
+  if (/ExceededSlippage|TooMuchSolRequired|TooLittleSolReceived|simulation failed/i.test(msg))
+    return "slippage";
+  if (/TooLittlePoolTokenLiquidity/i.test(msg)) return "thin_pool";
+  // Numeric codes are only meaningful once the program is known.
+  const code = customErrorCode(msg);
+  if (code == null) return "unknown";
+  const prog = provider ?? providerFromMessage(msg) ?? "";
+  if (!prog) return "unknown"; // a bare code with no program is NOT classifiable
+  for (const e of THIN_POOL_CODES) if (e.program.test(prog) && e.codes.includes(code)) return "thin_pool";
+  for (const e of SLIPPAGE_CODES) if (e.program.test(prog) && e.codes.includes(code)) return "slippage";
+  return "unknown";
+}
+
+/**
  * QTEA-002 + QTEA-011 — close from CHAIN TRUTH, never from pre-send intent.
  *
  * `rawSell === raw` tested what we ASKED to sell. The sniper deliberately signs

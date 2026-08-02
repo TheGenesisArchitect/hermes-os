@@ -46,6 +46,7 @@ import { chamberExit, fireChambered, releaseChamber, chamberAgeMs, rehydrateCham
 import { persist as persistState, forget as forgetState, rehydrate as rehydrateState } from "./state.js";
 import {
   LATCHING_EXIT, shouldPersistLatch, impactFraction, impliedLiquidityUsd, closeVerdict,
+  classifySwapFailure,
 } from "./invariants.js";
 
 // Exit pre-check probes — dedicated verifying providers (NOT the full router,
@@ -890,7 +891,10 @@ export async function maybeLiveBuy(
           inflow: rrLg,
           reason: "crowd-PASS + in-envelope RUG_RISK — formula overrides the stale veto, half clip via mirror fraction",
         });
-      } else if (cfg.RUGRISK_FORMULA_ROUTE && sig.signature === "RUG_RISK" && rrSubfloorCrowd) {
+      } else if (cfg.LIVE_SUBFLOOR_DOOR && cfg.RUGRISK_FORMULA_ROUTE && sig.signature === "RUG_RISK" && rrSubfloorCrowd) {
+        // Door 2 of 2, closed by the same switch. This one needs no explicit
+        // refusal branch — a closed door falls through to the `else` below,
+        // which already audits live_buy_skipped and returns.
         // SUB-FLOOR TICKET, door 2 (ratified 2026-07-25): the session's home
         // band — paper's half-clips ran the richest lane of the night here.
         subFloorTicket = true;
@@ -1284,6 +1288,23 @@ export async function maybeLiveBuy(
       // paper's mild band ran −$44/24h at slot scale vs +$16 at probe scale,
       // and this door was lifting sub-floor 2★ moons to full slots unchecked.
       if (moonShot && sig.liqGrowth != null && sig.liqGrowth < cfg.INFLOW_FLOOR) {
+        // DOOR CLOSED (operator 2026-08-01, "close the sub-floor door"). The
+        // first live attempt after arming came through here at inflow 1.198×,
+        // below the 1.2× floor and well below the 1.25× admission bar — and the
+        // door cohorts measured P&L-negative across the board in 697a8d7.
+        //
+        // It REFUSES, it does not merely drop the ticket flag: without the flag
+        // the candidate would fall through to NORMAL sizing and enter a
+        // sub-floor moon at FULL SLOT, which is strictly worse than the door we
+        // are closing. Refusals stay audited so the counterfactual is measurable.
+        if (!cfg.LIVE_SUBFLOOR_DOOR) {
+          await audit("live_buy_skipped", {
+            mint, door: "MOONSHOT", inflow: sig.liqGrowth, floor: cfg.INFLOW_FLOOR,
+            walletWinnerHits: sig.walletWinnerHits, walletRugHits: sig.walletRugHits,
+            reason: `sub-floor door CLOSED — 2★ moon inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor; refused rather than ticket-sized`,
+          });
+          return;
+        }
         subFloorTicket = true;
         await audit("live_subfloor_ticket", {
           mint,
@@ -1780,8 +1801,17 @@ export async function maybeLiveBuy(
         break;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const venueReject = /build 400|no .*pool|Virtual pool|not tradable|NO_ROUTES/i.test(msg);
-        const slipFail = /6001|ExceededSlippage|simulation failed/i.test(msg);
+        // QTEA-014 (2026-08-01): was `/6001|ExceededSlippage|simulation failed/`,
+        // which missed every real slippage code AND matched 6001 — ZeroBaseAmount
+        // on pumpswap, a permanent condition we answered by widening tolerance.
+        // The first live buy after arming died Custom:6004 (pump_amm
+        // ExceededSlippage), matched neither branch, and threw on attempt ONE.
+        // Classification is now keyed on the program; see invariants.ts for the
+        // IDL-sourced tables. A thin pool is a venue problem, not a price
+        // problem — retrying wider cannot help, failing over might.
+        const failKind = classifySwapFailure(msg, quote.provider);
+        const venueReject = failKind === "venue_reject" || failKind === "thin_pool";
+        const slipFail = failKind === "slippage";
         // Tag the terminal error with the provider that built the tx so
         // live_buy_failed rows attribute landing failures per build path
         // (suffix only — downstream regex classifiers keep matching).

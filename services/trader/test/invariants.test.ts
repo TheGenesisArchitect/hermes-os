@@ -12,6 +12,7 @@ import { strict as assert } from "node:assert";
 import { describe, it } from "node:test";
 import {
   shouldPersistLatch, impactFraction, impactPct, impliedLiquidityUsd, closeVerdict,
+  classifySwapFailure, customErrorCode, providerFromMessage,
 } from "../src/live/invariants.js";
 
 // ─── QTEA-001 ────────────────────────────────────────────────────────────────
@@ -145,6 +146,57 @@ describe("QTEA-002/011 settled quantity and chain-truth close", () => {
       decimals: DEC, priceUsd: 0.5, dustUsd: 0.02,
     });
     assert.equal(v.kind, "closed"); // pre − executed = 0
+  });
+});
+
+// ─── QTEA-014 ────────────────────────────────────────────────────────────────
+// INVARIANT: a swap failure is classified by PROGRAM + code, never by a bare
+// number. Codes collide across Anchor programs and mean opposite things.
+describe("QTEA-014 swap failure classification", () => {
+  // The exact message that killed the first live buy after arming, 03:09:09Z.
+  const REAL = 'tx failed on-chain: {"InstructionError":[6,{"Custom":6004}]} '
+    + '(4U3DcrXjey6pxeeMjdJEjQMVYjnkUXnb8vheCo6wsmfgEDReVuoDPE8s4htwPsH5AAYzvXJD35NcsESxbejaz1xU) [via pumpswap]';
+
+  it("the production failure is now classified as slippage (was: unknown → no retry)", () => {
+    assert.equal(classifySwapFailure(REAL, "pumpswap"), "slippage");
+    // provider is also recoverable from the message alone
+    assert.equal(classifySwapFailure(REAL), "slippage");
+    assert.equal(customErrorCode(REAL), 6004);
+    assert.equal(providerFromMessage(REAL), "pumpswap");
+    // the OLD regex is what we are replacing — prove it missed this
+    assert.equal(/6001|ExceededSlippage|simulation failed/i.test(REAL), false);
+  });
+
+  it("6003 means opposite things on the two programs", () => {
+    const m = 'tx failed on-chain: {"InstructionError":[4,{"Custom":6003}]}';
+    // pump_amm 6003 = TooLittlePoolTokenLiquidity → a VENUE problem
+    assert.equal(classifySwapFailure(m, "pumpswap"), "thin_pool");
+    // curve 6003 = TooLittleSolReceived → a PRICE problem
+    assert.equal(classifySwapFailure(m, "pumpfun"), "slippage");
+  });
+
+  it("6001 is NOT slippage on pumpswap (it is ZeroBaseAmount)", () => {
+    const m = 'tx failed on-chain: {"InstructionError":[4,{"Custom":6001}]} [via pumpswap]';
+    assert.notEqual(classifySwapFailure(m), "slippage");
+    // the old regex retried this forever by widening tolerance
+    assert.equal(/6001|ExceededSlippage|simulation failed/i.test(m), true);
+  });
+
+  it("curve buy/sell slippage codes classify", () => {
+    assert.equal(classifySwapFailure('{"Custom":6002}', "pumpfun"), "slippage"); // TooMuchSolRequired
+    assert.equal(classifySwapFailure('{"Custom":6003}', "pumpfun"), "slippage"); // TooLittleSolReceived
+  });
+
+  it("named conditions and venue rejects still classify without a program", () => {
+    assert.equal(classifySwapFailure("ExceededSlippage"), "slippage");
+    assert.equal(classifySwapFailure("build 400 from provider"), "venue_reject");
+    assert.equal(classifySwapFailure("NO_ROUTES"), "venue_reject");
+  });
+
+  it("a bare code with no known program is NOT guessed at", () => {
+    assert.equal(classifySwapFailure('{"Custom":6004}'), "unknown");
+    assert.equal(classifySwapFailure('{"Custom":6004}', "raydium"), "unknown");
+    assert.equal(classifySwapFailure(""), "unknown");
   });
 });
 
