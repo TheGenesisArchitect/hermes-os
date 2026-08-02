@@ -1694,6 +1694,13 @@ const envSchema = z.object({
   // true. To reopen this door, set LIVE_SUBFLOOR_DOOR=1 in .env; removing the
   // line (or setting it to anything at all, including "false") is not how you
   // turn it on — only the default below keeps it shut.
+  // CLIFF-SAFE DOOR — CLOSED (operator 2026-08-02). Opened 2026-07-29 on the
+  // recovery-cliff study: fire with the entry pool above ~$16k and the drain
+  // alarm stays over the 95%-recovery line. Live receipts refuted the premise —
+  // JORDAN #7110 entered at pool $19,991 and was unquotable 12 seconds later,
+  // $0 within two minutes. 11 of 15 live_unsellable write-offs entered here.
+  // Same coercion footgun as below: reopen with LIVE_CLIFFSAFE_DOOR=1.
+  LIVE_CLIFFSAFE_DOOR: z.coerce.boolean().default(false),
   LIVE_SUBFLOOR_DOOR: z.coerce.boolean().default(false),
   LIVE_DUST_CLOSE_USD: z.coerce.number().default(0.02),
   LIVE_FILL_FLOOR_ENABLED: z.coerce.boolean().default(true),

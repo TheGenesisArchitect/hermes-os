@@ -1265,6 +1265,32 @@ export async function maybeLiveBuy(
             SELECT liquidity_usd::float liq FROM candidate_ticks WHERE mint = ${mint}
             ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
           const poolNow = ct?.liq != null && Number.isFinite(Number(ct.liq)) ? Number(ct.liq) : null;
+          // ── DOOR CLOSED (operator 2026-08-02: "close the cliff-safe door") ──
+          // The premise above was that entry pool depth predicts survivability:
+          // fire above the cliff and the physics protect us. Live receipts say
+          // it does not. JORDAN #7110 entered through this door at pool $19,991
+          // — a quarter above the $16k bar — and the route stopped quoting it
+          // 12 SECONDS later; feed liquidity reached $0 within two minutes.
+          // Depth at entry was a quarter-million dollars of reassurance that
+          // bought twelve seconds.
+          //
+          // The tier's own record, per the comment at the RECOVERED flag above:
+          // 10 of 14 live_unsellable write-offs (−$33.82/48h) came through here.
+          // JORDAN makes it 11 of 15.
+          //
+          // An explicit branch rather than gating the `if` below: that `else`
+          // reports "below the cliff", which would be a false reason for a
+          // candidate refused while sitting ABOVE it.
+          if (!cfg.LIVE_CLIFFSAFE_DOOR) {
+            await audit("live_buy_skipped", {
+              mint,
+              poolUsd: poolNow == null ? null : Math.round(poolNow),
+              walletWinnerHits: wh ?? null,
+              walletRugHits: rh ?? null,
+              reason: `cliff-safe door CLOSED — RECOVERED tier is paper-only regardless of entry pool (${poolNow == null ? "unknown" : "$" + Math.round(poolNow).toLocaleString()}); entry depth did not predict survivability (11 of 15 unsellable write-offs entered here)`,
+            });
+            return;
+          }
           if (poolNow != null && poolNow >= cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD) {
             subFloorTicket = true; // ticket size, never the sizer's full clip
             await audit("live_cliffsafe_readmit", {

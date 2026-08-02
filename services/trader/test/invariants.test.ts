@@ -200,6 +200,36 @@ describe("QTEA-014 swap failure classification", () => {
   });
 });
 
+// ─── ADMISSION DOORS ─────────────────────────────────────────────────────────
+// INVARIANT: a closed door REFUSES AND RETURNS. It must never merely drop the
+// ticket-size flag — that would let the candidate fall through to normal sizing
+// and board at FULL SLOT, strictly worse than the door being open.
+describe("admission doors stay closed", () => {
+  const read = async (rel: string) =>
+    (await import("node:fs")).readFileSync(new URL(rel, import.meta.url), "utf8");
+
+  it("both doors are gated on their config flag and each refuses with a return", async () => {
+    const s = await read("../src/live/executor.ts");
+    for (const flag of ["cfg.LIVE_SUBFLOOR_DOOR", "cfg.LIVE_CLIFFSAFE_DOOR"]) {
+      const i = s.indexOf(`if (!${flag})`);
+      assert.ok(i > 0, `${flag} must guard an explicit closed-door branch`);
+      // the branch must audit a skip AND return, within a small window
+      const branch = s.slice(i, i + 1200);
+      assert.match(branch, /audit\("live_buy_skipped"/, `${flag} branch must audit a skip`);
+      assert.match(branch, /\n\s*return;/, `${flag} branch must return, not fall through`);
+    }
+  });
+
+  it("neither door defaults to open", async () => {
+    const cfgSrc = await read("../../../packages/core/src/config.ts");
+    for (const key of ["LIVE_SUBFLOOR_DOOR", "LIVE_CLIFFSAFE_DOOR"]) {
+      const m = new RegExp(`${key}:\\s*z\\.coerce\\.boolean\\(\\)\\.default\\((\\w+)\\)`).exec(cfgSrc);
+      assert.ok(m, `${key} must be declared`);
+      assert.equal(m[1], "false", `${key} must default closed`);
+    }
+  });
+});
+
 // ─── QTEA-010 ────────────────────────────────────────────────────────────────
 // INVARIANT: live telemetry reports the LIVE mandate configuration.
 describe("QTEA-010 mandate telemetry", () => {
