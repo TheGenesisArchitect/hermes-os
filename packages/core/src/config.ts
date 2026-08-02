@@ -1726,6 +1726,15 @@ const envSchema = z.object({
   // Set LIVE_STRATEGY_GATES=1 to restore the old behaviour (the coercion
   // footgun applies: the string "false" reads as TRUE).
   LIVE_STRATEGY_GATES: z.coerce.boolean().default(false),
+  // THE FORMULA MANIFEST (operator-ratified 2026-08-02). The replacement for
+  // the stripped gate layer above: selection lives in ONE ratified, versioned
+  // artifact (config key `formula_manifest`, written by the harness pipeline,
+  // promoted by operator word) instead of a thousand accreted refusals. Live
+  // reads the manifest's two tiers (elite / canon filler) and genome weights;
+  // promotion and demotion happen by ratifying a new manifest version, never
+  // by editing gates. Fail-open: no manifest row → live trades as if this
+  // flag were off (solvency rails are upstream and unaffected).
+  FORMULA_MANIFEST_ENABLED: z.coerce.boolean().default(false),
   LIVE_CLIFFSAFE_DOOR: z.coerce.boolean().default(false),
   LIVE_SUBFLOOR_DOOR: z.coerce.boolean().default(false),
   LIVE_DUST_CLOSE_USD: z.coerce.number().default(0.02),
