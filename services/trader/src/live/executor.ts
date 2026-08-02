@@ -2500,15 +2500,36 @@ async function liveSellPosition(
       priceUsd: fillPxUsd, dustUsd: cfg.LIVE_DUST_CLOSE_USD,
     });
     if (verdict.kind === "mismatch") {
-      // Unexplained divergence between settlement and chain. Never silently
-      // close on it: a wrong close is unrecoverable bookkeeping, a delayed one
-      // costs a cycle. The fill below is still journaled — it really happened.
+      // ── THE TOKENS DID NOT MOVE: BOOK THE FEE, NOT THE SALE ────────────────
+      // My first cut audited the divergence, refused to close, and then fell
+      // through and journalled the fill anyway — reasoning "the transaction
+      // landed, so it really happened". JORDAN #7110 showed those are not the
+      // same thing: the chambered round CONFIRMED on-chain at 03:37:42 for
+      // 36,465 tokens at $0, and the wallet still held all 36,648. The book
+      // ended up carrying the −$2.60 loss AND the inventory — a double count
+      // waiting to happen the moment those tokens actually sell.
+      //
+      // `fills` means INVENTORY MOVED. A confirmed transaction that transferred
+      // no tokens is an expense, not a fill. So: record the fee against the
+      // position (it was genuinely paid), keep the chain-truth remainder, write
+      // no fill row, and leave cost basis untouched.
       await audit("live_close_reconcile_mismatch", {
         positionId: position.id, mint: position.mint, reason,
         preRaw: raw.toString(), executedRaw: executedRaw.toString(),
         expectedRaw: verdict.expectedRaw.toString(), actualRaw: verdict.actualRaw.toString(),
         remainingUi: verdict.remainingUi,
+        feeUsdBooked: +feeUsd.toFixed(6), signature: res.signature,
+        note: "fill NOT journalled — settlement moved no tokens; fee only",
       });
+      await db.update(positions).set({
+        qtyRemaining: String(Math.max(0, verdict.remainingUi)),
+        realizedPnlUsd: String(n(position.realizedPnlUsd) - feeUsd),
+      }).where(eq(positions.id, position.id));
+      // Still holding, still commanded: re-chamber for the real remaining size.
+      // With the fail-closed anchor in presigned.ts, that re-chamber now REFUSES
+      // when the pool cannot price the floor, instead of signing a $0 round.
+      if (cfg.LIVE_PRESIGNED_EXITS) void chamberExit(cfg, position.id, position.mint);
+      return false; // the exit did not achieve anything — stay latched, retry
     }
     if (verdict.kind === "dust_close") {
       await audit("live_close_dust", {

@@ -230,6 +230,39 @@ describe("admission doors stay closed", () => {
   });
 });
 
+// ─── RECONCILE MISMATCH + CHAMBER FAIL-CLOSED ────────────────────────────────
+// Both learned from JORDAN #7110 (2026-08-02).
+describe("settlement that moved no tokens is an expense, not a fill", () => {
+  const read = async (rel: string) =>
+    (await import("node:fs")).readFileSync(new URL(rel, import.meta.url), "utf8");
+
+  it("the mismatch branch returns BEFORE any fill is journalled", async () => {
+    const s = await read("../src/live/executor.ts");
+    const mm = s.indexOf('if (verdict.kind === "mismatch")');
+    assert.ok(mm > 0, "the mismatch branch must exist");
+    // the NEXT fill insert after the branch — the buy path has its own, earlier
+    const fill = s.indexOf("db.insert(fills)", mm);
+    assert.ok(fill > mm, "a sell fill insert must follow the mismatch branch");
+    const branch = s.slice(mm, fill);
+    assert.match(branch, /return false;/, "mismatch must return, not fall through to the fill");
+    // it must still book the fee — the transaction was genuinely paid for
+    assert.match(branch, /realizedPnlUsd:[^\n]*feeUsd/, "mismatch must book the fee");
+    // ...and must NOT allocate cost basis
+    assert.doesNotMatch(branch, /costBasis/, "mismatch must not allocate cost basis");
+  });
+
+  it("the chamber refuses to sign a round it cannot floor", async () => {
+    const s = await read("../src/live/presigned.ts");
+    const i = s.indexOf("const canFloor");
+    assert.ok(i > 0, "chamberExit must compute whether a cost-basis floor is priceable");
+    const branch = s.slice(i, i + 900);
+    assert.match(branch, /if \(!canFloor\)/, "must branch on the floor being unpriceable");
+    assert.match(branch, /return false;/, "must refuse to chamber, not fall through");
+    // the guard is worthless if outNow==0 isn't part of it — that was the JORDAN case
+    assert.match(s.slice(i, i + 200), /outNow > 0/, "outNow > 0 must gate the floor");
+  });
+});
+
 // ─── QTEA-010 ────────────────────────────────────────────────────────────────
 // INVARIANT: live telemetry reports the LIVE mandate configuration.
 describe("QTEA-010 mandate telemetry", () => {

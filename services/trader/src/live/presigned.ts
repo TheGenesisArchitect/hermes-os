@@ -182,7 +182,33 @@ export async function chamberExit(
       // read defaults to 0, which makes shareOfPos clamp to 1 and floors a
       // partial exit against the FULL position basis — a floor several times too
       // high, i.e. the exact failure this commit exists to remove.
-      if (pos != null && pos.q0 > 0 && decs > 0 && solPx != null && solPx > 0 && outNow > 0) {
+      // ── FAIL CLOSED (operator 2026-08-02, "ship 2 and 3") ──────────────────
+      // These guards used to fall THROUGH to the LIVE_STOP_SLIPPAGE_BPS quote
+      // taken above, which means: when we cannot establish a cost-basis floor,
+      // we signed a round with a minOut of 35% off whatever the route said —
+      // and if the route says ~nothing, that is a minOut of ~nothing.
+      //
+      // JORDAN #7110: the pool was already unquotable, `outNow` came back 0, the
+      // anchoring block was skipped, and the round that fired at 03:37:42 sold
+      // 36,465 tokens for $0. The floor worked exactly when it was not needed
+      // and vanished exactly when it was.
+      //
+      // A chambered round with no enforceable floor is worse than no chamber at
+      // all: the fallback path still carries the cost-basis check, so refusing
+      // to chamber degrades to a SLOWER but FLOORED exit rather than a fast
+      // unfloored one. The 90s refresh retries, so a transient data gap costs a
+      // cycle, not the sniper.
+      const canFloor = pos != null && pos.q0 > 0 && decs > 0 && solPx != null && solPx > 0 && outNow > 0;
+      if (!canFloor) {
+        console.warn(
+          `🎯 sniper: REFUSING to chamber #${positionId} — cannot price the cost-basis floor ` +
+            `(${outNow <= 0 ? "route quotes zero — pool cannot pay" : pos == null || !(pos.q0 > 0) ? "position basis unavailable" : decs <= 0 ? "token decimals unavailable" : "SOL price unavailable"}). ` +
+            `Fallback path retains the floor.`,
+        );
+        releaseChamber(positionId);
+        return false;
+      }
+      {
         // Pro-rata: the round sells qtyRaw of the original qty_tokens, so it
         // must return at least that same share of 0.55 × the position's cost.
         const shareOfPos = Math.min(1, Number(qtyRaw) / 10 ** decs / pos.q0);
