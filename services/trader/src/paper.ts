@@ -2694,6 +2694,48 @@ export function classifyMark(
  * recovery look like a fresh spike and never settle). Forensics without
  * authority. Never throws.
  */
+/**
+ * THROTTLED HOLD LOGGING (operator 2026-08-02: "fix the GKn8 log loop").
+ *
+ * The coherence guard is deliberately unbounded — "held at the last-good mark and
+ * NEVER acted on, however long it persists" — and it logged every poll. Position
+ * #7095 sat in it for two hours and emitted ~2,100 identical lines, 88% of the
+ * whole trader log, burying every real signal in it.
+ *
+ * Volume was also actively MISLEADING: 2,100 repetitions of the same line read
+ * as "something is happening 2,100 times" when the truth is "one position has
+ * been frozen since 02:14". Logging the STATE TRANSITION plus a periodic
+ * heartbeat carrying age and poll count says that in three lines.
+ *
+ * Keyed by (position, kind) so a change of hold reason still prints immediately.
+ */
+const HOLD_LOG_EVERY_MS = 5 * 60_000;
+const holdLogState = new Map<number, { kind: string; since: number; last: number; polls: number }>();
+
+function holdLog(positionId: number, kind: string, line: string): void {
+  const now = Date.now();
+  const st = holdLogState.get(positionId);
+  if (!st || st.kind !== kind) {
+    holdLogState.set(positionId, { kind, since: now, last: now, polls: 1 });
+    console.log(line);
+    return;
+  }
+  st.polls++;
+  if (now - st.last >= HOLD_LOG_EVERY_MS) {
+    st.last = now;
+    console.log(`${line} [still held ${Math.round((now - st.since) / 60_000)}m, ${st.polls} polls]`);
+  }
+}
+
+/** A position that marks normally again (or closes) forgets its hold streak, so
+ *  the next entry into a hold state prints immediately rather than silently. */
+function clearHoldLog(positionId: number): void {
+  const st = holdLogState.get(positionId);
+  if (!st) return;
+  holdLogState.delete(positionId);
+  console.log(`✅ MARK  #${positionId} — coherent read resumed after ${Math.round((Date.now() - st.since) / 60_000)}m held (${st.polls} polls)`);
+}
+
 async function recordSuspectHold(
   position: Position,
   market: TokenMarket,
@@ -3193,7 +3235,7 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
         // mark and DON'T touch the death counter — a correlated flip must never
         // mass-write-off. The pool resumes accruing once dust isn't book-wide.
         await recordSuspectHold(position, market, lastGood, lastGoodLiq, verdict.why);
-        console.log(`🛡️  HOLD  ${short(position.mint)} — dust (book-wide anomaly, no accrual) ${verdict.why}`);
+        holdLog(position.id, "dust-bookwide", `🛡️  HOLD  ${short(position.mint)} — dust (book-wide anomaly, no accrual) ${verdict.why}`);
         continue;
       }
       // Persistent-dust death exit: the pool is near-empty. Hold at first, but a
@@ -3224,7 +3266,7 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
       // persists. This is NOT a dust pool (the pool is healthy), so it must never
       // trip the death exit; only a genuinely near-empty pool does.
       await recordSuspectHold(position, market, lastGood, lastGoodLiq, verdict.why);
-      console.log(`🛡️  HOLD  ${short(position.mint)} — incoherent read (${verdict.why}); mark held $${lastGood}`);
+      holdLog(position.id, "garbage", `🛡️  HOLD  ${short(position.mint)} — incoherent read (${verdict.why}); mark held $${lastGood}`);
       continue;
     }
     if (verdict.kind === "crash") {
@@ -3238,6 +3280,9 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
       await audit("suspect_confirmed", { positionId: position.id, mint: position.mint, price: market.priceUsd, liquidity: market.liquidityUsd });
     }
     suspectCounts.set(position.id, 0);
+    // The mark is coherent again — close out any hold streak so the recovery is
+    // stated once, and so the NEXT entry into a hold prints immediately.
+    clearHoldLog(position.id);
 
     // PHANTOM-PRINT GUARD (operator "Let's fix", 2026-07-28 — MEOW autopsy):
     // one bad aggregator read wrote peak 3.35× against the position's own 110
