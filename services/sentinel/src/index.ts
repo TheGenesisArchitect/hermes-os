@@ -744,7 +744,8 @@ async function saveState(s: SentinelState): Promise<void> {
  */
 type Category =
   | "KILL" | "LIVE" | "RUNNER" | "ARM" | "HEALTH" | "OPS" | "TREND" | "RECAP"
-  | "PULSE" | "SUMMARY" | "MOONSHOT" | "OPEN" | "MOONWIN" | "MOONHALF" | "MOONMISS" | "REVIVAL";
+  | "PULSE" | "SUMMARY" | "MOONSHOT" | "OPEN" | "MOONWIN" | "MOONHALF" | "MOONMISS" | "REVIVAL"
+  | "REPORT";
 
 // PROFESSIONAL STANDARD (operator 2026-07-27: "Only professional emojis or
 // bullets in the Report") — restrained glyph set; the report reads like an
@@ -752,8 +753,62 @@ type Category =
 const CATEGORY_EMOJI: Record<Category, string> = {
   KILL: "⛔", LIVE: "◆", RUNNER: "▲", ARM: "●", HEALTH: "✚", OPS: "🔧",
   TREND: "📈", RECAP: "🧾", PULSE: "📈", SUMMARY: "📊", MOONSHOT: "▲", OPEN: "●",
-  MOONWIN: "✓", MOONHALF: "◑", MOONMISS: "✗", REVIVAL: "↻",
+  MOONWIN: "✓", MOONHALF: "◑", MOONMISS: "✗", REVIVAL: "↻", REPORT: "▦",
 };
+
+// MUTED PUSH CLASSES (operator 2026-08-02: "No more Moon Shot alerts, they
+// don't read well over notifications"). The moonshot family still computes and
+// logs — the DEBRIEF DATA feeds the capture stats — but nothing from it
+// reaches the phone. The hourly REPORT card is the professional replacement.
+const MUTED_PUSHES: Set<Category> = new Set(["MOONSHOT", "MOONWIN", "MOONHALF", "MOONMISS", "RUNNER"]);
+
+// ── HOURLY PAPER-vs-LIVE REPORT (operator 2026-08-02: "hourly cadence …
+// Professional Template Paper vs Live. Balance and all other core KPIs") ─────
+// One card an hour, reads like an investor note on a lock screen: balance,
+// both lanes' P&L and hit rate, seats, manifest activity, risk posture.
+const HOURLY_REPORT_MS = 3_600_000;
+const usd = (x: number | null | undefined): string => {
+  const v = Number(x ?? 0);
+  return `${v < 0 ? "-" : "+"}$${Math.abs(v).toFixed(2)}`;
+};
+async function hourlyKpiReport(): Promise<void> {
+  try {
+    const [r] = (await db.execute(sql`SELECT
+      (SELECT equity_usd::float FROM pnl_snapshots WHERE lane='live' ORDER BY snapped_at DESC LIMIT 1) le,
+      (SELECT equity_usd::float FROM pnl_snapshots WHERE lane='paper' ORDER BY snapped_at DESC LIMIT 1) pe,
+      (SELECT coalesce(sum(realized_pnl_usd::float),0) FROM positions WHERE lane='live' AND closed_at>date_trunc('day',now())) lp,
+      (SELECT coalesce(sum(realized_pnl_usd::float),0) FROM positions WHERE lane='paper' AND closed_at>date_trunc('day',now())) pp,
+      (SELECT count(*) FROM positions WHERE lane='live' AND closed_at>date_trunc('day',now())) ln,
+      (SELECT count(*) FROM positions WHERE lane='live' AND closed_at>date_trunc('day',now()) AND realized_pnl_usd>0) lg,
+      (SELECT count(*) FROM positions WHERE lane='paper' AND closed_at>date_trunc('day',now())) pn,
+      (SELECT count(*) FROM positions WHERE lane='paper' AND closed_at>date_trunc('day',now()) AND realized_pnl_usd>0) pg,
+      (SELECT count(*) FROM positions WHERE lane='live' AND status='open') lo,
+      (SELECT count(*) FROM positions WHERE lane='paper' AND status='open') po,
+      (SELECT count(*) FROM audit_log WHERE action='live_manifest_seat' AND created_at>now()-interval '1 hour') seats,
+      (SELECT count(*) FROM audit_log WHERE action='live_buy_skipped' AND created_at>now()-interval '1 hour') refusals,
+      (SELECT count(*) FROM positions WHERE lane='live' AND exit_reason='live_unsellable' AND closed_at>date_trunc('day',now())) unsell,
+      (SELECT value->'drift'->>'verdict' FROM config WHERE key='formula_manifest_proposal') drift,
+      (SELECT coalesce(jsonb_array_length(value->'deltas'),0) FROM config WHERE key='formula_manifest_proposal') deltas,
+      (SELECT value->>'enabled' FROM config WHERE key='live_kill') kill`)) as unknown as Record<string, any>[];
+    if (!r) return;
+    const hit = (g: number, n: number) => (n > 0 ? `${Math.round((100 * g) / n)}% of ${n}` : "0 closes");
+    await notify(
+      "REPORT",
+      `P ${usd(r.pp)} | L ${usd(r.lp)} · bal $${Number(r.le ?? 0).toFixed(2)}`,
+      [
+        `BALANCE  live $${Number(r.le ?? 0).toFixed(2)} · paper $${Number(r.pe ?? 0).toFixed(0)}`,
+        `TODAY    L ${usd(r.lp)} (${hit(r.lg, r.ln)}) · P ${usd(r.pp)} (${hit(r.pg, r.pn)})`,
+        `SEATS    live ${r.lo}/4 open · paper ${r.po} open · 1h: ${r.seats} seated / ${r.refusals} refused`,
+        `RISK     unsellable today ${r.unsell} · drift ${r.drift ?? "n/a"} (${r.deltas} pending) · kill ${r.kill === "true" ? "ENGAGED" : "clear"}`,
+      ],
+      3,
+    );
+  } catch (err) {
+    console.warn(`hourly report failed: ${err instanceof Error ? err.message.slice(0, 80) : err}`);
+  }
+}
+setTimeout(() => void hourlyKpiReport(), 90_000); // first card ~90s after boot
+setInterval(() => void hourlyKpiReport(), HOURLY_REPORT_MS);
 
 async function notify(
   category: Category,
@@ -764,6 +819,10 @@ async function notify(
   click?: string,
 ): Promise<void> {
   if (!cfg.SENTINEL_NTFY_TOPIC) return;
+  if (MUTED_PUSHES.has(category)) {
+    console.log(`🔇 muted push [${category}] ${subject}`);
+    return;
+  }
   // CARD SYSTEM (2026-07-23): the title IS the verdict — emoji + one number,
   // readable on a lock screen; bodies are <=4 fixed-grammar lines.
   const title = `${CATEGORY_EMOJI[category] ?? ""} ${subject}`.trim();
@@ -775,8 +834,15 @@ async function notify(
       body: JSON.stringify({ topic: cfg.SENTINEL_NTFY_TOPIC, title, message, priority, tags, ...(click ? { click } : {}) }),
       timeoutMs: 10_000,
     });
-    if (!res.ok) console.warn(`sentinel push HTTP ${res.status}: ${title}`);
-    else console.log(`📣 ${title} — ${message.replace(/\n/g, " | ")}`);
+    if (!res.ok) {
+      console.warn(`sentinel push HTTP ${res.status}: ${title}`);
+      // The hourly REPORT is the card the operator actually reads — a 429
+      // (rate budget burned by earlier traffic) must delay it, never drop it.
+      // One retry after the window rolls; the "retried" tag stops a loop.
+      if (res.status === 429 && category === "REPORT" && !tags.includes("retried")) {
+        setTimeout(() => void notify(category, subject, lines, priority, [...tags, "retried"], click), 120_000);
+      }
+    } else console.log(`📣 ${title} — ${message.replace(/\n/g, " | ")}`);
   } catch (err) {
     console.warn(`sentinel push failed: ${err instanceof Error ? err.message : err}`);
   }

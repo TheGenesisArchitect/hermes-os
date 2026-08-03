@@ -40,6 +40,9 @@ export type ManifestTierSpec = {
   crowdNetWinners?: boolean;
   /** venue allowlist for this tier */
   venues: string[];
+  /** refuse relaunched tickers (F6 — the adversary's re-harvest cell; BROKER
+   * #7319 entered one flagged two audit lines above its seat) */
+  refuseSecondLaunch?: boolean;
 };
 
 export type FormulaManifest = {
@@ -57,6 +60,11 @@ export type ManifestInput = {
   winnerHits: number | null;
   rugHits: number | null;
   venue: string | null;
+  /** launchOrder ≥ 2 — a relaunch of an existing ticker */
+  secondLaunch?: boolean;
+  /** latest PSI drift verdict from the optimizer (confidence reaches the door:
+   * "major" refuses ALL seating — the regime the edge was measured in is gone) */
+  driftVerdict?: string | null;
 };
 
 export type ManifestVerdict =
@@ -87,6 +95,7 @@ export function _resetManifestCache(): void {
 }
 
 function tierRefusal(spec: ManifestTierSpec, c: ManifestInput): string | null {
+  if (spec.refuseSecondLaunch && c.secondLaunch) return "second launch (F6 re-harvest cell)";
   if (c.venue == null || !spec.venues.includes(c.venue)) return `venue ${c.venue ?? "unknown"} not in tier list`;
   if (spec.crowdNetWinners) {
     if (c.winnerHits == null || c.rugHits == null) return "crowd unmeasured";
@@ -112,6 +121,8 @@ function tierRefusal(spec: ManifestTierSpec, c: ManifestInput): string | null {
  */
 export function manifestVerdict(m: FormulaManifest | null, c: ManifestInput): ManifestVerdict {
   if (!m) return { kind: "no-manifest" };
+  if (c.driftVerdict === "major")
+    return { kind: "refuse", reason: `manifest v${m.version}: drift-major stand-down — the regime the edge was measured in has shifted; seating resumes when PSI settles`, version: m.version };
   if (c.signature == null || m.genomes[c.signature] == null)
     return { kind: "refuse", reason: `${c.signature ?? "unrouted"} — genome not in manifest v${m.version}`, version: m.version };
   const weight = m.genomes[c.signature]!;

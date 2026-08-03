@@ -1107,8 +1107,14 @@ export async function maybeLiveBuy(
       const manifest = await loadManifest();
       if (manifest) {
         const [tk] = await db.select({ dex: tokens.dex }).from(tokens).where(eq(tokens.mint, mint)).limit(1);
+        // Drift verdict from the optimizer's latest pass — confidence reaches
+        // the door, not just the proposal queue (operator, 2026-08-02 night).
+        const [dr] = (await db.execute(sql`
+          SELECT value->'drift'->>'verdict' AS v FROM config WHERE key='formula_manifest_proposal'`)) as unknown as { v: string | null }[];
         const v = manifestVerdict(manifest, {
           signature: sig?.signature ?? null,
+          secondLaunch: (sig?.launchOrder ?? 1) >= 2,
+          driftVerdict: dr?.v ?? null,
           inflow: sig?.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null,
           buyShare: sig?.triggerBuyShare != null && Number.isFinite(Number(sig.triggerBuyShare)) ? Number(sig.triggerBuyShare) : null,
           winnerHits: sig?.walletWinnerHits ?? null,
