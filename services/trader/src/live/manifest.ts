@@ -62,9 +62,6 @@ export type ManifestInput = {
   venue: string | null;
   /** launchOrder ≥ 2 — a relaunch of an existing ticker */
   secondLaunch?: boolean;
-  /** latest PSI drift verdict from the optimizer (confidence reaches the door:
-   * "major" refuses ALL seating — the regime the edge was measured in is gone) */
-  driftVerdict?: string | null;
 };
 
 export type ManifestVerdict =
@@ -121,8 +118,10 @@ function tierRefusal(spec: ManifestTierSpec, c: ManifestInput): string | null {
  */
 export function manifestVerdict(m: FormulaManifest | null, c: ManifestInput): ManifestVerdict {
   if (!m) return { kind: "no-manifest" };
-  if (c.driftVerdict === "major")
-    return { kind: "refuse", reason: `manifest v${m.version}: drift-major stand-down — the regime the edge was measured in has shifted; seating resumes when PSI settles`, version: m.version };
+  // Drift-major seat veto REMOVED 2026-08-03 (convicted: 76 refusals / 75
+  // winners / 8 rugs overnight — 7d-vs-7d PSI measures composition change,
+  // not current-hour hostility; the rug-tide doors own that on the right
+  // clock). PSI governs optimizer PROPOSALS only. Never re-add here.
   if (c.signature == null || m.genomes[c.signature] == null)
     return { kind: "refuse", reason: `${c.signature ?? "unrouted"} — genome not in manifest v${m.version}`, version: m.version };
   const weight = m.genomes[c.signature]!;
