@@ -33,7 +33,11 @@ import { sql } from "drizzle-orm";
 import type { HermesConfig } from "@hermes/core";
 import { loadManifest, type FormulaManifest } from "./manifest.js";
 
-const OPTIMIZER_INTERVAL_MS = 6 * 60 * 60_000; // 6h — four looks a day
+// HOURLY (operator "Let's fix", 2026-08-03): the drift verdict gates every
+// seat in real time, so a 6h clock held the stand-down through a regime flip —
+// 6 refused winners / 0 rugs / +$22 counterfactual in one 3h window. The
+// verdict must move at the speed of the gate it feeds.
+const OPTIMIZER_INTERVAL_MS = 60 * 60_000;
 const FIRST_RUN_DELAY_MS = 5 * 60_000; // let the boot settle first
 const WINDOW_DAYS = 14; // rolling window: self-optimizing means the fence moves
 const DEAD_POOL_LIQ = 1200;
