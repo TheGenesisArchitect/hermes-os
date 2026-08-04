@@ -34,7 +34,7 @@ async function page(): Promise<string> {
     FROM queue_snapshots WHERE snapped_at = (SELECT max(snapped_at) FROM queue_snapshots) ORDER BY rank LIMIT 15`;
   const mani = await q`SELECT key, value FROM config WHERE key IN ('formula_manifest','formula_manifest_proposal')`;
   const attr = await q`
-    SELECT left(coalesce(al.details->>'reason',''),60) gate, count(*) n,
+    SELECT coalesce(al.details->>'reason','') gate, count(*) n,
       round(sum(pp.pnl)::numeric,2) paper_counterfactual
     FROM audit_log al LEFT JOIN LATERAL (
       SELECT sum(realized_pnl_usd::float) pnl FROM positions p
@@ -73,7 +73,7 @@ deltas: ${esc(JSON.stringify((prop as any).deltas ?? []))}<br>
 withheld: ${esc(JSON.stringify((prop as any).withheldByDrift ?? []))}</td></tr></table>
 <h2>ATTRIBUTION — 24h refusals judged by paper counterfactual</h2>
 <table><tr><th>gate</th><th>n</th><th>paper realized on refused mints</th></tr>
-${attr.map((r) => `<tr><td>${esc(r.gate)}</td><td>${esc(r.n)}</td><td>${usd(r.paper_counterfactual)}</td></tr>`).join("")}
+${attr.map((r) => `<tr><td style="max-width:640px">${esc(r.gate)}</td><td>${esc(r.n)}</td><td>${usd(r.paper_counterfactual)}</td></tr>`).join("")}
 </table>
 <p class="d">Governing theorem: certified execution converts the distribution to convex capture — selection prioritizes scarce
 execution throughput, never manufactures scarcity. Mode changes are operator ratification acts; this console has no controls.</p>`;
