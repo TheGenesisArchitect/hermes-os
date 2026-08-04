@@ -1,3 +1,14 @@
+// CRASH-PROOFING (2026-08-04: a Postgres CONNECT_TIMEOUT escaped a background
+// task, Node exited, and BOTH lanes were dead for 6 hours — the day's biggest
+// loss was at-bats, not trades). A background blip must log and continue;
+// only the tick loop's own throw semantics decide liveness. Availability is
+// the account's first asset.
+process.on("unhandledRejection", (err) => {
+  console.error(`⚠️ unhandled rejection (survived): ${err instanceof Error ? err.message.slice(0, 200) : err}`);
+});
+process.on("uncaughtException", (err) => {
+  console.error(`⚠️ uncaught exception (survived): ${err instanceof Error ? (err.stack ?? err.message).slice(0, 300) : err}`);
+});
 import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
 loadEnv({ path: resolve(import.meta.dirname, "../../../.env") });
