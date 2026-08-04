@@ -30,6 +30,7 @@ import {
   convictionBand,
   fetchJupiterPrice,
   profileOf,
+  resilientFetch,
   signatureExitOverrides,
   sizeFraction,
   type HermesConfig,
@@ -583,8 +584,28 @@ async function parseSettledSwap(
   return { signature, outUi: Math.max(0, outUi), feeSol: n(info?.meta?.fee) / 1e9, landMs };
 }
 
+// SOL-PRICE FALLBACK CHAIN (operator 2026-08-04: "every minute we are down is
+// an opportunity lost"). The 08-04 Jupiter outage proved a single-source SOL
+// price blocks EVERY entry while exits keep working. Chain: Jupiter → the
+// deepest DexScreener WSOL pair → last-known (≤10 min). Entries stay open
+// through an aggregator outage; a triple failure still refuses cleanly.
+let solPxCache: { px: number; at: number } | null = null;
 async function solPriceUsd(cfg: HermesConfig): Promise<number | null> {
-  return fetchJupiterPrice(cfg.JUPITER_PRICE_URL, WSOL_MINT).catch(() => null);
+  const j = await fetchJupiterPrice(cfg.JUPITER_PRICE_URL, WSOL_MINT).catch(() => null);
+  if (j != null && j > 0) { solPxCache = { px: j, at: Date.now() }; return j; }
+  try {
+    const res = await resilientFetch(`https://api.dexscreener.com/latest/dex/tokens/${WSOL_MINT}`, { timeoutMs: 5_000 });
+    if (res.ok) {
+      const b = (await res.json()) as { pairs?: { priceUsd?: string; liquidity?: { usd?: number } }[] };
+      const best = (b.pairs ?? [])
+        .filter((p) => Number(p.priceUsd) > 0)
+        .sort((a, c) => (c.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
+      const px = Number(best?.priceUsd ?? 0);
+      if (px > 0) { solPxCache = { px, at: Date.now() }; return px; }
+    }
+  } catch { /* fall through to last-known */ }
+  if (solPxCache && Date.now() - solPxCache.at < 10 * 60_000) return solPxCache.px;
+  return null;
 }
 
 // ── the Sizer: regime + wallet-balance aware ──────────────────────────────────
