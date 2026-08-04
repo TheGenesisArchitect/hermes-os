@@ -271,6 +271,32 @@ async function snapshotShadowQueue(table: Record<string, SignatureStat>, manifes
   console.log(`🗂️ shadow queue snapshot — ${scored.length} candidate(s), top: ${scored[0]!.symbol ?? "?"} (${scored[0]!.signature}, CAEV ${scored[0]!.score.toFixed(2)})`);
 }
 
+/** SELECTION DIAL v0 — ECR TELEMETRY (governing theorem, ratified 2026-08-03).
+ *  ECR = certified-executable seat capacity/hour ÷ qualified INDEPENDENT-WAVE
+ *  arrivals/hour (wave-collapse is law: same symbol = one exposure). Read-only:
+ *  informs the operator hourly; Mode changes remain ratification acts. Capacity
+ *  v0 is a conservative constant (certify+buy ~90s serialized incl. bursts →
+ *  40/h); replaced by measured p95 once the burst harness calibrates it. */
+const DIAL_CAPACITY_PER_H = 40;
+async function selectionDialTelemetry(): Promise<void> {
+  const [w] = (await db.execute(sql`
+    SELECT count(DISTINCT coalesce(t.symbol, co.mint)) AS waves
+    FROM candidate_outcomes co LEFT JOIN tokens t ON t.mint = co.mint
+    WHERE co.confirmed_at > now() - interval '1 hour'`)) as unknown as { waves: number }[];
+  const [k] = (await db.execute(sql`SELECT value->>'enabled' AS e FROM config WHERE key='live_kill'`)) as unknown as { e: string }[];
+  const [o] = (await db.execute(sql`SELECT count(*) AS n FROM positions WHERE lane='live' AND status='open'`)) as unknown as { n: number }[];
+  const waves = Number(w?.waves ?? 0);
+  const ecr = waves > 0 ? +(DIAL_CAPACITY_PER_H / waves).toFixed(2) : null;
+  const dial = {
+    mode: k?.e === "true" ? 0 : 1, // 0 Halted / 1 Core-Only; 2-3 exist only via ratification
+    ecr, wavesPerH: waves, capacityPerH: DIAL_CAPACITY_PER_H,
+    openSeats: Number(o?.n ?? 0), at: new Date().toISOString(),
+  };
+  await db.execute(sql`INSERT INTO config (key, value) VALUES ('selection_dial', ${JSON.stringify(dial)}::jsonb)
+    ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now()`);
+  console.log(`🎛️ dial: MODE ${dial.mode} · ECR ${ecr ?? "∞"} (${waves} waves/h vs ${DIAL_CAPACITY_PER_H}/h capacity) · seats ${dial.openSeats}`);
+}
+
 let optimizerStarted = false;
 export function startManifestOptimizer(cfg: HermesConfig): void {
   if (optimizerStarted || !cfg.FORMULA_MANIFEST_ENABLED) return;
@@ -285,6 +311,8 @@ export function startManifestOptimizer(cfg: HermesConfig): void {
       // optimizing and says so: promotions/reweights are withheld (they were
       // fitted to the regime that just ended), demotions survive.
       const gated = applyDriftGate(proposal.deltas, drift);
+      await selectionDialTelemetry().catch((e) =>
+        console.warn(`dial telemetry failed: ${e instanceof Error ? e.message.slice(0, 60) : e}`));
       await snapshotShadowQueue(table, active.version).catch((e) =>
         console.warn(`shadow snapshot failed (next pass retries): ${e instanceof Error ? e.message.slice(0, 60) : e}`));
       const full: ManifestProposal = {
