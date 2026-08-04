@@ -237,6 +237,40 @@ async function refusalCounterfactual(): Promise<ManifestProposal["refusalCounter
   return { refused: Number(r.refused), paperGreens: Number(r.greens), paperDead: Number(r.dead) };
 }
 
+/** PHASE II GATE #2 — SHADOW QUEUE SNAPSHOTS (approved plan, 2026-08-03).
+ *  Every optimizer pass also records what the Winner Queue WOULD seat right
+ *  now: armed candidates scored by confidence-adjusted EV (CAEV = adjEV/t ×
+ *  n/(n+50)), ranked, appended immutably with the manifest version. This is
+ *  the shadow record the kill-switch re-arming gate requires — evidence
+ *  accrues hourly whether or not live trades. Additive table, never on the
+ *  hot path; failures never reach the trading loop. */
+const CAEV_K = 50;
+async function snapshotShadowQueue(table: Record<string, SignatureStat>, manifestVersion: number): Promise<void> {
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS queue_snapshots (
+    id serial PRIMARY KEY, snapped_at timestamptz NOT NULL DEFAULT now(),
+    manifest_version int, mint text, symbol text, dex text, signature text,
+    cell_ev double precision, confidence double precision, score double precision, rank int)`);
+  const cands = (await db.execute(sql`
+    SELECT co.mint, t.symbol, t.dex, co.signature
+    FROM candidate_outcomes co JOIN tokens t ON t.mint = co.mint
+    WHERE co.confirmed_at > now() - interval '30 minutes' AND co.signature IS NOT NULL`)) as unknown as
+    { mint: string; symbol: string | null; dex: string | null; signature: string }[];
+  if (!cands.length) return;
+  const scored = cands.map((c) => {
+    const s = table[c.signature];
+    const conf = s ? s.n / (s.n + CAEV_K) : 0;
+    return { ...c, ev: s?.evPerTrade ?? 0, conf, score: (s?.evPerTrade ?? 0) * conf };
+  }).sort((a, b) => b.score - a.score);
+  for (let i = 0; i < scored.length; i++) {
+    const c = scored[i]!;
+    await db.execute(sql`INSERT INTO queue_snapshots
+      (manifest_version, mint, symbol, dex, signature, cell_ev, confidence, score, rank)
+      VALUES (${manifestVersion}, ${c.mint}, ${c.symbol}, ${c.dex}, ${c.signature},
+              ${c.ev}, ${+c.conf.toFixed(4)}, ${+c.score.toFixed(4)}, ${i + 1})`);
+  }
+  console.log(`🗂️ shadow queue snapshot — ${scored.length} candidate(s), top: ${scored[0]!.symbol ?? "?"} (${scored[0]!.signature}, CAEV ${scored[0]!.score.toFixed(2)})`);
+}
+
 let optimizerStarted = false;
 export function startManifestOptimizer(cfg: HermesConfig): void {
   if (optimizerStarted || !cfg.FORMULA_MANIFEST_ENABLED) return;
@@ -251,6 +285,8 @@ export function startManifestOptimizer(cfg: HermesConfig): void {
       // optimizing and says so: promotions/reweights are withheld (they were
       // fitted to the regime that just ended), demotions survive.
       const gated = applyDriftGate(proposal.deltas, drift);
+      await snapshotShadowQueue(table, active.version).catch((e) =>
+        console.warn(`shadow snapshot failed (next pass retries): ${e instanceof Error ? e.message.slice(0, 60) : e}`));
       const full: ManifestProposal = {
         ...proposal,
         deltas: gated.deltas,
