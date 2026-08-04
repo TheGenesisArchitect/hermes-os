@@ -1,0 +1,86 @@
+/**
+ * CAPITAL ALLOCATION CONSOLE v0 (approved plan, gate #3 vehicle).
+ * READ-ONLY BY CONSTRUCTION: zero-dependency HTTP server (no framework — more
+ * insulated than the planned Next shell, which becomes the P2 upgrade), one
+ * SQL client, SELECT-only, no wallet env, port 3900, own log. A crash here
+ * touches nothing. Four v1 workspaces on one auto-refreshing page:
+ * Command · Opportunity Market (shadow) · Manifest & Optimizer · Attribution.
+ * Run: npx tsx apps/capital-console/server.ts   (log: capital-console.log)
+ */
+import http from "node:http";
+import fs from "node:fs"; import path from "node:path"; import { fileURLToPath } from "node:url";
+import postgres from "../../packages/db/node_modules/postgres/src/index.js";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const env = fs.readFileSync(path.join(root, ".env"), "utf8");
+const url = /DATABASE_URL=(.+)/.exec(env)?.[1]?.trim() ?? "postgres://hermes:hermes@localhost:5433/hermes";
+const q = postgres(url, { idle_timeout: 10, max: 3 });
+const esc = (s: unknown) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]!));
+const usd = (x: unknown) => { const v = Number(x ?? 0); return `${v < 0 ? "−" : "+"}$${Math.abs(v).toFixed(2)}`; };
+
+async function page(): Promise<string> {
+  const [cmd] = await q`SELECT
+    (SELECT equity_usd::float FROM pnl_snapshots WHERE lane='live' ORDER BY snapped_at DESC LIMIT 1) le,
+    (SELECT equity_usd::float FROM pnl_snapshots WHERE lane='paper' ORDER BY snapped_at DESC LIMIT 1) pe,
+    (SELECT coalesce(sum(realized_pnl_usd::float),0) FROM positions WHERE lane='live' AND closed_at>date_trunc('day',now())) lp,
+    (SELECT coalesce(sum(realized_pnl_usd::float),0) FROM positions WHERE lane='paper' AND closed_at>date_trunc('day',now())) pp,
+    (SELECT count(*) FROM positions WHERE lane='live' AND status='open') seats,
+    (SELECT value FROM config WHERE key='live_kill') kill,
+    (SELECT value FROM config WHERE key='selection_dial') dial,
+    (SELECT value->>'version' FROM config WHERE key='formula_manifest') mv,
+    (SELECT coalesce(jsonb_array_length(value->'deltas'),0) FROM config WHERE key='formula_manifest_proposal') deltas`;
+  const dial = (cmd!.dial ?? {}) as Record<string, unknown>;
+  const kill = (cmd!.kill ?? {}) as Record<string, unknown>;
+  const market = await q`SELECT rank, symbol, dex, signature, cell_ev, confidence, score, tier
+    FROM queue_snapshots WHERE snapped_at = (SELECT max(snapped_at) FROM queue_snapshots) ORDER BY rank LIMIT 15`;
+  const mani = await q`SELECT key, value FROM config WHERE key IN ('formula_manifest','formula_manifest_proposal')`;
+  const attr = await q`
+    SELECT left(coalesce(al.details->>'reason',''),60) gate, count(*) n,
+      round(sum(pp.pnl)::numeric,2) paper_counterfactual
+    FROM audit_log al LEFT JOIN LATERAL (
+      SELECT sum(realized_pnl_usd::float) pnl FROM positions p
+      WHERE p.lane='paper' AND p.mint=al.details->>'mint' AND p.closed_at > al.created_at) pp ON true
+    WHERE al.action='live_buy_skipped' AND al.created_at > now() - interval '24 hours'
+    GROUP BY 1 ORDER BY n DESC LIMIT 10`;
+  const m = Object.fromEntries(mani.map((r) => [r.key, r.value]));
+  const manifest = (m["formula_manifest"] ?? {}) as Record<string, unknown>;
+  const prop = (m["formula_manifest_proposal"] ?? {}) as Record<string, unknown>;
+  return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="30">
+<title>Capital Allocation Console</title>
+<style>body{font:13px/1.5 ui-monospace,monospace;background:#0b0e14;color:#cdd6f4;margin:2rem;max-width:1100px}
+h1{font-size:16px;color:#89b4fa}h2{font-size:13px;color:#a6e3a1;border-bottom:1px solid #313244;margin-top:1.6rem}
+table{border-collapse:collapse;width:100%}td,th{padding:2px 10px;text-align:left;border-bottom:1px solid #1e1e2e}
+.k{color:#f38ba8}.g{color:#a6e3a1}.d{color:#7f849c}</style>
+<h1>▦ CAPITAL ALLOCATION CONSOLE <span class="d">· read-only · refresh 30s · ${new Date().toISOString().slice(11, 19)}Z</span></h1>
+<h2>COMMAND</h2>
+<table><tr>
+<td>live equity <b>$${Number(cmd!.le ?? 0).toFixed(2)}</b></td><td>paper $${Number(cmd!.pe ?? 0).toFixed(0)}</td>
+<td>today L <b>${usd(cmd!.lp)}</b> · P ${usd(cmd!.pp)}</td><td>seats ${esc(cmd!.seats)}/4</td></tr><tr>
+<td>kill <b class="${kill.enabled === "true" || kill.enabled === true ? "k" : "g"}">${kill.enabled === "true" || kill.enabled === true ? "ENGAGED" : "clear"}</b></td>
+<td>dial MODE ${esc(dial.mode)} · ECR ${esc(dial.ecr ?? "∞")}</td>
+<td>waves/h ${esc(dial.wavesPerH)} vs cap ${esc(dial.capacityPerH)}/h</td>
+<td>manifest v${esc(cmd!.mv)} · ${esc(cmd!.deltas)} proposal delta(s)</td></tr></table>
+<div class="d">${esc(kill.reason ?? "")}</div>
+<h2>OPPORTUNITY MARKET — latest shadow queue (CAEV-ranked; nothing here trades)</h2>
+<table><tr><th>#</th><th>asset</th><th>venue</th><th>genome</th><th>cell EV/t</th><th>conf</th><th>score</th><th>tier</th></tr>
+${market.map((r) => `<tr><td>${esc(r.rank)}</td><td>${esc(r.symbol)}</td><td>${esc(r.dex)}</td><td>${esc(r.signature)}</td><td>${usd(r.cell_ev)}</td><td>${Number(r.confidence).toFixed(2)}</td><td><b>${Number(r.score).toFixed(2)}</b></td><td>${esc(r.tier)}</td></tr>`).join("")}
+</table>
+<h2>MANIFEST v${esc(manifest.version)} & OPTIMIZER PROPOSAL</h2>
+<table><tr><td style="vertical-align:top;width:50%"><b>genomes</b><br>${esc(JSON.stringify(manifest.genomes ?? {}))}<br>
+<b>elite</b> ${esc(JSON.stringify((manifest as any).elite ?? {}))}<br><b>filler</b> ${esc(JSON.stringify((manifest as any).filler ?? {}))}</td>
+<td style="vertical-align:top"><b>proposal</b> (basis v${esc(prop.basedOnVersion)}, ${esc((prop as any).computedAt ?? "")})<br>
+drift: ${esc(JSON.stringify((prop as any).drift ?? {}))}<br>
+deltas: ${esc(JSON.stringify((prop as any).deltas ?? []))}<br>
+withheld: ${esc(JSON.stringify((prop as any).withheldByDrift ?? []))}</td></tr></table>
+<h2>ATTRIBUTION — 24h refusals judged by paper counterfactual</h2>
+<table><tr><th>gate</th><th>n</th><th>paper realized on refused mints</th></tr>
+${attr.map((r) => `<tr><td>${esc(r.gate)}</td><td>${esc(r.n)}</td><td>${usd(r.paper_counterfactual)}</td></tr>`).join("")}
+</table>
+<p class="d">Governing theorem: certified execution converts the distribution to convex capture — selection prioritizes scarce
+execution throughput, never manufactures scarcity. Mode changes are operator ratification acts; this console has no controls.</p>`;
+}
+
+http.createServer((req, res) => {
+  if (req.method !== "GET") { res.writeHead(405).end(); return; }
+  page().then((html) => { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); res.end(html); })
+    .catch((e) => { res.writeHead(500, { "content-type": "text/plain" }); res.end(`console error (trading unaffected): ${e instanceof Error ? e.message : e}`); });
+}).listen(3900, () => console.log("▦ capital console listening on http://localhost:3900 (read-only)"));
