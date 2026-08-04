@@ -261,11 +261,15 @@ async function snapshotShadowQueue(table: Record<string, SignatureStat>, manifes
     const conf = s ? s.n / (s.n + CAEV_K) : 0;
     return { ...c, ev: s?.evPerTrade ?? 0, conf, score: (s?.evPerTrade ?? 0) * conf };
   }).sort((a, b) => b.score - a.score);
+  // ONE timestamp per PASS (fix 2026-08-04): per-row now() fragmented each
+  // pass into single-row "snapshots" and broke latest-queue reads. The pass
+  // is the atomic unit of the shadow record; every row shares its stamp.
+  const passAt = new Date().toISOString();
   for (let i = 0; i < scored.length; i++) {
     const c = scored[i]!;
     await db.execute(sql`INSERT INTO queue_snapshots
-      (manifest_version, mint, symbol, dex, signature, cell_ev, confidence, score, rank)
-      VALUES (${manifestVersion}, ${c.mint}, ${c.symbol}, ${c.dex}, ${c.signature},
+      (snapped_at, manifest_version, mint, symbol, dex, signature, cell_ev, confidence, score, rank)
+      VALUES (${passAt}::timestamptz, ${manifestVersion}, ${c.mint}, ${c.symbol}, ${c.dex}, ${c.signature},
               ${c.ev}, ${+c.conf.toFixed(4)}, ${+c.score.toFixed(4)}, ${i + 1})`);
   }
   console.log(`🗂️ shadow queue snapshot — ${scored.length} candidate(s), top: ${scored[0]!.symbol ?? "?"} (${scored[0]!.signature}, CAEV ${scored[0]!.score.toFixed(2)})`);
