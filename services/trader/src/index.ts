@@ -66,9 +66,10 @@ console.log(
 );
 console.log(liveLaneStatus(cfg));
 startSniperRefresh(cfg);
-// The self-optimizing loop (L1): rolling rug-adjusted recompute → PROPOSALS
-// against the active manifest. Arming a proposal stays the operator's word.
-startManifestOptimizer(cfg);
+// The self-optimizing loop (L1) runs in its OWN supervised process now
+// (optimizer-main.ts, de-tenanting hotfix 2026-08-04) — nothing shares the
+// hot path that doesn't trade. In-trader start is a flagged fallback only.
+if (cfg.OPTIMIZER_IN_TRADER) startManifestOptimizer(cfg);
 if (cfg.LIVE_TRADING_ENABLED) {
   console.warn(
     "⚠️  LIVE LANE ENABLED — real capital. Confirm docs/GO_LIVE_GATE.md gates G1–G6 all PASS before funding.",

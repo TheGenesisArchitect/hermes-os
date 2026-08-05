@@ -307,6 +307,9 @@ export function startManifestOptimizer(cfg: HermesConfig): void {
   optimizerStarted = true;
   const runOnce = async (): Promise<void> => {
     try {
+      // Never camp on the DB (de-tenanting hotfix): heavy scans abort at 20s
+      // and retry next hour rather than contending with anything else.
+      await db.execute(sql`SET statement_timeout = '20s'`).catch(() => {});
       const active = await loadManifest();
       if (!active) return; // fail-open lane — nothing to optimize against
       const [table, cf, drift] = await Promise.all([signatureTable(), refusalCounterfactual(), featureDrift()]);

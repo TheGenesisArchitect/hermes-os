@@ -1735,6 +1735,9 @@ const envSchema = z.object({
   // by editing gates. Fail-open: no manifest row → live trades as if this
   // flag were off (solvency rails are upstream and unaffected).
   FORMULA_MANIFEST_ENABLED: z.coerce.boolean().default(false),
+  // De-tenanting (2026-08-04): the optimizer's evidence engine runs as its
+  // own supervised process; this flag is the in-trader fallback, default off.
+  OPTIMIZER_IN_TRADER: z.coerce.boolean().default(false),
   LIVE_CLIFFSAFE_DOOR: z.coerce.boolean().default(false),
   LIVE_SUBFLOOR_DOOR: z.coerce.boolean().default(false),
   LIVE_DUST_CLOSE_USD: z.coerce.number().default(0.02),
