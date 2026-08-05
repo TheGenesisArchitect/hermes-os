@@ -254,3 +254,46 @@ describe("market truth — the look-ahead invariant", () => {
     assert.equal(truthAgreement(T(1, 1.0), undefined), null);
   });
 });
+
+// ─── F2: HIGH-WATER RUNG EVALUATION ──────────────────────────────────────────
+// THE CAPTURE FIX (tech spec v2 §2). Rungs must arm on the maximum excursion
+// the tape recorded between polls — the market DID trade there — while the
+// FILL still takes the live price, and protective exits never see the
+// excursion at all.
+describe("F2 high-water rung evaluation", () => {
+  const T = (at: number, priceUsd: number, liquidityUsd = 20_000) => ({ at, priceUsd, liquidityUsd });
+
+  it("arms a rung the manager's polls stepped over (the 74%-miss defect)", async () => {
+    const { highWaterCrossing } = await import("@hermes/core");
+    // poll at t=1000 saw 1.02x; poll at t=4000 saw 1.03x; the tape holds 1.19x
+    // in between — the incumbent banks nothing, F2 banks the rung.
+    const tape = [T(1000, 1.02), T(2000, 1.19), T(3000, 1.05), T(4000, 1.03)];
+    const r = highWaterCrossing(tape, 1.0, 1.15, 9000);
+    assert.ok(r, "the between-poll crossing must arm");
+    assert.equal(r!.crossed.priceUsd, 1.19);
+  });
+
+  it("the fill price is never the excursion price", async () => {
+    const { highWaterCrossing } = await import("@hermes/core");
+    const tape = [T(1000, 1.02), T(2000, 1.19), T(3000, 1.05), T(4000, 1.03)];
+    const r = highWaterCrossing(tape, 1.0, 1.15, 9000);
+    assert.notEqual(r!.fill.priceUsd, r!.crossed.priceUsd, "we cannot transact at the spike");
+    assert.equal(r!.fill.priceUsd, 1.03, "fill lands 2 ticks later, at a real bid");
+  });
+
+  it("a phantom excursion on a dust pool cannot arm anything", async () => {
+    const { highWaterCrossing } = await import("@hermes/core");
+    const tape = [T(1000, 1.0), T(2000, 40, 300), T(3000, 1.01)];
+    assert.equal(highWaterCrossing(tape, 1.0, 1.15, 9000), null);
+  });
+
+  it("the manager gate is profit-scoped and protective-safe in source", async () => {
+    const s = await (await import("node:fs")).readFileSync(new URL("../src/paper.ts", import.meta.url), "utf8");
+    const i = s.indexOf("F2 APPLIED");
+    assert.ok(i > 0, "the applied gate must be present and documented");
+    const branch = s.slice(i, i + 1800);
+    assert.match(branch, /market\.priceUsd >= n\(position\.entryPriceUsd\)/, "only positions in profit may use an excursion");
+    assert.match(branch, /!\/take_profit\|profit_lock\|basket\/\.test\(exit\.reason\)/, "any non-TP verdict must be re-derived from the live mark");
+    assert.match(branch, /audit\("rung_high_water"/, "every high-water-armed rung must be audited");
+  });
+});

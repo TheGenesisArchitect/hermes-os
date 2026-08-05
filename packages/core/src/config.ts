@@ -1742,6 +1742,11 @@ const envSchema = z.object({
   // quorum (recorder tape + aggregator) instead of the aggregator alone.
   // Paper-first, flagged; off = exactly the prior behavior.
   MARK_SOURCE_TRUTH: z.coerce.boolean().default(false),
+  // F2 — HIGH-WATER RUNG EVALUATION (tech spec v2 §2). Rungs evaluate against
+  // the maximum excursion the tape recorded BETWEEN polls, not the
+  // instantaneous mark: 74% of qualifying rungs never fired because the
+  // crossing happened between manager polls. Requires MARK_SOURCE_TRUTH.
+  RUNG_HIGH_WATER: z.coerce.boolean().default(false),
   LIVE_CLIFFSAFE_DOOR: z.coerce.boolean().default(false),
   LIVE_SUBFLOOR_DOOR: z.coerce.boolean().default(false),
   LIVE_DUST_CLOSE_USD: z.coerce.number().default(0.02),

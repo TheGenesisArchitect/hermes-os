@@ -14,6 +14,7 @@ import {
   tickFrom,
   canonicalMark,
   truthAgreement,
+  armable,
   type TruthTick,
   type HermesConfig,
   type LearnedProfile,
@@ -3049,6 +3050,8 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
   // Quorum: whichever source is fresher and more confident wins, per mint —
   // ONE dark feed can no longer blind the book. Flagged; off = prior behavior.
   let truthUsed = 0, truthAgree: number[] = [];
+  // Per-mint high-water mark observed on the tape since the last poll (F2).
+  const highWaterByMint = new Map<string, TruthTick>();
   if (cfg.MARK_SOURCE_TRUTH && open.length) {
     try {
       // NOTE: `mint = ANY(${array})` does NOT bind through drizzle's sql
@@ -3062,6 +3065,32 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
           AND snapped_at > now() - interval '2 minutes'
         ORDER BY mint, snapped_at DESC`)) as unknown as
         { mint: string; px: number; liq: number; at: number }[];
+      // ── F2: HIGH-WATER RUNG EVALUATION (tech spec v2 §2) ──────────────────
+      // THE CAPTURE FIX. The manager polls every ~2-3s; the recorder tape
+      // holds every tick in between. 74% of qualifying rungs never fired
+      // because the crossing happened BETWEEN polls (specimen #7717: recorder
+      // peak 4.75x, manager saw 0.65x on one tick). Institutional barrier
+      // detection uses MAXIMUM EXCURSION, not last sample — the market DID
+      // trade there. Only ticks the manager could already have seen count
+      // (recognizable(): look-ahead invariant), and only armable prints.
+      if (cfg.RUNG_HIGH_WATER) {
+        const since = new Date(Date.now() - 120_000);
+        const window = (await db.execute(sql`
+          SELECT mint, price_usd::float px, liquidity_usd::float liq,
+            extract(epoch from snapped_at)*1000 AS at
+          FROM candidate_ticks WHERE mint IN (${mintList}) AND snapped_at > ${since}
+          ORDER BY mint, snapped_at`)) as unknown as
+          { mint: string; px: number; liq: number; at: number }[];
+        for (const row of window) {
+          const t: TruthTick = { at: Number(row.at), priceUsd: Number(row.px), liquidityUsd: Number(row.liq) };
+          const prev = highWaterByMint.get(row.mint);
+          // recognizable: a tick at/after "now" is not yet known. armable:
+          // confidence + the peak-sanity rules (liq >= $1k, <=3x jump).
+          if (t.at >= Date.now()) continue;
+          if (!armable(t, "recorder", prev?.priceUsd ?? null)) continue;
+          if (!prev || t.priceUsd > prev.priceUsd) highWaterByMint.set(row.mint, t);
+        }
+      }
       const now = Date.now();
       for (const row of tape) {
         const agg = markets.get(row.mint) ?? null;
@@ -3464,7 +3493,33 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
     const ecfg = position.signature
       ? { ...cfg, ...signatureExitOverrides(position.signature as Signature, await learnedProfile(position.signature as Signature)) }
       : cfg;
-    let exit = decideExit(ecfg, position, market, peak, call, await entryLiquidityFor(position, ecfg), await lpUnlockedFor(position.mint));
+    // ── F2 APPLIED: the rung sees the excursion, the fill takes the real bid ──
+    // Barrier recognition uses the tape's high-water since the last poll; the
+    // SALE still executes at the CURRENT market price (`market` is untouched
+    // below the decision), so this can never book a fill at a price we cannot
+    // transact. Scoped to positions IN PROFIT: a high-water can only arm a
+    // take-profit rung, never suppress a stop, floor or drain cut — those
+    // continue to evaluate on the live mark exactly as before.
+    let rungMarket = market;
+    const hw = cfg.RUNG_HIGH_WATER ? highWaterByMint.get(position.mint) : undefined;
+    if (hw && hw.priceUsd > market.priceUsd && market.priceUsd >= n(position.entryPriceUsd)) {
+      rungMarket = { ...market, priceUsd: hw.priceUsd };
+    }
+    let exit = decideExit(ecfg, position, rungMarket, peak, call, await entryLiquidityFor(position, ecfg), await lpUnlockedFor(position.mint));
+    // A high-water-armed rung is only honoured for TAKE-PROFIT classes; any
+    // protective verdict is re-derived from the live mark so an excursion can
+    // never talk the manager out of (or into) a protective exit.
+    if (rungMarket !== market && exit && !/take_profit|profit_lock|basket/.test(exit.reason)) {
+      exit = decideExit(ecfg, position, market, peak, call, await entryLiquidityFor(position, ecfg), await lpUnlockedFor(position.mint));
+    }
+    if (rungMarket !== market && exit && /take_profit/.test(exit.reason)) {
+      await audit("rung_high_water", {
+        positionId: position.id, mint: position.mint, reason: exit.reason,
+        liveMark: +(market.priceUsd / n(position.entryPriceUsd)).toFixed(4),
+        highWaterMark: +(hw!.priceUsd / n(position.entryPriceUsd)).toFixed(4),
+        note: "rung armed on tape excursion between polls; fill at live price",
+      });
+    }
     // Pre-arm hard-stop WICK CONFIRMATION: sell only after the read stays below
     // the stop for HARD_STOP_CONFIRM_TICKS consecutive polls. Every historical
     // hard-stop fired on a single below-stop tick and 63% recovered past TP0
