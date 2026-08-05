@@ -47,6 +47,27 @@ async function page(): Promise<string> {
     SELECT count(*) FILTER (WHERE pk>=1.15 AND tier<>'moonshot') qualified,
            count(*) FILTER (WHERE pk>=1.15 AND tier<>'moonshot' AND tp>0) fired FROM c`;
   const [ho] = await q`SELECT count(*) n FROM audit_log WHERE action='feed_outage' AND created_at > now() - interval '24 hours'`;
+  // ── OFFER vs CAPTURE — THE CORE KPI (operator, 2026-08-05) ────────────────
+  // "The success of our system is capturing what the market is ACTUALLY
+  // offering." Offered = size × (tape high-water on a LIVE pool ÷ entry − 1),
+  // i.e. what a position could have paid at its best transactable moment.
+  // Captured = realized. Target band 40–70%. This leads the page because it
+  // is the number that decides whether live is released.
+  const capRows = await q`
+    WITH t AS (
+      SELECT p.tier, p.size_usd::float sz, p.realized_pnl_usd::float pnl, p.entry_price_usd::float e,
+        (SELECT max(ct.price_usd::float) FROM candidate_ticks ct WHERE ct.mint = p.mint
+           AND ct.snapped_at BETWEEN p.opened_at AND p.closed_at AND ct.liquidity_usd::float >= 1200) hi
+      FROM positions p WHERE p.lane='paper' AND p.status='closed'
+        AND p.closed_at > now() - interval '24 hours' AND p.entry_price_usd::float > 0)
+    SELECT tier, count(*) n,
+      count(*) FILTER (WHERE hi/e >= 1.3) offered_13,
+      round(sum(sz*(hi/e-1)) FILTER (WHERE hi > e)::numeric, 2) offered,
+      round(sum(pnl)::numeric, 2) captured
+    FROM t WHERE hi IS NOT NULL GROUP BY tier ORDER BY offered DESC NULLS LAST`;
+  const [f2] = await q`SELECT count(*) n FROM audit_log WHERE action='rung_high_water' AND created_at > now() - interval '24 hours'`;
+  const capTotal = capRows.reduce((a, r) => ({ o: a.o + Number(r.offered ?? 0), c: a.c + Number(r.captured ?? 0) }), { o: 0, c: 0 });
+  const pctOf = (c: number, o: number) => (o > 0 ? ((100 * c) / o).toFixed(1) + "%" : "—");
   const mani = await q`SELECT key, value FROM config WHERE key IN ('formula_manifest','formula_manifest_proposal')`;
   const attr = await q`
     SELECT coalesce(al.details->>'reason','') gate, count(*) n,
@@ -66,6 +87,12 @@ h1{font-size:16px;color:#89b4fa}h2{font-size:13px;color:#a6e3a1;border-bottom:1p
 table{border-collapse:collapse;width:100%}td,th{padding:2px 10px;text-align:left;border-bottom:1px solid #1e1e2e}
 .k{color:#f38ba8}.g{color:#a6e3a1}.d{color:#7f849c}</style>
 <h1>▦ CAPITAL ALLOCATION CONSOLE <span class="d">· read-only · refresh 30s · ${new Date().toISOString().slice(11, 19)}Z</span></h1>
+<h2>OFFER vs CAPTURE — 24h, trades we TOOK <span class="d">· the core KPI · target band 40–70%</span></h2>
+<table><tr><th>tier</th><th>n</th><th>offered ≥1.3×</th><th>offered $</th><th>captured $</th><th>capture %</th></tr>
+${capRows.map((r) => `<tr><td>${esc(r.tier)}</td><td>${esc(r.n)}</td><td>${esc(r.offered_13)}</td><td>$${Number(r.offered ?? 0).toFixed(2)}</td><td class="${Number(r.captured) < 0 ? "k" : "g"}">${usd(r.captured)}</td><td><b class="${Number(r.captured) / Math.max(Number(r.offered ?? 0), 1e-9) >= 0.4 ? "g" : "k"}">${pctOf(Number(r.captured ?? 0), Number(r.offered ?? 0))}</b></td></tr>`).join("")}
+<tr><td><b>ALL</b></td><td></td><td></td><td><b>$${capTotal.o.toFixed(2)}</b></td><td><b class="${capTotal.c < 0 ? "k" : "g"}">${usd(capTotal.c)}</b></td>
+<td><b class="${capTotal.c / Math.max(capTotal.o, 1e-9) >= 0.4 ? "g" : "k"}">${pctOf(capTotal.c, capTotal.o)}</b></td></tr></table>
+<div class="d">F2 high-water rungs armed (24h): <b>${esc(f2!.n)}</b> — each one is a rung the manager's polls would have stepped over.</div>
 <h2>COMMAND</h2>
 <table><tr>
 <td>live equity <b>$${Number(cmd!.le ?? 0).toFixed(2)}</b></td><td>paper $${Number(cmd!.pe ?? 0).toFixed(0)}</td>
