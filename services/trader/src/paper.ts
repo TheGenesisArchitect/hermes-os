@@ -3051,10 +3051,14 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
   let truthUsed = 0, truthAgree: number[] = [];
   if (cfg.MARK_SOURCE_TRUTH && open.length) {
     try {
+      // NOTE: `mint = ANY(${array})` does NOT bind through drizzle's sql
+      // template (1,571 silent skips, 2026-08-05 — the pass fail-opened and
+      // the engine did nothing). Build the IN list explicitly.
+      const mintList = sql.join(open.map((p) => sql`${p.mint}`), sql`, `);
       const tape = (await db.execute(sql`
         SELECT DISTINCT ON (mint) mint, price_usd::float px, liquidity_usd::float liq,
           extract(epoch from snapped_at)*1000 AS at
-        FROM candidate_ticks WHERE mint = ANY(${open.map((p) => p.mint)})
+        FROM candidate_ticks WHERE mint IN (${mintList})
           AND snapped_at > now() - interval '2 minutes'
         ORDER BY mint, snapped_at DESC`)) as unknown as
         { mint: string; px: number; liq: number; at: number }[];
