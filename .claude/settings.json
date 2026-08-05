@@ -1,0 +1,16 @@
+{
+  "$comment": [
+    "HERMES PROJECT MODEL POLICY (2026-08-05).",
+    "LAYER 1 - native rate-limit failover, always on, no gateway involved:",
+    "fallbackModel is Claude Code's own chain. When the primary model is",
+    "overloaded or rate limited, the session continues on the next model in",
+    "this chain automatically for the rest of the turn - no /model switch, no",
+    "interruption. This is the answer to 'a rate limit must not require the",
+    "operator to switch models'. Chains are capped at three entries.",
+    "LAYER 2 - the OmniRoute gateway (311 models) is opt-in and lives in",
+    ".claude/settings.local.json, written by ops/omniroute.ps1. It remaps the",
+    "opus/sonnet/haiku picker slots onto gateway routing aliases. See",
+    "docs/OMNIROUTE.md."
+  ],
+  "fallbackModel": ["claude-sonnet-5", "claude-haiku-4-5"]
+}
