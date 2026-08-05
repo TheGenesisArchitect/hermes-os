@@ -3074,11 +3074,14 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
       // trade there. Only ticks the manager could already have seen count
       // (recognizable(): look-ahead invariant), and only armable prints.
       if (cfg.RUNG_HIGH_WATER) {
-        const since = new Date(Date.now() - 120_000);
+        // Interval literal, not a bound Date: the same binding class that
+        // silently skipped 1,571 passes (2026-08-05) — a bound timestamptz
+        // does not survive this template either.
         const window = (await db.execute(sql`
           SELECT mint, price_usd::float px, liquidity_usd::float liq,
             extract(epoch from snapped_at)*1000 AS at
-          FROM candidate_ticks WHERE mint IN (${mintList}) AND snapped_at > ${since}
+          FROM candidate_ticks WHERE mint IN (${mintList})
+            AND snapped_at > now() - interval '2 minutes'
           ORDER BY mint, snapped_at`)) as unknown as
           { mint: string; px: number; liq: number; at: number }[];
         for (const row of window) {
