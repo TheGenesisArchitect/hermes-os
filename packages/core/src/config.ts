@@ -1738,6 +1738,10 @@ const envSchema = z.object({
   // De-tenanting (2026-08-04): the optimizer's evidence engine runs as its
   // own supervised process; this flag is the in-trader fallback, default off.
   OPTIMIZER_IN_TRADER: z.coerce.boolean().default(false),
+  // MARKET TRUTH ENGINE (tech spec v2): the manager consumes the canonical
+  // quorum (recorder tape + aggregator) instead of the aggregator alone.
+  // Paper-first, flagged; off = exactly the prior behavior.
+  MARK_SOURCE_TRUTH: z.coerce.boolean().default(false),
   LIVE_CLIFFSAFE_DOOR: z.coerce.boolean().default(false),
   LIVE_SUBFLOOR_DOOR: z.coerce.boolean().default(false),
   LIVE_DUST_CLOSE_USD: z.coerce.number().default(0.02),

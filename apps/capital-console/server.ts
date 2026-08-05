@@ -26,12 +26,27 @@ async function page(): Promise<string> {
     (SELECT count(*) FROM positions WHERE lane='live' AND status='open') seats,
     (SELECT value FROM config WHERE key='live_kill') kill,
     (SELECT value FROM config WHERE key='selection_dial') dial,
+    (SELECT value FROM config WHERE key='truth_agreement') truth,
     (SELECT value->>'version' FROM config WHERE key='formula_manifest') mv,
     (SELECT coalesce(jsonb_array_length(value->'deltas'),0) FROM config WHERE key='formula_manifest_proposal') deltas`;
   const dial = (cmd!.dial ?? {}) as Record<string, unknown>;
   const kill = (cmd!.kill ?? {}) as Record<string, unknown>;
   const market = await q`SELECT rank, symbol, dex, signature, cell_ev, confidence, score, tier
     FROM queue_snapshots WHERE snapped_at = (SELECT max(snapped_at) FROM queue_snapshots) ORDER BY rank LIMIT 15`;
+  // MARKET TRUTH — hourly observation-health report (tech spec v2 §4/§5).
+  const [th] = await q`
+    SELECT count(*) FILTER (WHERE gap>10) gaps10, count(*) total, round(avg(gap)::numeric,1) avg_gap,
+      round(max(gap)::numeric,0) worst
+    FROM (SELECT extract(epoch from (snapped_at - lag(snapped_at) OVER (PARTITION BY position_id ORDER BY snapped_at))) gap
+          FROM position_ticks WHERE snapped_at > now() - interval '1 hour') g WHERE gap IS NOT NULL`;
+  const [rf] = await q`
+    WITH c AS (SELECT p.id, p.tier,
+      (SELECT max(mark_multiple::float) FROM position_ticks WHERE position_id=p.id) pk,
+      (SELECT count(*) FROM fills f WHERE f.position_id=p.id AND f.side='sell' AND f.reason LIKE 'take_profit%') tp
+      FROM positions p WHERE p.lane='paper' AND p.status='closed' AND p.closed_at > now() - interval '6 hours')
+    SELECT count(*) FILTER (WHERE pk>=1.15 AND tier<>'moonshot') qualified,
+           count(*) FILTER (WHERE pk>=1.15 AND tier<>'moonshot' AND tp>0) fired FROM c`;
+  const [ho] = await q`SELECT count(*) n FROM audit_log WHERE action='feed_outage' AND created_at > now() - interval '24 hours'`;
   const mani = await q`SELECT key, value FROM config WHERE key IN ('formula_manifest','formula_manifest_proposal')`;
   const attr = await q`
     SELECT coalesce(al.details->>'reason','') gate, count(*) n,
@@ -60,6 +75,16 @@ table{border-collapse:collapse;width:100%}td,th{padding:2px 10px;text-align:left
 <td>waves/h ${esc(dial.wavesPerH)} vs cap ${esc(dial.capacityPerH)}/h</td>
 <td>manifest v${esc(cmd!.mv)} · ${esc(cmd!.deltas)} proposal delta(s)</td></tr></table>
 <div class="d">${esc(kill.reason ?? "")}</div>
+<h2>MARKET TRUTH — observation health (the machinery gap's scoreboard)</h2>
+<table><tr>
+<td>first-rung fire rate (6h, non-moon) <b>${rf!.qualified > 0 ? Math.round((100 * Number(rf!.fired)) / Number(rf!.qualified)) + "%" : "—"}</b>
+ <span class="d">(${esc(rf!.fired)}/${esc(rf!.qualified)}) target ≥70%</span></td>
+<td>tick gaps &gt;10s (1h) <b>${esc(th!.gaps10)}</b><span class="d">/${esc(th!.total)}</span></td></tr><tr>
+<td>tick cadence avg <b>${esc(th!.avg_gap)}s</b> · worst ${esc(th!.worst)}s <span class="d">target 2s</span></td>
+<td>HOLD-ALL events (24h) <b>${esc(ho!.n)}</b> <span class="d">target ≤1 · quorum-only</span></td></tr><tr>
+<td>truth agreement (recorder↔aggregator) <b>${cmd!.truth ? ((cmd!.truth as any).recorderVsAggregator * 100).toFixed(1) + "%" : "—"}</b></td>
+<td>canonical marks served by tape <b>${cmd!.truth ? esc((cmd!.truth as any).truthUsed) : "—"}</b>
+ <span class="d">${cmd!.truth ? "samples " + esc((cmd!.truth as any).samples) : "engine off"}</span></td></tr></table>
 <h2>OPPORTUNITY MARKET — latest shadow queue (CAEV-ranked; nothing here trades)</h2>
 <table><tr><th>#</th><th>asset</th><th>venue</th><th>genome</th><th>cell EV/t</th><th>conf</th><th>score</th><th>tier</th></tr>
 ${market.map((r) => `<tr><td>${esc(r.rank)}</td><td>${esc(r.symbol)}</td><td>${esc(r.dex)}</td><td>${esc(r.signature)}</td><td>${usd(r.cell_ev)}</td><td>${Number(r.confidence).toFixed(2)}</td><td><b>${Number(r.score).toFixed(2)}</b></td><td>${esc(r.tier)}</td></tr>`).join("")}

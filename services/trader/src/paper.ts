@@ -12,6 +12,9 @@ import {
   sizeFraction,
   signatureExitOverrides,
   tickFrom,
+  canonicalMark,
+  truthAgreement,
+  type TruthTick,
   type HermesConfig,
   type LearnedProfile,
   type ManagementCall,
@@ -3039,10 +3042,60 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
   const markets = await fetchTokenMarkets(open.map((p) => p.mint)).catch(
     () => new Map<string, TokenMarket | null>(open.map((p) => [p.mint, null])),
   );
+  // ── THE MARKET TRUTH ENGINE (tech spec v2) ────────────────────────────────
+  // The recorder already writes a ~2s tape for these mints from a dedicated
+  // process; the manager was observing through the slower aggregator path
+  // alone (avg 3.6s, worst 208s) and missed 74% of its own rung crossings.
+  // Quorum: whichever source is fresher and more confident wins, per mint —
+  // ONE dark feed can no longer blind the book. Flagged; off = prior behavior.
+  let truthUsed = 0, truthAgree: number[] = [];
+  if (cfg.MARK_SOURCE_TRUTH && open.length) {
+    try {
+      const tape = (await db.execute(sql`
+        SELECT DISTINCT ON (mint) mint, price_usd::float px, liquidity_usd::float liq,
+          extract(epoch from snapped_at)*1000 AS at
+        FROM candidate_ticks WHERE mint = ANY(${open.map((p) => p.mint)})
+          AND snapped_at > now() - interval '2 minutes'
+        ORDER BY mint, snapped_at DESC`)) as unknown as
+        { mint: string; px: number; liq: number; at: number }[];
+      const now = Date.now();
+      for (const row of tape) {
+        const agg = markets.get(row.mint) ?? null;
+        const recorder: TruthTick = { at: Number(row.at), priceUsd: Number(row.px), liquidityUsd: Number(row.liq) };
+        const aggregator: TruthTick | undefined = agg
+          ? { at: now, priceUsd: agg.priceUsd, liquidityUsd: agg.liquidityUsd }
+          : undefined;
+        const a = truthAgreement(recorder, aggregator);
+        if (a != null) truthAgree.push(a);
+        const canon = canonicalMark({ recorder, aggregator }, now);
+        if (!canon || canon.source !== "recorder") continue; // aggregator already in hand
+        // Recorder wins: graft its price/liquidity onto the market shape the
+        // manager already consumes (vol/txn fields keep the aggregator's).
+        const base = agg ?? (await fetchTokenMarket(row.mint).catch(() => null));
+        if (!base) continue;
+        markets.set(row.mint, { ...base, priceUsd: canon.tick.priceUsd, liquidityUsd: canon.tick.liquidityUsd });
+        truthUsed++;
+      }
+    } catch (err) {
+      console.warn(`market-truth pass skipped (aggregator path intact): ${err instanceof Error ? err.message.slice(0, 80) : err}`);
+    }
+  }
   const nullCount = [...markets.values()].filter((m) => m === null).length;
+  // TRUTH-AGREEMENT KPI (hourly, console + card): cross-source drift naming a
+  // failing feed before it costs money. Best-effort, never blocks a cycle.
+  if (cfg.MARK_SOURCE_TRUTH && truthAgree.length) {
+    const avg = truthAgree.reduce((s, x) => s + x, 0) / truthAgree.length;
+    void db.execute(sql`INSERT INTO config (key, value) VALUES ('truth_agreement',
+      ${JSON.stringify({ recorderVsAggregator: +avg.toFixed(4), samples: truthAgree.length, truthUsed, at: new Date().toISOString() })}::jsonb)
+      ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now()`).catch(() => {});
+  }
+  // QUORUM OUTAGE (spec F3): the book freezes only when EVERY source is dark.
+  // A single vendor failing can never blind the portfolio — 9 HOLD-ALL events
+  // in 48h were one aggregator's blips holding an entire book hostage.
   const feedOutage =
     open.length >= cfg.OUTAGE_MIN_POSITIONS &&
-    nullCount >= Math.ceil(open.length * cfg.OUTAGE_NULL_FRACTION);
+    nullCount >= Math.ceil(open.length * cfg.OUTAGE_NULL_FRACTION) &&
+    truthUsed === 0;
   if (feedOutage) {
     // Hold the entire book, touch nothing — never write off a whole book at once.
     // The next cycle re-checks; positions resume the moment the feed recovers.
