@@ -17,6 +17,16 @@ interface DatapiPool {
   baseAsset?: { id?: string; usdPrice?: number };
 }
 
+// FAIL-FAST BREAKER (2026-08-04 fill-drag autopsy): during the Jupiter outage
+// every per-position price call burned its FULL 5s timeout, serially — a
+// 20-seat manage cycle stretched to ~100s, marks aged mid-burst, and exits
+// booked up to −28pp below the last mark. After 3 consecutive failures this
+// module answers instantly-empty for 60s (callers already fall back to
+// DexScreener marks); any success closes it. An outage now costs the mark
+// stream milliseconds, not minutes.
+let jupFails = 0;
+let jupOpenUntil = 0;
+
 /** Batch real-time USD prices for many mints. Missing/illiquid mints are omitted. */
 export async function fetchJupiterPrices(
   priceUrl: string,
@@ -25,13 +35,24 @@ export async function fetchJupiterPrices(
   const out = new Map<string, number>();
   const batch = [...new Set(mints)].slice(0, 50); // keep the id list bounded
   if (batch.length === 0) return out;
+  if (Date.now() < jupOpenUntil) return out; // breaker open — fail fast, callers fall back
   // datapi.jup.ag is SNI-filtered for undici; resilientFetch retries via curl
   // (through GoodbyeDPI). On total failure the caller falls back to DexScreener marks.
-  const res = await resilientFetch(`${priceUrl}?assetIds=${batch.join(",")}`, {
-    headers: { accept: "application/json" },
-    timeoutMs: 5000,
-  });
-  if (!res.ok) throw new Error(`jupiter price HTTP ${res.status}`);
+  let res;
+  try {
+    res = await resilientFetch(`${priceUrl}?assetIds=${batch.join(",")}`, {
+      headers: { accept: "application/json" },
+      timeoutMs: 5000,
+    });
+  } catch (err) {
+    if (++jupFails >= 3) { jupOpenUntil = Date.now() + 60_000; jupFails = 0; }
+    throw err;
+  }
+  if (!res.ok) {
+    if (++jupFails >= 3) { jupOpenUntil = Date.now() + 60_000; jupFails = 0; }
+    throw new Error(`jupiter price HTTP ${res.status}`);
+  }
+  jupFails = 0; // healthy response closes the breaker
   const body = (await res.json()) as { pools?: DatapiPool[] };
   // One asset surfaces in several pools (incl. near-zero-liquidity bonding-curve /
   // dead pools whose implied price is garbage). Take the price from the MOST LIQUID
