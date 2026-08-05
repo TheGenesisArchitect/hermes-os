@@ -28,6 +28,13 @@ export * as rpc from "./rpc.js";
 export { fetchTokenMarket, fetchTokenMarkets, type TokenMarket } from "./market/dexscreener.js";
 export { fetchJupiterPrice, fetchJupiterPrices } from "./market/jupiter.js";
 export { convexSlippagePct } from "./market/slippage.js";
+// THE MARKET TRUTH ENGINE — one canonical market state for paper, live,
+// replay and console (tech spec v2). The look-ahead invariant lives here.
+export {
+  recognizable, armable, highWaterCrossing, canonicalMark, truthAgreement,
+  SOURCE_CONFIDENCE, CONFIDENCE_MIN, TRUSTED_MIN_LIQ_USD,
+  type TruthTick, type TruthSource,
+} from "./market/truth.js";
 export { resilientFetch } from "./net.js";
 export { computeScore, type ScoreBreakdown } from "./scoring/score.js";
 export { scoreNarrative, type NarrativeScore } from "./scoring/narrative.js";

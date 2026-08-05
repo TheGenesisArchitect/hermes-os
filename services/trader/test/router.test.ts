@@ -194,3 +194,63 @@ describe("model risk — PSI drift guard", () => {
     assert.equal(stable.withheld.length, 0);
   });
 });
+
+// ─── THE MARKET TRUTH ENGINE ─────────────────────────────────────────────────
+// BINDING INVARIANT (tech spec v2 §3, board demand): every evaluation answers
+// "could the manager have known this yet?" — the same functions serve the live
+// manager AND the replay engine, so look-ahead bias is structurally impossible.
+describe("market truth — the look-ahead invariant", () => {
+  const T = (at: number, priceUsd: number, liquidityUsd = 20_000) => ({ at, priceUsd, liquidityUsd });
+  const tape = [T(1000, 1.0), T(2000, 1.16), T(3000, 1.04), T(4000, 1.30)];
+
+  it("a spike AFTER the evaluation point is invisible", async () => {
+    const { highWaterCrossing } = await import("@hermes/core");
+    // evaluating at t=1500: only the t=1000 tick is known; the 1.16 spike hasn't happened
+    assert.equal(highWaterCrossing(tape, 1.0, 1.15, 1500), null);
+  });
+
+  it("a spike BEFORE the evaluation point arms, and fills 2 ticks later", async () => {
+    const { highWaterCrossing } = await import("@hermes/core");
+    const r = highWaterCrossing(tape, 1.0, 1.15, 5000);
+    assert.ok(r, "the 1.16 crossing must arm once known");
+    assert.equal(r!.crossed.priceUsd, 1.16, "crossing is the first tick at/above the barrier");
+    assert.equal(r!.fill.priceUsd, 1.30, "fill is 2 ticks later — recognition is not instant execution");
+    assert.equal(r!.maxExcursion, 1.3);
+  });
+
+  it("a tick exactly AT the evaluation timestamp is not yet known (ties)", async () => {
+    const { recognizable } = await import("@hermes/core");
+    assert.deepEqual(recognizable(tape, 2000).map((t) => t.priceUsd), [1.0]);
+  });
+
+  it("untrusted prints cannot arm: thin pool, or a >3x single-tick jump", async () => {
+    const { armable, highWaterCrossing } = await import("@hermes/core");
+    assert.equal(armable(T(1, 1.2, 500), "recorder", 1.0), false, "sub-$1k pool");
+    assert.equal(armable(T(1, 99, 20_000), "recorder", 1.0), false, "16,913x-class phantom");
+    assert.equal(armable(T(1, 1.2, 20_000), "recorder", 1.0), true);
+    const phantom = [T(1000, 1.0), T(2000, 50, 800)]; // dust-pool phantom above the barrier
+    assert.equal(highWaterCrossing(phantom, 1.0, 1.15, 9000), null, "phantom must never arm a rung");
+  });
+
+  it("quorum: the freshest confident source wins; one dark feed never blinds", async () => {
+    const { canonicalMark } = await import("@hermes/core");
+    const now = 10_000;
+    const q = canonicalMark({ recorder: T(9_500, 1.10), aggregator: T(9_000, 1.09) }, now);
+    assert.equal(q!.source, "recorder");
+    // executable is the transactable price — it outranks at equal freshness
+    const q2 = canonicalMark({ recorder: T(9_500, 1.10), executable: T(9_500, 1.11) }, now);
+    assert.equal(q2!.source, "executable");
+    assert.equal(q2!.confidence, 1.0);
+    // aggregator alone still produces truth (no HOLD-ALL from one source dying)
+    assert.equal(canonicalMark({ aggregator: T(9_900, 1.05) }, now)!.source, "aggregator");
+    // everything stale → no truth (quorum loss is the only blindness)
+    assert.equal(canonicalMark({ recorder: T(100, 1.0) }, 100_000), null); // 99.9s old > 30s window
+  });
+
+  it("truth agreement scores feed drift", async () => {
+    const { truthAgreement } = await import("@hermes/core");
+    assert.equal(truthAgreement(T(1, 1.0), T(1, 1.0)), 1);
+    assert.equal(truthAgreement(T(1, 1.0), T(1, 0.5)), 0.5);
+    assert.equal(truthAgreement(T(1, 1.0), undefined), null);
+  });
+});
