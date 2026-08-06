@@ -371,7 +371,7 @@ describe("formula manifest", () => {
     const s = await (await import("node:fs")).readFileSync(new URL("../src/live/executor.ts", import.meta.url), "utf8");
     const i = s.indexOf("if (cfg.FORMULA_MANIFEST_ENABLED)");
     assert.ok(i > 0, "manifest gate must be flag-gated");
-    const branch = s.slice(i, i + 1600);
+    const branch = s.slice(i, i + 2800);
     assert.match(branch, /audit\("live_buy_skipped"/, "manifest refusal must audit");
     assert.match(branch, /\n\s*return;/, "manifest refusal must return");
     assert.ok(!branch.includes("liveBuyGate"), "the solvency gate must not live inside the manifest branch");

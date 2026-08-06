@@ -28,6 +28,9 @@ interface Tick {
 function marketFrom(t: Tick, dex: string | null): TokenMarket {
   return {
     priceUsd: t.price, liquidityUsd: t.liq, fdvUsd: 0, pairAddress: "", dexId: dex ?? "",
+    // Historical replay ticks predate quote-depth capture; treat the recorded
+    // liquidity as trusted so replays reproduce the decisions actually made.
+    depthTrusted: true, quoteUsd: t.liq / 2,
     labels: [], symbol: null, name: null, pairAgeMinutes: t.ageMin,
     volUsd: { m5: t.volM5, h1: t.volH1, h24: 0 },
     txns: { m5: { buys: t.buys, sells: t.sells }, h1: { buys: 0, sells: 0 }, h24: { buys: 0, sells: 0 } },

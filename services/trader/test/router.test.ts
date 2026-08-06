@@ -291,7 +291,7 @@ describe("F2 high-water rung evaluation", () => {
     const s = await (await import("node:fs")).readFileSync(new URL("../src/paper.ts", import.meta.url), "utf8");
     const i = s.indexOf("F2 APPLIED");
     assert.ok(i > 0, "the applied gate must be present and documented");
-    const branch = s.slice(i, i + 1800);
+    const branch = s.slice(i, i + 2800);
     assert.match(branch, /market\.priceUsd >= n\(position\.entryPriceUsd\)/, "only positions in profit may use an excursion");
     assert.match(branch, /!\/take_profit\|profit_lock\|basket\/\.test\(exit\.reason\)/, "any non-TP verdict must be re-derived from the live mark");
     assert.match(branch, /audit\("rung_high_water"/, "every high-water-armed rung must be audited");
@@ -327,10 +327,117 @@ describe("manifest admission terms are ENFORCED, not just configured", () => {
     assert.match((unknown as any).reason, /0W\/0R/);
   });
 
-  it("the executor passes poolUsd from the TRUSTED liquidity band only", async () => {
+  it("the executor binds poolUsd to the quote-depth-selected market (P1-2)", async () => {
     const s = await (await import("node:fs")).readFileSync(new URL("../src/live/executor.ts", import.meta.url), "utf8");
-    const i = s.indexOf("poolUsd: await");
-    assert.ok(i > 0, "the gate must supply poolUsd");
-    assert.match(s.slice(i, i + 600), /BETWEEN 1200 AND 5000000/, "a decoy print must never satisfy a depth floor");
+    const i = s.indexOf("R2 (admission court) — P1-2 REWRITE");
+    assert.ok(i > 0, "the P1-2 rewrite must be present in the gate");
+    // P1-2 (QA): the numeric band was a plausibility filter, not a trust
+    // boundary — no age bound, no pair binding, no quote verification. The
+    // gate must consume the SAME observation that selected the pool.
+    assert.match(s.slice(i, i + 1600), /fetchTokenMarket\(mint\)/,
+      "poolUsd must come from the quote-depth-selected market");
+    assert.match(s.slice(i, i + 1600), /poolDepthTrusted: m\.depthTrusted/,
+      "the trust flag must travel with the depth number");
+  });
+});
+
+// ─── QA RELEASE-GATE FINDINGS (external review, 2026-08-06) ─────────────────
+// P1-1 decoy fallback · P1-2 untrusted depth · P1-3 corrupt manifest wedges
+// the lane · P2 R5 conflates null with measured-zero. Each test reproduces the
+// reviewer's attack, not a paraphrase of it.
+describe("QA P1-1: a decoy pool cannot set the mark even with NO credible alternative", () => {
+  it("publishes MEASURED quote depth, not the derived USD figure", async () => {
+    const { fetchTokenMarket } = await import("@hermes/core");
+    // The reviewer's exact scenario: the ONLY pool is the DORAE decoy.
+    // 600,070,580 base vs 0.02717 quote (~$5), reported liquidity $91,360,362.
+    const real = globalThis.fetch;
+    (globalThis as { fetch: unknown }).fetch = async () => ({
+      ok: true,
+      json: async () => ({ pairs: [{
+        chainId: "solana", dexId: "meteora", pairAddress: "FPqPST", labels: ["DLMM"],
+        baseToken: { address: "DORAE", symbol: "DORAE" },
+        priceUsd: "0.1522", priceNative: "0.002073",
+        liquidity: { usd: 91360362.47, base: 600070580, quote: 0.02717 },
+        fdv: 149944232,
+      }] }),
+    });
+    try {
+      const m = await fetchTokenMarket("DORAE");
+      assert.ok(m, "a market is still returned — the caller's floors decide");
+      assert.equal(m!.depthTrusted, false, "no credible quote reserve → untrusted");
+      assert.ok(m!.liquidityUsd < 100,
+        `must publish measured quote depth (~$5), got $${m!.liquidityUsd}`);
+      assert.notEqual(m!.liquidityUsd, 91360362.47, "the derived figure must never surface");
+    } finally { (globalThis as { fetch: unknown }).fetch = real; }
+  });
+});
+
+describe("QA P1-2: an untrusted depth observation cannot satisfy a floor", () => {
+  const M = {
+    version: 5, genomes: { BASE: 1.5 },
+    elite: { venues: ["pumpswap"], poolMinUsd: 5000 },
+    filler: { venues: ["pumpswap"], poolMinUsd: 5000 },
+  };
+  const base = { signature: "BASE", inflow: 1.4, buyShare: 0.7, winnerHits: 2, rugHits: 0, venue: "pumpswap" };
+
+  it("refuses when depth is untrusted, even if the NUMBER clears the floor", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    const v = manifestVerdict(M as never, { ...base, poolUsd: 50_000, poolDepthTrusted: false });
+    assert.equal(v.kind, "refuse", "a plausible-looking fake must not pass");
+    assert.match((v as { reason: string }).reason, /depth untrusted/);
+  });
+
+  it("seats when depth is trusted and clears the floor", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    assert.equal(manifestVerdict(M as never, { ...base, poolUsd: 20_000, poolDepthTrusted: true }).kind, "seat");
+  });
+});
+
+describe("QA P1-3: a corrupt manifest fails OPEN, never wedges the lane", () => {
+  it("the reviewer's payload is rejected at the boundary", async () => {
+    const { validateManifest } = await import("../src/live/manifest.js");
+    // Passed the old shallow check; then threw inside tierRefusal.
+    const issues = validateManifest({ version: 1, genomes: { BASE: 1 }, elite: {}, filler: {} });
+    assert.ok(issues.length > 0, "empty tiers must be rejected");
+    assert.ok(issues.some((i) => i.includes("venues")), `expected a venues issue, got: ${issues.join("; ")}`);
+  });
+
+  it("manifestVerdict never THROWS on a malformed tier (defence in depth)", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    const bad = { version: 1, genomes: { BASE: 1 }, elite: {}, filler: {} };
+    const input = { signature: "BASE", inflow: 1.4, buyShare: 0.7, winnerHits: 2, rugHits: 0, venue: "pumpswap" };
+    const v = manifestVerdict(bad as never, input);   // must not throw
+    assert.equal(v.kind, "refuse", "no venues means nothing is admissible");
+  });
+
+  it("a well-formed manifest still validates clean", async () => {
+    const { validateManifest } = await import("../src/live/manifest.js");
+    assert.deepEqual(validateManifest({
+      version: 5, genomes: { BASE: 1.5 },
+      elite: { venues: ["pumpswap"], poolMinUsd: 5000, inflowMin: 1.2, inflowMax: 2.05 },
+      filler: { venues: ["pumpswap"], poolMinUsd: 5000 },
+    }), []);
+  });
+});
+
+describe("QA P2: R5 distinguishes measured-zero from unmeasured", () => {
+  const M = {
+    version: 5, genomes: { BASE: 1.5 },
+    elite: { venues: ["pumpswap"], refuseUnknownCrowd: true },
+    filler: { venues: ["pumpswap"], refuseUnknownCrowd: true },
+  };
+  const base = { signature: "BASE", inflow: 1.4, buyShare: 0.7, venue: "pumpswap" };
+
+  it("MEASURED 0W/0R is refused", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    const v = manifestVerdict(M as never, { ...base, winnerHits: 0, rugHits: 0 });
+    assert.equal(v.kind, "refuse");
+    assert.match((v as { reason: string }).reason, /measured-empty/);
+  });
+
+  it("UNMEASURED crowd is NOT refused by R5 — absence of measurement is not evidence", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    const v = manifestVerdict(M as never, { ...base, winnerHits: null, rugHits: null });
+    assert.equal(v.kind, "seat", "R5 must not fire on nulls; crowdNetWinners owns that case");
   });
 });

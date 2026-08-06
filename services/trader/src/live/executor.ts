@@ -29,6 +29,7 @@ import { Transaction, VersionedTransaction } from "@solana/web3.js";
 import {
   convictionBand,
   fetchJupiterPrice,
+  fetchTokenMarket,
   profileOf,
   resilientFetch,
   signatureExitOverrides,
@@ -1131,18 +1132,25 @@ export async function maybeLiveBuy(
         const v = manifestVerdict(manifest, {
           signature: sig?.signature ?? null,
           secondLaunch: (sig?.launchOrder ?? 1) >= 2,
-          // R2 (admission court): the pool the seat would actually sit in.
-          // Trusted band only — a decoy print must not satisfy a depth floor.
-          poolUsd: await (async () => {
-            const [lt] = await db
-              .select({ liq: candidateTicks.liquidityUsd })
-              .from(candidateTicks)
-              .where(and(eq(candidateTicks.mint, mint),
-                sql`${candidateTicks.liquidityUsd}::float BETWEEN 1200 AND 5000000`))
-              .orderBy(desc(candidateTicks.id))
-              .limit(1);
-            return lt?.liq != null ? Number(lt.liq) : null;
-          })(),
+          // R2 (admission court) — P1-2 REWRITE (QA, 2026-08-06).
+          // The previous read took the newest candidate_tick whose liquidity
+          // merely FELL INSIDE a plausible band: no age bound, no pair binding,
+          // no quote verification. A stale tick from a different pool could
+          // satisfy today's admission floor, and a plausible-looking fake
+          // ($10k) passed as easily as a real one. That is a numeric filter,
+          // not a trust boundary.
+          //
+          // Admission now consumes THE SAME observation that selected the pool:
+          // fetchTokenMarket applies quote-depth selection, so `liquidityUsd`
+          // is the chosen pool's, and `depthTrusted` says whether any pool for
+          // this mint held a credible quote reserve at all. Fetch failure →
+          // null → the floor abstains (absence of measurement is not evidence).
+          ...(await (async () => {
+            const m = await fetchTokenMarket(mint).catch(() => null);
+            return m == null
+              ? { poolUsd: null }
+              : { poolUsd: m.liquidityUsd, poolDepthTrusted: m.depthTrusted };
+          })()),
           inflow: sig?.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null,
           buyShare: sig?.triggerBuyShare != null && Number.isFinite(Number(sig.triggerBuyShare)) ? Number(sig.triggerBuyShare) : null,
           winnerHits: sig?.walletWinnerHits ?? null,

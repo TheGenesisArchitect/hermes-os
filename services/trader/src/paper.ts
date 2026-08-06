@@ -38,6 +38,7 @@ import {
   safetyChecks,
 } from "@hermes/db";
 import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { passFailed, passOk } from "./live/passHealth.js";
 import { maybeLiveBuy, mirrorLiveSell } from "./live/executor.js";
 import { poolPulse, syncSlotWatch } from "./slotWatch.js";
 
@@ -619,14 +620,19 @@ async function openFromSignal(
       // a 38% baseline, and every "unmeasured" cell in every other feature is
       // this same cohort.
       !sig?.signature ? "unrouted — no signature, no measurable edge (54% dead)"
-      // R2 thin pool at entry — 47% dead, −$0.59/t
+      // R2 thin pool at entry — 47% dead, −$0.59/t. P1-2 (QA): an untrusted
+      // depth observation may never SATISFY the floor; `market.liquidityUsd`
+      // now carries the MEASURED quote reserve when no pool had a credible
+      // one, so a decoy reads as its true ~$5 rather than its derived $91M.
+      : market.depthTrusted === false ? "pool depth untrusted — no credible quote reserve"
       : poolNow > 0 && poolNow < cfg.ADMISSION_MIN_POOL_USD ? `pool $${Math.round(poolNow)} below the $${cfg.ADMISSION_MIN_POOL_USD} admission floor (47% dead)`
       // R3 rug history leads the crowd — 51% dead, −$1.17/t
       : wh != null && (rh ?? 0) >= wh && (rh ?? 0) > 0 ? `crowd ${wh}W/${rh}R — rug history leads (51% dead)`
       // R4 worst venue — 47% dead, −$0.59/t
       : dex === "meteora-dbc" ? "venue meteora-dbc (47% dead, -$193/7d)"
-      // R5 unknown crowd — 44% dead, −$0.45/t
-      : (wh ?? 0) === 0 && (rh ?? 0) === 0 ? "crowd 0W/0R — unknown (44% dead)"
+      // R5 unknown crowd — 44% dead, −$0.45/t. P2 (QA): MEASURED zero, not
+      // null-coalesced zero — absence of measurement is not evidence.
+      : wh === 0 && rh === 0 ? "crowd 0W/0R — measured-empty history (44% dead)"
       : null;
     if (refuse) {
       await audit("paper_admission_refused", { mint: signal.mint, reason: refuse, signature: sig?.signature ?? null });
@@ -3148,7 +3154,11 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
         markets.set(row.mint, { ...base, priceUsd: canon.tick.priceUsd, liquidityUsd: canon.tick.liquidityUsd });
         truthUsed++;
       }
+      passOk("market-truth"); // the pass completed — health is edge-triggered
     } catch (err) {
+      // Fail-open is right; SILENT fail-open is not. This pass ran inert for
+      // 1,571 cycles behind exactly this catch (QA release requirement).
+      passFailed("market-truth", err);
       console.warn(`market-truth pass skipped (aggregator path intact): ${err instanceof Error ? err.message.slice(0, 80) : err}`);
     }
   }

@@ -29,6 +29,7 @@
  * OWNER         Data Science (contents) · Portfolio Intelligence (governance)
  */
 import { auditLog, db } from "@hermes/db";
+import { passFailed, passOk } from "./passHealth.js";
 import { sql } from "drizzle-orm";
 import type { HermesConfig } from "@hermes/core";
 import { loadManifest, type FormulaManifest } from "./manifest.js";
@@ -357,7 +358,11 @@ export function startManifestOptimizer(cfg: HermesConfig): void {
       } else if (material) {
         console.log(`🧪 manifest optimizer: deltas resolved to none after drift gate (drift ${drift.max} ${drift.verdict})`);
       }
+      passOk("optimizer"); // the pass completed — health is edge-triggered
     } catch (err) {
+      // Ran inert for hours behind this catch (make_interval binding bug),
+      // zeroing gate-2's evidence clock without a single alarm.
+      passFailed("optimizer", err);
       console.warn(`manifest optimizer pass failed (next interval retries): ${err instanceof Error ? err.message.slice(0, 100) : err}`);
     }
   };
