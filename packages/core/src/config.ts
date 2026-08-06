@@ -1747,6 +1747,13 @@ const envSchema = z.object({
   // instantaneous mark: 74% of qualifying rungs never fired because the
   // crossing happened between manager polls. Requires MARK_SOURCE_TRUTH.
   RUNG_HIGH_WATER: z.coerce.boolean().default(false),
+  // THE ADMISSION POLICY (admission-court, ratified 2026-08-06). Refuses the
+  // never-offered cohort at the door: unrouted · pool < floor · rug-history
+  // crowd · meteora-dbc · unknown crowd. On the 7d tape: +40% total EV,
+  // capture 7.4% → 16.3%, ev/t $0.68 → $1.81, beating the incumbent in both
+  // halves. One flag so the whole policy reverts as a unit.
+  ADMISSION_POLICY: z.coerce.boolean().default(false),
+  ADMISSION_MIN_POOL_USD: z.coerce.number().default(5000),
   LIVE_CLIFFSAFE_DOOR: z.coerce.boolean().default(false),
   LIVE_SUBFLOOR_DOOR: z.coerce.boolean().default(false),
   LIVE_DUST_CLOSE_USD: z.coerce.number().default(0.02),

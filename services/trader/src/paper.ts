@@ -597,6 +597,42 @@ async function openFromSignal(
       tierDemoted = true;
     }
   }
+  // ── THE ADMISSION POLICY (admission-court, ratified 2026-08-06) ──────────
+  // Capture was never a manager defect: on trades that OFFER (peak ≥1.15×) the
+  // manager banks 32.3%, inside the target band. The blend was dragged to
+  // −7.6% by 632 trades/7d that NEVER ROSE (avg peak 1.05×, dead in 48s,
+  // −$2,528). The instant-death autopsy found the entry-knowable signature and
+  // the admission court priced it — the first gate to clear the both-halves
+  // bar in seven courts:
+  //   take-all  1,652 seats  +$1,116   7.4% capture  $0.68/t
+  //   R1–R5       864 seats  +$1,563  16.3% capture  $1.81/t   (+40% EV)
+  // Each refusal is individually net-negative to keep: thin pools −$191,
+  // meteora-dbc −$193, unknown crowd −$181, rug-history crowd −$78. Unrouted
+  // contributes +$16 across 360 seats — cut for the SLOT, not the P&L.
+  // Flagged so the policy is revertable as one unit.
+  if (cfg.ADMISSION_POLICY) {
+    const wh = sig?.walletWinnerHits ?? null;
+    const rh = sig?.walletRugHits ?? null;
+    const poolNow = market.liquidityUsd;
+    const refuse =
+      // R1 unrouted — no signature means no measurements at all: 54% dead vs
+      // a 38% baseline, and every "unmeasured" cell in every other feature is
+      // this same cohort.
+      !sig?.signature ? "unrouted — no signature, no measurable edge (54% dead)"
+      // R2 thin pool at entry — 47% dead, −$0.59/t
+      : poolNow > 0 && poolNow < cfg.ADMISSION_MIN_POOL_USD ? `pool $${Math.round(poolNow)} below the $${cfg.ADMISSION_MIN_POOL_USD} admission floor (47% dead)`
+      // R3 rug history leads the crowd — 51% dead, −$1.17/t
+      : wh != null && (rh ?? 0) >= wh && (rh ?? 0) > 0 ? `crowd ${wh}W/${rh}R — rug history leads (51% dead)`
+      // R4 worst venue — 47% dead, −$0.59/t
+      : dex === "meteora-dbc" ? "venue meteora-dbc (47% dead, -$193/7d)"
+      // R5 unknown crowd — 44% dead, −$0.45/t
+      : (wh ?? 0) === 0 && (rh ?? 0) === 0 ? "crowd 0W/0R — unknown (44% dead)"
+      : null;
+    if (refuse) {
+      await audit("paper_admission_refused", { mint: signal.mint, reason: refuse, signature: sig?.signature ?? null });
+      return false;
+    }
+  }
   // ── FORMULA v2 SENSOR TIER (canon GCE-FORMULA-001, ratified 2026-07-24) ───
   // Crowd-fail (F1: needs wh ≥ 1 AND wh > rh) or a manufactured-spike inflow
   // (F3: above the envelope ceiling) demotes this entry to a sensor probe:
