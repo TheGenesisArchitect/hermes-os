@@ -12,7 +12,7 @@ import postgres from "postgres";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const env = fs.readFileSync(path.join(root, ".env"), "utf8");
 const url = /DATABASE_URL=(.+)/.exec(env)?.[1]?.trim() ?? "postgres://hermes:hermes@localhost:5433/hermes";
-const DEAD = 1200, DELAY = 2, FEE = 0.0025, FIX = 0.02, TICKET = 3, WAVE_MS = 3_600_000;
+const DEAD = 1200, PHANTOM = 5000000, DELAY = 2, FEE = 0.0025, FIX = 0.02, TICKET = 3, WAVE_MS = 3_600_000;
 const slip = (u: number, l: number) => Math.min(u / (l / 2 + u), 0.99);
 type Tick = { t: number; px: number; liq: number };
 type C = { mint: string; o: Date; sym: string | null; sig: string | null; wh: number | null; rh: number | null;
@@ -23,14 +23,14 @@ function sim(ticks: Tick[], e: number): { pnl: number; holdMs: number } {
   const rungs: [number, number][] = [[1.15, 0.4], [1.3, 0.55], [1.58, 0.7]];
   const sell = (i: number, f: number): void => {
     const j = Math.min(i + DELAY, ticks.length - 1); const { px, liq } = ticks[j]!;
-    if (liq < DEAD || f <= 0) return;
+    if (liq < DEAD || liq > PHANTOM || f <= 0) return;
     const nt = TICKET * f * (px / e);
     pnl += nt * (1 - slip(nt, liq)) * (1 - FEE) - FIX - TICKET * f; held -= f;
   };
   for (let i = 0; i < ticks.length && held > 1e-6; i++) {
     const { t, px, liq } = ticks[i]!; const x = px / e;
     if (px > pk) { pk = px; stall = t; }
-    if (liq < DEAD) { end = t; break; }
+    if (liq < DEAD || liq > PHANTOM) { end = t; break; }
     if (x <= 0.75) { sell(i, held); end = t; break; }
     while (rung < rungs.length && x >= rungs[rung]![0]!) { sell(i, Math.max(0, held - (1 - rungs[rung]![1]!))); rung++; }
     if (pk / e >= 1.3 && t - stall >= 180_000 && x > 1.02) { sell(i, held); end = t; break; }

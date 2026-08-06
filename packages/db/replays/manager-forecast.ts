@@ -33,7 +33,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../.
 const env = fs.readFileSync(path.join(root, ".env"), "utf8");
 const url = /DATABASE_URL=(.+)/.exec(env)?.[1]?.trim() ?? "postgres://hermes:hermes@localhost:5433/hermes";
 const DAYS = Number(process.argv[2] ?? 14);
-const DEAD = 1200, DELAY = 2, FEE_PCT = 0.0025, FIXED_FEE = 0.02;
+const DEAD = 1200, PHANTOM = 5000000, DELAY = 2, FEE_PCT = 0.0025, FIXED_FEE = 0.02;
 const slip = (usd: number, liq: number) => Math.min(usd / (liq / 2 + usd), 0.99);
 
 type Tick = { t: number; px: number; liq: number };
@@ -46,7 +46,7 @@ function simulate(ticks: Tick[], entryPx: number, size: number, variant: "V1" | 
   const sellAt = (i: number, frac: number): void => {
     const j = Math.min(i + DELAY, ticks.length - 1);
     const { px, liq } = ticks[j]!;
-    if (liq < DEAD || frac <= 0) return; // dead pool pays nothing
+    if (liq < DEAD || liq > PHANTOM || frac <= 0) return; // dead pool pays nothing
     const notional = size * frac * (px / entryPx);
     const proceeds = notional * (1 - slip(notional, liq)) * (1 - FEE_PCT) - FIXED_FEE;
     pnl += proceeds - size * frac;
@@ -58,7 +58,7 @@ function simulate(ticks: Tick[], entryPx: number, size: number, variant: "V1" | 
     if (px > pricePeak) { pricePeak = px; stallStart = t; }
     if (liq > liqPeak) liqPeak = liq;
     fallRun = i > 0 && liq < ticks[i - 1]!.liq ? fallRun + 1 : 0;
-    if (liq < DEAD) break; // pool died — remainder is a write-off
+    if (liq < DEAD || liq > PHANTOM) break; // pool died — remainder is a write-off
     if (x <= 0.75) { sellAt(i, held); break; } // floor_45
     if (variant !== "V3") {
       while (rung < rungs.length && x >= rungs[rung]![0]!) {
@@ -94,7 +94,7 @@ function simulate(ticks: Tick[], entryPx: number, size: number, variant: "V1" | 
       FROM candidate_ticks WHERE mint=${p.mint} AND snapped_at BETWEEN ${p.o} AND ${p.o}::timestamptz + interval '6 hours'
       ORDER BY snapped_at`) as unknown as Tick[];
     if (ticks.length < 5) continue;
-    const live = ticks.filter((tk) => tk.liq >= DEAD);
+    const live = ticks.filter((tk) => tk.liq >= DEAD && tk.liq <= PHANTOM);
     const peakX = live.length ? Math.max(...live.map((tk) => tk.px)) / p.e : 1;
     const offer = p.sz * Math.max(0, peakX - 1);
     const a = (agg[p.lane] ??= { n: 0, actual: 0, v: { V1: 0, V2: 0, V3: 0 }, offer: 0, qn: 0,
