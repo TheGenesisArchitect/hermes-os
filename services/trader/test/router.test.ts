@@ -297,3 +297,40 @@ describe("F2 high-water rung evaluation", () => {
     assert.match(branch, /audit\("rung_high_water"/, "every high-water-armed rung must be audited");
   });
 });
+
+// ─── ADMISSION COURT TERMS (R2 pool floor, R5 unknown crowd) ─────────────────
+// Shipped 2026-08-06. Both were written into manifest v5 as DATA before the
+// verdict code read them — inert config is the "armed but inert" failure this
+// session has produced three times. These tests make the enforcement provable.
+describe("manifest admission terms are ENFORCED, not just configured", () => {
+  const M = {
+    version: 5, ratifiedAt: "2026-08-06",
+    genomes: { BASE: 1.5 },
+    elite: { venues: ["pumpswap"], poolMinUsd: 5000, refuseUnknownCrowd: true, crowdNetWinners: true },
+    filler: { venues: ["pumpswap"], poolMinUsd: 5000, refuseUnknownCrowd: true, crowdNetWinners: true },
+  };
+  const ok = { signature: "BASE", inflow: 1.4, buyShare: 0.7, winnerHits: 2, rugHits: 0, venue: "pumpswap", poolUsd: 20000 };
+
+  it("R2: a pool under the floor is refused; an unmeasured pool passes", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    assert.equal(manifestVerdict(M as any, ok).kind, "seat");
+    const thin = manifestVerdict(M as any, { ...ok, poolUsd: 3200 });
+    assert.equal(thin.kind, "refuse");
+    assert.match((thin as any).reason, /below the \$5000 admission floor/);
+    assert.equal(manifestVerdict(M as any, { ...ok, poolUsd: null }).kind, "seat", "absence of measurement is not evidence");
+  });
+
+  it("R5: a 0W/0R crowd is refused as unknown", async () => {
+    const { manifestVerdict } = await import("../src/live/manifest.js");
+    const unknown = manifestVerdict(M as any, { ...ok, winnerHits: 0, rugHits: 0 });
+    assert.equal(unknown.kind, "refuse");
+    assert.match((unknown as any).reason, /0W\/0R/);
+  });
+
+  it("the executor passes poolUsd from the TRUSTED liquidity band only", async () => {
+    const s = await (await import("node:fs")).readFileSync(new URL("../src/live/executor.ts", import.meta.url), "utf8");
+    const i = s.indexOf("poolUsd: await");
+    assert.ok(i > 0, "the gate must supply poolUsd");
+    assert.match(s.slice(i, i + 600), /BETWEEN 1200 AND 5000000/, "a decoy print must never satisfy a depth floor");
+  });
+});

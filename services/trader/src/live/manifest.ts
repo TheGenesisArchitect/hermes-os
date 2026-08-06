@@ -40,6 +40,13 @@ export type ManifestTierSpec = {
   crowdNetWinners?: boolean;
   /** venue allowlist for this tier */
   venues: string[];
+  /** R2 (admission court, 2026-08-06): pool at entry below this is the
+   * never-offered cohort — 47% dead, −$0.59/t. Unmeasured pool passes. */
+  poolMinUsd?: number;
+  /** R5 (admission court): a crowd with zero winner AND zero rug history is
+   * unknown — 44% dead, −$0.45/t. Distinct from crowdNetWinners, which
+   * refuses a MEASURED-but-losing crowd. */
+  refuseUnknownCrowd?: boolean;
   /** refuse relaunched tickers (F6 — the adversary's re-harvest cell; BROKER
    * #7319 entered one flagged two audit lines above its seat) */
   refuseSecondLaunch?: boolean;
@@ -62,6 +69,8 @@ export type ManifestInput = {
   venue: string | null;
   /** launchOrder ≥ 2 — a relaunch of an existing ticker */
   secondLaunch?: boolean;
+  /** pool liquidity at seat time (R2) */
+  poolUsd?: number | null;
 };
 
 export type ManifestVerdict =
@@ -93,6 +102,13 @@ export function _resetManifestCache(): void {
 
 function tierRefusal(spec: ManifestTierSpec, c: ManifestInput): string | null {
   if (spec.refuseSecondLaunch && c.secondLaunch) return "second launch (F6 re-harvest cell)";
+  // R2 — thin pool at entry (admission court): 47% dead, −$0.59/t. An
+  // unmeasured pool passes; absence of measurement is not evidence.
+  if (spec.poolMinUsd != null && c.poolUsd != null && c.poolUsd > 0 && c.poolUsd < spec.poolMinUsd)
+    return `pool $${Math.round(c.poolUsd)} below the $${spec.poolMinUsd} admission floor (47% dead)`;
+  // R5 — unknown crowd: zero winners AND zero rugs on record (44% dead).
+  if (spec.refuseUnknownCrowd && (c.winnerHits ?? 0) === 0 && (c.rugHits ?? 0) === 0)
+    return "crowd 0W/0R — unknown (44% dead)";
   if (c.venue == null || !spec.venues.includes(c.venue)) return `venue ${c.venue ?? "unknown"} not in tier list`;
   if (spec.crowdNetWinners) {
     if (c.winnerHits == null || c.rugHits == null) return "crowd unmeasured";

@@ -1131,6 +1131,18 @@ export async function maybeLiveBuy(
         const v = manifestVerdict(manifest, {
           signature: sig?.signature ?? null,
           secondLaunch: (sig?.launchOrder ?? 1) >= 2,
+          // R2 (admission court): the pool the seat would actually sit in.
+          // Trusted band only — a decoy print must not satisfy a depth floor.
+          poolUsd: await (async () => {
+            const [lt] = await db
+              .select({ liq: candidateTicks.liquidityUsd })
+              .from(candidateTicks)
+              .where(and(eq(candidateTicks.mint, mint),
+                sql`${candidateTicks.liquidityUsd}::float BETWEEN 1200 AND 5000000`))
+              .orderBy(desc(candidateTicks.id))
+              .limit(1);
+            return lt?.liq != null ? Number(lt.liq) : null;
+          })(),
           inflow: sig?.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null,
           buyShare: sig?.triggerBuyShare != null && Number.isFinite(Number(sig.triggerBuyShare)) ? Number(sig.triggerBuyShare) : null,
           winnerHits: sig?.walletWinnerHits ?? null,
