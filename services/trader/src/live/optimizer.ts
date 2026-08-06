@@ -151,7 +151,7 @@ async function signatureTable(): Promise<Record<string, SignatureStat>> {
           FILTER (WHERE lt.liq IS NOT NULL AND lt.liq < ${DEAD_POOL_LIQ}) phantom
       FROM fills f
       JOIN positions p ON p.id = f.position_id AND p.lane = 'paper' AND p.status = 'closed'
-        AND p.opened_at >= now() - make_interval(days => ${WINDOW_DAYS})
+        AND p.opened_at >= now() - (interval '1 day' * ${WINDOW_DAYS})
       LEFT JOIN LATERAL (
         SELECT ct.liquidity_usd::float liq FROM candidate_ticks ct
         WHERE ct.mint = p.mint AND ct.snapped_at <= f.filled_at
@@ -164,7 +164,7 @@ async function signatureTable(): Promise<Record<string, SignatureStat>> {
     JOIN candidate_outcomes co ON co.mint = p.mint AND co.signature IS NOT NULL
     LEFT JOIN sells s ON s.position_id = p.id
     WHERE p.lane = 'paper' AND p.status = 'closed'
-      AND p.opened_at >= now() - make_interval(days => ${WINDOW_DAYS})
+      AND p.opened_at >= now() - (interval '1 day' * ${WINDOW_DAYS})
     GROUP BY co.signature`)) as unknown as { sig: string; n: number; adj: number }[];
   const out: Record<string, SignatureStat> = {};
   for (const r of rows) {
@@ -202,12 +202,12 @@ async function featureDrift(): Promise<DriftReport> {
   for (const [name, binExpr] of features) {
     const rows = (await db.execute(sql`
       SELECT ${sql.raw(binExpr)} AS bin,
-        count(*) FILTER (WHERE p.opened_at >= now() - make_interval(days => ${half})) recent,
-        count(*) FILTER (WHERE p.opened_at <  now() - make_interval(days => ${half})) prior
+        count(*) FILTER (WHERE p.opened_at >= now() - (interval '1 day' * ${half})) recent,
+        count(*) FILTER (WHERE p.opened_at <  now() - (interval '1 day' * ${half})) prior
       FROM positions p
       LEFT JOIN candidate_outcomes co ON co.mint = p.mint
       LEFT JOIN tokens tk ON tk.mint = p.mint
-      WHERE p.lane = 'paper' AND p.opened_at >= now() - make_interval(days => ${WINDOW_DAYS})
+      WHERE p.lane = 'paper' AND p.opened_at >= now() - (interval '1 day' * ${WINDOW_DAYS})
       GROUP BY 1`)) as unknown as { bin: string; recent: number; prior: number }[];
     perFeature[name] = +psi(rows.map((r) => Number(r.recent)), rows.map((r) => Number(r.prior))).toFixed(4);
   }
@@ -230,7 +230,7 @@ async function refusalCounterfactual(): Promise<ManifestProposal["refusalCounter
         AND p2.opened_at BETWEEN al.created_at - interval '30 minutes' AND al.created_at + interval '30 minutes'
       ORDER BY p2.opened_at LIMIT 1) pp ON true
     WHERE al.action = 'live_buy_skipped' AND al.details->>'reason' LIKE 'manifest v%'
-      AND al.created_at >= now() - make_interval(days => ${WINDOW_DAYS})`)) as unknown as {
+      AND al.created_at >= now() - (interval '1 day' * ${WINDOW_DAYS})`)) as unknown as {
     refused: number; greens: number; dead: number;
   }[];
   if (!r || Number(r.refused) === 0) return null;
