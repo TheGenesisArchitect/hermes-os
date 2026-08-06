@@ -12,10 +12,14 @@ interface DsPair {
   pairAddress: string;
   baseToken?: { address: string; name?: string; symbol?: string };
   priceUsd?: string;
+  /** price in QUOTE tokens (e.g. SOL) — with priceUsd this yields USD/quote */
+  priceNative?: string;
   txns?: { m5?: DsTxnWindow; h1?: DsTxnWindow; h6?: DsTxnWindow; h24?: DsTxnWindow };
   volume?: { m5?: number; h1?: number; h6?: number; h24?: number };
   priceChange?: { m5?: number; h1?: number; h6?: number; h24?: number };
-  liquidity?: { usd?: number };
+  /** `usd` is DERIVED from price (circular — cannot validate price);
+   *  `quote` is the measured quote-side reserve, the only honest depth. */
+  liquidity?: { usd?: number; base?: number; quote?: number };
   fdv?: number;
   pairCreatedAt?: number;
 }
@@ -74,14 +78,53 @@ function pairToMarket(best: DsPair): TokenMarket {
   };
 }
 
+/**
+ * QUOTE-DEPTH TRUTH (DORAE #8165, 2026-08-06 — the decoy-pool trap).
+ *
+ * Selecting the pool with the highest REPORTED liquidity is an adversarial
+ * invitation. A Meteora DLMM lets anyone place single-sided liquidity in any
+ * price bin: 600,070,580 DORAE against 0.02717 SOL (~$5 of real money) at an
+ * absurd bin price. DexScreener then values those 600M tokens AT that implied
+ * price -> "liquidity $91,360,362", "FDV $149,944,232", zero trades ever.
+ * Our line-84 heuristic picked it, marked the position at 7,104x entry, and
+ * printed a $47,421 phantom profit against a pool that can pay out ~$5.
+ *
+ * THE RULE: a pool's honesty is its QUOTE side — the asset it must actually
+ * pay us in. Reported USD liquidity is derived FROM price and therefore
+ * cannot validate price (circular). Quote reserves are a measurement.
+ *
+ * Selection is therefore: among pools with a credible quote balance, take the
+ * deepest; if none is credible, take the deepest quote available and let the
+ * caller's own liquidity floors refuse it. Never let a $5 pool set the mark.
+ */
+const MIN_QUOTE_USD = 500; // below this a pool cannot pay any ticket we trade
+
+/** Quote-side value in USD, derived from the pool's own price ratio:
+ *  quote_tokens x (priceUsd / priceNative) = quote value in USD. This is
+ *  independent of the token's supply, so a fake bin price cannot inflate it. */
+function quoteUsd(p: DsPair): number {
+  const qty = p.liquidity?.quote ?? 0;
+  const px = Number(p.priceUsd ?? 0);
+  const native = Number(p.priceNative ?? 0);
+  if (!(qty > 0) || !(px > 0) || !(native > 0)) return 0;
+  return qty * (px / native); // (USD per quote-token) x quote-tokens
+}
+
 function bestPairPerMint(pairs: DsPair[]): Map<string, DsPair> {
-  const best = new Map<string, DsPair>();
+  const byMint = new Map<string, DsPair[]>();
   for (const p of pairs) {
     if (p.chainId !== "solana" || !p.priceUsd) continue;
     const mint = p.baseToken?.address;
     if (!mint) continue;
-    const cur = best.get(mint);
-    if (!cur || (p.liquidity?.usd ?? 0) > (cur.liquidity?.usd ?? 0)) best.set(mint, p);
+    if (!byMint.has(mint)) byMint.set(mint, []);
+    byMint.get(mint)!.push(p);
+  }
+  const best = new Map<string, DsPair>();
+  for (const [mint, list] of byMint) {
+    const credible = list.filter((p) => quoteUsd(p) >= MIN_QUOTE_USD);
+    const pool = (credible.length ? credible : list).reduce((a, b) =>
+      quoteUsd(b) > quoteUsd(a) ? b : a);
+    best.set(mint, pool);
   }
   return best;
 }
