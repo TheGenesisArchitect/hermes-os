@@ -1,0 +1,1132 @@
+diff --git a/docs/QA-REVIEW-BUNDLE-2026-08-06.md b/docs/QA-REVIEW-BUNDLE-2026-08-06.md
+new file mode 100644
+index 0000000..6b05754
+--- /dev/null
++++ b/docs/QA-REVIEW-BUNDLE-2026-08-06.md
+@@ -0,0 +1,598 @@
++# QA REVIEW BUNDLE — verbatim source, no checkout required
++
++**Repo:** TheGenesisArchitect/hermes-os (PRIVATE) · **Commit:** `6370577`
++**Generated:** 2026-08-06T22:05:40Z · **Suite:** 57/57
++
++Companion to `QA-PRERELEASE-AUDIT-2026-08-06.md`. Every claim in that
++document about *enforcement* can be checked against the code below. The
++files are pasted verbatim and unabridged — the reviewer should not have to
++trust a summary.
++
++---
++
++## 1. `services/trader/src/live/manifest.ts` — the live selection verdict
++
++This is the enforceability question. Confirm `tierRefusal()` READS every
++field the manifest declares: `poolMinUsd`, `refuseUnknownCrowd`,
++`refuseSecondLaunch`, `crowdNetWinners`, `inflowMin/Max`, `buyShareMin`,
++`venues`. A declared-but-unread field is the defect class in audit §5.
++
++```typescript
++/**
++ * THE FORMULA MANIFEST — paper is the laboratory, live inherits the ratified
++ * winning architecture (operator, 2026-08-02: "Yes let's execute with
++ * precision").
++ *
++ * PURPOSE
++ *   Load the operator-ratified manifest (config key `formula_manifest`) and
++ *   render the entry verdict for a live candidate: ELITE seat, FILLER seat, or
++ *   refuse — with the reason spelled out for the audit row. The manifest is
++ *   data, not code: promotion/demotion of signatures, floors and venues happens
++ *   by ratifying a new manifest version, never by editing gates.
++ *
++ * SUCCESS
++ *   Every live entry decision carries the manifest version and tier; the
++ *   counterfactual watch (packages/db/replays/manifest-watch.ts) measures what
++ *   each tier takes and refuses from day one.
++ *
++ * FAILURE MODE
++ *   A missing or corrupt manifest must never wedge the lane: verdict returns
++ *   pass-through ("no-manifest") and the caller trades exactly as before —
++ *   solvency rails are upstream and unaffected. Fail-open, and the fallback is
++ *   visible in the audit row.
++ *
++ * OWNER
++ *   Portfolio Intelligence (contents) · Execution (this wiring)
++ */
++import { db } from "@hermes/db";
++import { sql } from "drizzle-orm";
++
++export type ManifestTierSpec = {
++  /** minimum measured inflow; an UNMEASURED inflow passes (absence isn't evidence) */
++  inflowMin?: number;
++  /** maximum measured inflow (the canon envelope ceiling) */
++  inflowMax?: number;
++  /** minimum measured buy share at trigger */
++  buyShareMin?: number;
++  /** when false, an unmeasured buy share refuses; default true (passes) */
++  unmeasuredBuySharePasses?: boolean;
++  /** crowd rule: winners aboard and winners outnumber rug history (W≥1 ∧ W>R) */
++  crowdNetWinners?: boolean;
++  /** venue allowlist for this tier */
++  venues: string[];
++  /** R2 (admission court, 2026-08-06): pool at entry below this is the
++   * never-offered cohort — 47% dead, −$0.59/t. Unmeasured pool passes. */
++  poolMinUsd?: number;
++  /** R5 (admission court): a crowd with zero winner AND zero rug history is
++   * unknown — 44% dead, −$0.45/t. Distinct from crowdNetWinners, which
++   * refuses a MEASURED-but-losing crowd. */
++  refuseUnknownCrowd?: boolean;
++  /** refuse relaunched tickers (F6 — the adversary's re-harvest cell; BROKER
++   * #7319 entered one flagged two audit lines above its seat) */
++  refuseSecondLaunch?: boolean;
++};
++
++export type FormulaManifest = {
++  version: number;
++  ratifiedAt: string;
++  genomes: Record<string, number>; // signature → sizing weight
++  elite: ManifestTierSpec;
++  filler: ManifestTierSpec;
++};
++
++export type ManifestInput = {
++  signature: string | null;
++  inflow: number | null;
++  buyShare: number | null;
++  winnerHits: number | null;
++  rugHits: number | null;
++  venue: string | null;
++  /** launchOrder ≥ 2 — a relaunch of an existing ticker */
++  secondLaunch?: boolean;
++  /** pool liquidity at seat time (R2) */
++  poolUsd?: number | null;
++};
++
++export type ManifestVerdict =
++  | { kind: "no-manifest" }
++  | { kind: "seat"; tier: "elite" | "filler"; weight: number; version: number }
++  | { kind: "refuse"; reason: string; version: number };
++
++let cache: { m: FormulaManifest | null; at: number } = { m: null, at: 0 };
++const CACHE_MS = 30_000;
++
++export async function loadManifest(): Promise<FormulaManifest | null> {
++  if (Date.now() - cache.at < CACHE_MS) return cache.m;
++  try {
++    const [row] = (await db.execute(
++      sql`SELECT value FROM config WHERE key = 'formula_manifest'`,
++    )) as unknown as { value: FormulaManifest }[];
++    const m = row?.value ?? null;
++    cache = { m: m && m.version >= 1 && m.elite && m.filler && m.genomes ? m : null, at: Date.now() };
++  } catch {
++    cache = { m: null, at: Date.now() }; // fail-open; retried next cache window
++  }
++  return cache.m;
++}
++
++/** Test seam. */
++export function _resetManifestCache(): void {
++  cache = { m: null, at: 0 };
++}
++
++function tierRefusal(spec: ManifestTierSpec, c: ManifestInput): string | null {
++  if (spec.refuseSecondLaunch && c.secondLaunch) return "second launch (F6 re-harvest cell)";
++  // R2 — thin pool at entry (admission court): 47% dead, −$0.59/t. An
++  // unmeasured pool passes; absence of measurement is not evidence.
++  if (spec.poolMinUsd != null && c.poolUsd != null && c.poolUsd > 0 && c.poolUsd < spec.poolMinUsd)
++    return `pool $${Math.round(c.poolUsd)} below the $${spec.poolMinUsd} admission floor (47% dead)`;
++  // R5 — unknown crowd: zero winners AND zero rugs on record (44% dead).
++  if (spec.refuseUnknownCrowd && (c.winnerHits ?? 0) === 0 && (c.rugHits ?? 0) === 0)
++    return "crowd 0W/0R — unknown (44% dead)";
++  if (c.venue == null || !spec.venues.includes(c.venue)) return `venue ${c.venue ?? "unknown"} not in tier list`;
++  if (spec.crowdNetWinners) {
++    if (c.winnerHits == null || c.rugHits == null) return "crowd unmeasured";
++    if (!(c.winnerHits >= 1 && c.winnerHits > c.rugHits)) return `crowd ${c.winnerHits}W/${c.rugHits}R fails W≥1∧W>R`;
++  }
++  if (spec.inflowMin != null && c.inflow != null && c.inflow < spec.inflowMin)
++    return `inflow ${c.inflow.toFixed(2)}× below ${spec.inflowMin}×`;
++  if (spec.inflowMax != null && c.inflow != null && c.inflow > spec.inflowMax)
++    return `inflow ${c.inflow.toFixed(2)}× above the ${spec.inflowMax}× envelope`;
++  if (spec.buyShareMin != null) {
++    if (c.buyShare == null) {
++      if (spec.unmeasuredBuySharePasses === false) return "buy share unmeasured";
++    } else if (c.buyShare < spec.buyShareMin) {
++      return `buy share ${(c.buyShare * 100).toFixed(0)}% below ${(spec.buyShareMin * 100).toFixed(0)}%`;
++    }
++  }
++  return null;
++}
++
++/**
++ * Pure verdict — no I/O, directly unit-tested. Elite is tried first; a
++ * candidate failing both tiers is refused with both reasons named.
++ */
++export function manifestVerdict(m: FormulaManifest | null, c: ManifestInput): ManifestVerdict {
++  if (!m) return { kind: "no-manifest" };
++  // Drift-major seat veto REMOVED 2026-08-03 (convicted: 76 refusals / 75
++  // winners / 8 rugs overnight — 7d-vs-7d PSI measures composition change,
++  // not current-hour hostility; the rug-tide doors own that on the right
++  // clock). PSI governs optimizer PROPOSALS only. Never re-add here.
++  if (c.signature == null || m.genomes[c.signature] == null)
++    return { kind: "refuse", reason: `${c.signature ?? "unrouted"} — genome not in manifest v${m.version}`, version: m.version };
++  const weight = m.genomes[c.signature]!;
++  const eliteWhy = tierRefusal(m.elite, c);
++  if (eliteWhy == null) return { kind: "seat", tier: "elite", weight, version: m.version };
++  const fillerWhy = tierRefusal(m.filler, c);
++  if (fillerWhy == null) return { kind: "seat", tier: "filler", weight, version: m.version };
++  return { kind: "refuse", reason: `manifest v${m.version}: elite → ${eliteWhy}; filler → ${fillerWhy}`, version: m.version };
++}
++
++```
++
++---
++
++## 2. `packages/core/src/market/dexscreener.ts` — quote-depth pool selection
++
++The decoy-pool fix (`6975a8a`). Confirm selection ranks by QUOTE-side depth,
++not reported USD liquidity, and that `quoteUsd()` derives from
++`priceUsd/priceNative` so a fake bin price cannot inflate it.
++
++```typescript
++/** DexScreener token market data — keyless, used for scoring and paper-trade price marks. */
++
++interface DsTxnWindow {
++  buys: number;
++  sells: number;
++}
++
++interface DsPair {
++  chainId: string;
++  dexId: string;
++  labels?: string[];
++  pairAddress: string;
++  baseToken?: { address: string; name?: string; symbol?: string };
++  priceUsd?: string;
++  /** price in QUOTE tokens (e.g. SOL) — with priceUsd this yields USD/quote */
++  priceNative?: string;
++  txns?: { m5?: DsTxnWindow; h1?: DsTxnWindow; h6?: DsTxnWindow; h24?: DsTxnWindow };
++  volume?: { m5?: number; h1?: number; h6?: number; h24?: number };
++  priceChange?: { m5?: number; h1?: number; h6?: number; h24?: number };
++  /** `usd` is DERIVED from price (circular — cannot validate price);
++   *  `quote` is the measured quote-side reserve, the only honest depth. */
++  liquidity?: { usd?: number; base?: number; quote?: number };
++  fdv?: number;
++  pairCreatedAt?: number;
++}
++
++export interface TokenMarket {
++  priceUsd: number;
++  liquidityUsd: number;
++  fdvUsd: number;
++  pairAddress: string;
++  dexId: string;
++  // DexScreener labels distinguish sub-venues that SHARE a dexId. Meteora reports
++  // every pool as dexId "meteora"; only the label separates DAMM v2 ("DYN2" — the
++  // atomic-cliff farm) from DAMM v1 ("DYN" — bags-fm launches, a real source).
++  // Without this the exit-side farm ladder can't tell the killer apart from a
++  // legit venue and mis-classifies every one of them. (See canonicalVenue.)
++  labels: string[];
++  // Identity from the pool's base token — the only place stream-sourced (PumpPortal
++  // graduation) tokens can recover their symbol/name, since the migration event
++  // carries neither. Without this they show as "?" everywhere downstream.
++  symbol: string | null;
++  name: string | null;
++  pairAgeMinutes: number | null;
++  volUsd: { m5: number; h1: number; h24: number };
++  txns: { m5: DsTxnWindow; h1: DsTxnWindow; h24: DsTxnWindow };
++  priceChangePct: { m5: number; h1: number; h24: number };
++}
++
++/** Map a (best) pair onto the TokenMarket shape. */
++function pairToMarket(best: DsPair): TokenMarket {
++  const zero = { buys: 0, sells: 0 };
++  return {
++    priceUsd: Number(best.priceUsd),
++    liquidityUsd: best.liquidity?.usd ?? 0,
++    fdvUsd: best.fdv ?? 0,
++    pairAddress: best.pairAddress,
++    dexId: best.dexId,
++    labels: best.labels ?? [],
++    symbol: best.baseToken?.symbol?.trim() || null,
++    name: best.baseToken?.name?.trim() || null,
++    pairAgeMinutes: best.pairCreatedAt ? (Date.now() - best.pairCreatedAt) / 60_000 : null,
++    volUsd: {
++      m5: best.volume?.m5 ?? 0,
++      h1: best.volume?.h1 ?? 0,
++      h24: best.volume?.h24 ?? 0,
++    },
++    txns: {
++      m5: best.txns?.m5 ?? zero,
++      h1: best.txns?.h1 ?? zero,
++      h24: best.txns?.h24 ?? zero,
++    },
++    priceChangePct: {
++      m5: best.priceChange?.m5 ?? 0,
++      h1: best.priceChange?.h1 ?? 0,
++      h24: best.priceChange?.h24 ?? 0,
++    },
++  };
++}
++
++/**
++ * QUOTE-DEPTH TRUTH (DORAE #8165, 2026-08-06 — the decoy-pool trap).
++ *
++ * Selecting the pool with the highest REPORTED liquidity is an adversarial
++ * invitation. A Meteora DLMM lets anyone place single-sided liquidity in any
++ * price bin: 600,070,580 DORAE against 0.02717 SOL (~$5 of real money) at an
++ * absurd bin price. DexScreener then values those 600M tokens AT that implied
++ * price -> "liquidity $91,360,362", "FDV $149,944,232", zero trades ever.
++ * Our line-84 heuristic picked it, marked the position at 7,104x entry, and
++ * printed a $47,421 phantom profit against a pool that can pay out ~$5.
++ *
++ * THE RULE: a pool's honesty is its QUOTE side — the asset it must actually
++ * pay us in. Reported USD liquidity is derived FROM price and therefore
++ * cannot validate price (circular). Quote reserves are a measurement.
++ *
++ * Selection is therefore: among pools with a credible quote balance, take the
++ * deepest; if none is credible, take the deepest quote available and let the
++ * caller's own liquidity floors refuse it. Never let a $5 pool set the mark.
++ */
++const MIN_QUOTE_USD = 500; // below this a pool cannot pay any ticket we trade
++
++/** Quote-side value in USD, derived from the pool's own price ratio:
++ *  quote_tokens x (priceUsd / priceNative) = quote value in USD. This is
++ *  independent of the token's supply, so a fake bin price cannot inflate it. */
++function quoteUsd(p: DsPair): number {
++  const qty = p.liquidity?.quote ?? 0;
++  const px = Number(p.priceUsd ?? 0);
++  const native = Number(p.priceNative ?? 0);
++  if (!(qty > 0) || !(px > 0) || !(native > 0)) return 0;
++  return qty * (px / native); // (USD per quote-token) x quote-tokens
++}
++
++function bestPairPerMint(pairs: DsPair[]): Map<string, DsPair> {
++  const byMint = new Map<string, DsPair[]>();
++  for (const p of pairs) {
++    if (p.chainId !== "solana" || !p.priceUsd) continue;
++    const mint = p.baseToken?.address;
++    if (!mint) continue;
++    if (!byMint.has(mint)) byMint.set(mint, []);
++    byMint.get(mint)!.push(p);
++  }
++  const best = new Map<string, DsPair>();
++  for (const [mint, list] of byMint) {
++    const credible = list.filter((p) => quoteUsd(p) >= MIN_QUOTE_USD);
++    const pool = (credible.length ? credible : list).reduce((a, b) =>
++      quoteUsd(b) > quoteUsd(a) ? b : a);
++    best.set(mint, pool);
++  }
++  return best;
++}
++
++/**
++ * Fetch current market state for a mint, using its most liquid Solana pair.
++ * Returns null when DexScreener has no pair (brand-new or delisted token).
++ */
++export async function fetchTokenMarket(mint: string): Promise<TokenMarket | null> {
++  const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
++    headers: { accept: "application/json" },
++    signal: AbortSignal.timeout(5000), // a silently-dropped host must fail fast, never hang the manage/observe loop
++  });
++  if (!res.ok) throw new Error(`dexscreener HTTP ${res.status}`);
++  const body = (await res.json()) as { pairs?: DsPair[] | null };
++  const best = bestPairPerMint(body.pairs ?? []).get(mint);
++  return best ? pairToMarket(best) : null;
++}
++
++/**
++ * BATCHED market fetch — up to 30 mints per request via the comma-joined tokens
++ * endpoint. This is the rate-limit fix: per-mint polling at book scale (24
++ * positions × 5s manage + 60 recorder candidates × 30s) blew past DexScreener's
++ * ~300 req/min ceiling and the throttled fetches read as book-wide "no pair"
++ * outages — the recurring HOLD-ALL storms were SELF-INFLICTED. One request per
++ * 30 mints keeps the whole platform at ~20 req/min. A failed chunk yields null
++ * for its mints (same semantics as the old per-mint catch → the feed-outage
++ * breadth guard holds the book rather than acting on missing reads).
++ */
++export async function fetchTokenMarkets(mints: string[]): Promise<Map<string, TokenMarket | null>> {
++  const out = new Map<string, TokenMarket | null>();
++  const unique = [...new Set(mints)];
++  for (let i = 0; i < unique.length; i += 30) {
++    const chunk = unique.slice(i, i + 30);
++    try {
++      const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${chunk.join(",")}`, {
++        headers: { accept: "application/json" },
++        signal: AbortSignal.timeout(8000),
++      });
++      if (!res.ok) throw new Error(`dexscreener HTTP ${res.status}`);
++      const body = (await res.json()) as { pairs?: DsPair[] | null };
++      const best = bestPairPerMint(body.pairs ?? []);
++      for (const m of chunk) {
++        const b = best.get(m);
++        out.set(m, b ? pairToMarket(b) : null);
++      }
++    } catch {
++      for (const m of chunk) out.set(m, null);
++    }
++  }
++  return out;
++}
++
++```
++
++---
++
++## 3. `services/trader/src/live/executor.ts` — the manifest gate at the entry path
++
++The call site. Confirm: (a) `poolUsd` is read from the TRUSTED liquidity band
++(1200–5000000) so a decoy print cannot satisfy a depth floor; (b) a refusal
++AUDITS and RETURNS (no fall-through to normal sizing); (c) the gate sits
++BEFORE the solvency gate and never wraps it.
++
++```typescript
++    // ── THE FORMULA MANIFEST (operator-ratified 2026-08-02) ──────────────────
++    // Paper is the laboratory; live inherits the ratified winning architecture.
++    // Two tiers from the rug-adjusted combination sweep (formula-combo.ts):
++    // ELITE (+$5.89/t adj, canon-era replicated) and canon FILLER (5% dead
++    // cohort). Venue verdicts carry the 2026-08-02 architecture fence — the
++    // pre-fix unsellable tape does not convict the fixed lane, so damm-v2
++    // re-qualifies through the filler tier under clean fills. Every refusal
++    // audits with both tiers' reasons; the counterfactual watch reads them.
++    let manifestTier: "elite" | "filler" | null = null;
++    let manifestWeight = 1;
++    if (cfg.FORMULA_MANIFEST_ENABLED) {
++      const manifest = await loadManifest();
++      if (manifest) {
++        const [tk] = await db.select({ dex: tokens.dex }).from(tokens).where(eq(tokens.mint, mint)).limit(1);
++        const v = manifestVerdict(manifest, {
++          signature: sig?.signature ?? null,
++          secondLaunch: (sig?.launchOrder ?? 1) >= 2,
++          // R2 (admission court): the pool the seat would actually sit in.
++          // Trusted band only — a decoy print must not satisfy a depth floor.
++          poolUsd: await (async () => {
++            const [lt] = await db
++              .select({ liq: candidateTicks.liquidityUsd })
++              .from(candidateTicks)
++              .where(and(eq(candidateTicks.mint, mint),
++                sql`${candidateTicks.liquidityUsd}::float BETWEEN 1200 AND 5000000`))
++              .orderBy(desc(candidateTicks.id))
++              .limit(1);
++            return lt?.liq != null ? Number(lt.liq) : null;
++          })(),
++          inflow: sig?.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null,
++          buyShare: sig?.triggerBuyShare != null && Number.isFinite(Number(sig.triggerBuyShare)) ? Number(sig.triggerBuyShare) : null,
++          winnerHits: sig?.walletWinnerHits ?? null,
++          rugHits: sig?.walletRugHits ?? null,
++          venue: tk?.dex ?? null,
++        });
++        if (v.kind === "refuse") {
++          await audit("live_buy_skipped", { mint, reason: v.reason });
++          return;
++        }
++        if (v.kind === "seat") {
++          manifestTier = v.tier;
++          manifestWeight = v.weight;
++          await audit("live_manifest_seat", {
++            mint,
++            tier: v.tier,
++            weight: v.weight,
++            manifestVersion: v.version,
++            signature: sig?.signature ?? null,
++            reason: `manifest v${v.version} ${v.tier} seat — genome weight ×${v.weight.toFixed(2)}`,
++          });
++        }
++        // kind === "no-manifest" cannot reach here (manifest was non-null)
++      }
++    }
++    // ══ STRATEGY GATE LAYER, REGION 2 of 2 (see LIVE_STRATEGY_GATES) ═════════
++    // Clone-wave, wallet-graph anti-gate, F1 formula/crowd, RECOVERED tier and
++    // its cliff-safe door, sub-floor doors, build-back, golden window, trigger
++    // and sensor seats, buy-share floor, signature allowlist, stars bar. Every
++    // one is a selection opinion; none of them asks whether the trade can be
++    // executed or afforded. All seven exception doors live in here too, and go
++
++```
++
++---
++
++## 4. `services/trader/src/paper.ts` — the admission policy (paper lane)
++
++Same R1–R5 policy on the sensor lane. Confirm each refusal is audited by name
++and returns.
++
++```typescript
++  // ── THE ADMISSION POLICY (admission-court, ratified 2026-08-06) ──────────
++  // Capture was never a manager defect: on trades that OFFER (peak ≥1.15×) the
++  // manager banks 32.3%, inside the target band. The blend was dragged to
++  // −7.6% by 632 trades/7d that NEVER ROSE (avg peak 1.05×, dead in 48s,
++  // −$2,528). The instant-death autopsy found the entry-knowable signature and
++  // the admission court priced it — the first gate to clear the both-halves
++  // bar in seven courts:
++  //   take-all  1,652 seats  +$1,116   7.4% capture  $0.68/t
++  //   R1–R5       864 seats  +$1,563  16.3% capture  $1.81/t   (+40% EV)
++  // Each refusal is individually net-negative to keep: thin pools −$191,
++  // meteora-dbc −$193, unknown crowd −$181, rug-history crowd −$78. Unrouted
++  // contributes +$16 across 360 seats — cut for the SLOT, not the P&L.
++  // Flagged so the policy is revertable as one unit.
++  if (cfg.ADMISSION_POLICY) {
++    const wh = sig?.walletWinnerHits ?? null;
++    const rh = sig?.walletRugHits ?? null;
++    const poolNow = market.liquidityUsd;
++    const refuse =
++      // R1 unrouted — no signature means no measurements at all: 54% dead vs
++      // a 38% baseline, and every "unmeasured" cell in every other feature is
++      // this same cohort.
++      !sig?.signature ? "unrouted — no signature, no measurable edge (54% dead)"
++      // R2 thin pool at entry — 47% dead, −$0.59/t
++      : poolNow > 0 && poolNow < cfg.ADMISSION_MIN_POOL_USD ? `pool $${Math.round(poolNow)} below the $${cfg.ADMISSION_MIN_POOL_USD} admission floor (47% dead)`
++      // R3 rug history leads the crowd — 51% dead, −$1.17/t
++      : wh != null && (rh ?? 0) >= wh && (rh ?? 0) > 0 ? `crowd ${wh}W/${rh}R — rug history leads (51% dead)`
++      // R4 worst venue — 47% dead, −$0.59/t
++      : dex === "meteora-dbc" ? "venue meteora-dbc (47% dead, -$193/7d)"
++      // R5 unknown crowd — 44% dead, −$0.45/t
++      : (wh ?? 0) === 0 && (rh ?? 0) === 0 ? "crowd 0W/0R — unknown (44% dead)"
++      : null;
++    if (refuse) {
++      await audit("paper_admission_refused", { mint: signal.mint, reason: refuse, signature: sig?.signature ?? null });
++      return false;
++    }
++  }
++  // ── FORMULA v2 SENSOR TIER (canon GCE-FORMULA-001, ratified 2026-07-24) ───
++
++```
++
++---
++
++# RUNTIME EVIDENCE — raw output, 2026-08-06T22:06:36Z
++
++Commands from audit §7, executed on the operator machine against the live
++database. Transcribed verbatim. The reviewer is trusting my transcription
++here — the source sections above require no such trust.
++
++## R1. Typecheck + test suite
++
++```
++$ pnpm --filter @hermes/trader typecheck && pnpm --filter @hermes/trader test
++(typecheck: no output = clean)
++ℹ tests 57
++ℹ suites 16
++ℹ pass 57
++ℹ fail 0
++ℹ cancelled 0
++ℹ skipped 0
++```
++
++
++## R2. Sell-side certification against the live tape
++
++```
++$ npx tsx services/trader/src/tools/sell-certify.ts
++🔀 swap route via pumpswap
++PASS  XST          pumpswap         liq $  161,297  mark ✓ jupiter-hosted · quote ✓ pumpswap · build ✓ 1328b (not sent)
++PASS  shibanana    pumpswap         liq $   25,327  mark ✓ jupiter-hosted · quote ✓ pumpswap · build ✓ 1328b (not sent)
++PASS  TROLLCAT     pumpswap         liq $   27,154  mark ✓ jupiter-hosted · quote ✓ pumpswap · build ✓ 1368b (not sent)
++PASS  CLEOCATRA    pump-amm         liq $    1,531  mark ✓ jupiter-hosted · quote ✓ pumpswap · build ✓ 1324b (not sent)
++🔀 swap route via jupiter-hosted
++PASS  TINYTANK     meteora-dbc      liq $    1,602  mark ✓ jupiter-hosted · quote ✓ jupiter-hosted · build ✓ 1040b (not sent)
++🔀 swap route via pumpswap
++PASS  FROGE        pumpswap         liq $   64,445  mark ✓ jupiter-hosted · quote ✓ pumpswap · build ✓ 1328b (not sent)
++VERDICT: 6/6 certified sellable end-to-end — stack is GO
++```
++
++## R3. Admission court (the shipped policy's own court)
++
++```
++$ npx tsx packages/db/replays/admission-court.ts 7
++ADMISSION COURT — 1588 paper closes, last 7d
++policy                           seats  1st half  2nd half     total  capture    ev/t  verdict
++INCUMBENT (take all)              1588   +819.52   +296.89  +1116.41     7.4%   +0.70  (incumbent)
++R1 drop unrouted                  1243   +785.80   +318.97  +1104.77     7.8%   +0.89  —
++R1+R2 +thin pools                 1078   +904.05   +425.31  +1329.35    13.1%   +1.23  ✅ BEATS BOTH HALVES
++R1+R2+R3 +rug crowd               1037   +901.08   +484.86  +1385.95    13.8%   +1.34  ✅ BEATS BOTH HALVES
++R1+R2+R3+R4 +dbc                  1032   +910.72   +487.97  +1398.69    13.9%   +1.36  ✅ BEATS BOTH HALVES
++ALL R1-R5 (strictest)              839   +960.54   +601.47  +1562.01    16.4%   +1.86  ✅ BEATS BOTH HALVES
++R2+R3 only (no signature gate)    1247   +912.22   +470.94  +1383.17    13.2%   +1.11  ✅ BEATS BOTH HALVES
++refusal                  refused  their pnl  (negative = the rail protects money)
++R1 unrouted                  345     +11.65
++R2 pool <$5k                 292    -210.24
++R3 crowd R>=W                 63     -76.24
++R4 venue dbc                 297    -212.29
++R5 crowd 0W/0R               377    -155.34
++Bar: beat the incumbent in BOTH halves + improve capture + refuse less EV than it protects.
++```
++
++## R4. Instant-death autopsy (the entry-knowable signature)
++
++```
++$ npx tsx packages/db/replays/instant-death-court.ts 7
++INSTANT-DEATH COURT — 1588 paper closes, last 7d
++
++  DEAD  (peak <1.15x)  n=603  pnl $-2466.94  ev/t $-4.09
++  OFFER (peak >=1.15x) n=985  pnl $+3583.36  ev/t $+3.64
++
++Baseline death rate: 38% — a feature only matters if its cells deviate from this.
++
++── SIGNATURE ──
++  BASE                   n= 313  dead  31% ████████                  pnl $  +784.22  ev/t $ +2.51
++  RUG_RISK               n= 528  dead  33% ████████                  pnl $  +613.61  ev/t $ +1.16
++  MOON_SLOW              n= 111  dead  34% █████████                 pnl $   +44.91  ev/t $ +0.40
++  RISER                  n= 112  dead  35% █████████                 pnl $  -217.17  ev/t $ -1.94
++  MOON_STEADY            n= 151  dead  40% ██████████                pnl $  -140.56  ev/t $ -0.93
++  MOON_FAST              n=  22  dead  45% ███████████               pnl $   +17.15  ev/t $ +0.78
++  ∅ unrouted             n= 345  dead  54% ██████████████            pnl $   +11.65  ev/t $ +0.03
++
++── VENUE ──
++  pumpswap               n= 890  dead  34% █████████                 pnl $ +1666.84  ev/t $ +1.87
++  meteora-damm-v2        n= 101  dead  38% ██████████                pnl $   -92.23  ev/t $ -0.91
++  pump-amm               n= 286  dead  40% ██████████                pnl $  -291.85  ev/t $ -1.02
++  meteora-dbc            n= 297  dead  47% ████████████              pnl $  -212.29  ev/t $ -0.71
++
++── LAUNCH ORDER ──
++  1st                    n= 366  dead  30% ████████                  pnl $  +277.37  ev/t $ +0.76
++  3rd+                   n= 680  dead  34% █████████                 pnl $  +869.66  ev/t $ +1.28
++  2nd                    n= 197  dead  39% ██████████                pnl $   -42.26  ev/t $ -0.21
++
++── CROWD ──
++```
++
++---
++
++# HOW TO CHALLENGE THIS BUNDLE
++
++1. **Enforceability (highest value).** §1 is the whole live verdict. Any
++   manifest field NOT read by `tierRefusal()` is a finding — that exact
++   defect shipped and survived a day (audit §5, item 4).
++2. **The decoy fix.** §2: does ranking by `quoteUsd()` actually prevent a
++   single-sided DLMM from setting the mark? Attack `MIN_QUOTE_USD = 500`.
++3. **Trusted-band read.** §3: `poolUsd` must come from the 1200–5000000
++   band. If a caller can pass an unbounded pool value, the floor is bypassable.
++4. **Runtime numbers.** R3/R4 are in-sample on the tape that generated the
++   hypothesis. The out-of-sample test is the 10-seat sample run itself.
++5. **Unverifiable by design.** The wallet key, RPC credentials and `.env`
++   are not in this bundle or the repo (verified: never committed).
++
++**Open P1 the reviewer should NOT assume is handled:** the pass-health
++counter (N consecutive silent failures → audit row + push) is specified and
++NOT built. Four defects this week were inert-but-armed features whose
++failures were swallowed by fail-open catches.
+diff --git a/packages/core/src/market/dexscreener.ts b/packages/core/src/market/dexscreener.ts
+index 8e3621c..49cad78 100644
+--- a/packages/core/src/market/dexscreener.ts
++++ b/packages/core/src/market/dexscreener.ts
+@@ -27,6 +27,15 @@ interface DsPair {
+ export interface TokenMarket {
+   priceUsd: number;
+   liquidityUsd: number;
++  /** P1-1 (QA, 2026-08-06): FALSE when no pool for this mint had a credible
++   * quote-side reserve. The old fallback selected an untrusted pool and then
++   * published its DERIVED `liquidity.usd` — so a $5 decoy could still present
++   * as a deep pool. When this is false, `liquidityUsd` carries the MEASURED
++   * quote value (conservative, roughly half a real pool's total) and no
++   * consumer may treat the observation as a depth guarantee. */
++  depthTrusted: boolean;
++  /** measured quote-side reserve in USD — the only non-circular depth signal */
++  quoteUsd: number;
+   fdvUsd: number;
+   pairAddress: string;
+   dexId: string;
+@@ -50,9 +59,15 @@ export interface TokenMarket {
+ /** Map a (best) pair onto the TokenMarket shape. */
+ function pairToMarket(best: DsPair): TokenMarket {
+   const zero = { buys: 0, sells: 0 };
++  const qUsd = quoteUsd(best);
++  const trusted = qUsd >= MIN_QUOTE_USD;
+   return {
+     priceUsd: Number(best.priceUsd),
+-    liquidityUsd: best.liquidity?.usd ?? 0,
++    // P1-1: an untrusted pool publishes its MEASURED quote depth, never the
++    // derived (circular) USD figure. A $5 decoy now reads as $5.
++    liquidityUsd: trusted ? (best.liquidity?.usd ?? 0) : qUsd,
++    depthTrusted: trusted,
++    quoteUsd: qUsd,
+     fdvUsd: best.fdv ?? 0,
+     pairAddress: best.pairAddress,
+     dexId: best.dexId,
+diff --git a/services/trader/src/live/executor.ts b/services/trader/src/live/executor.ts
+index 6ab90a2..0a60e80 100644
+--- a/services/trader/src/live/executor.ts
++++ b/services/trader/src/live/executor.ts
+@@ -29,6 +29,7 @@ import { Transaction, VersionedTransaction } from "@solana/web3.js";
+ import {
+   convictionBand,
+   fetchJupiterPrice,
++  fetchTokenMarket,
+   profileOf,
+   resilientFetch,
+   signatureExitOverrides,
+@@ -1131,18 +1132,25 @@ export async function maybeLiveBuy(
+         const v = manifestVerdict(manifest, {
+           signature: sig?.signature ?? null,
+           secondLaunch: (sig?.launchOrder ?? 1) >= 2,
+-          // R2 (admission court): the pool the seat would actually sit in.
+-          // Trusted band only — a decoy print must not satisfy a depth floor.
+-          poolUsd: await (async () => {
+-            const [lt] = await db
+-              .select({ liq: candidateTicks.liquidityUsd })
+-              .from(candidateTicks)
+-              .where(and(eq(candidateTicks.mint, mint),
+-                sql`${candidateTicks.liquidityUsd}::float BETWEEN 1200 AND 5000000`))
+-              .orderBy(desc(candidateTicks.id))
+-              .limit(1);
+-            return lt?.liq != null ? Number(lt.liq) : null;
+-          })(),
++          // R2 (admission court) — P1-2 REWRITE (QA, 2026-08-06).
++          // The previous read took the newest candidate_tick whose liquidity
++          // merely FELL INSIDE a plausible band: no age bound, no pair binding,
++          // no quote verification. A stale tick from a different pool could
++          // satisfy today's admission floor, and a plausible-looking fake
++          // ($10k) passed as easily as a real one. That is a numeric filter,
++          // not a trust boundary.
++          //
++          // Admission now consumes THE SAME observation that selected the pool:
++          // fetchTokenMarket applies quote-depth selection, so `liquidityUsd`
++          // is the chosen pool's, and `depthTrusted` says whether any pool for
++          // this mint held a credible quote reserve at all. Fetch failure →
++          // null → the floor abstains (absence of measurement is not evidence).
++          ...(await (async () => {
++            const m = await fetchTokenMarket(mint).catch(() => null);
++            return m == null
++              ? { poolUsd: null }
++              : { poolUsd: m.liquidityUsd, poolDepthTrusted: m.depthTrusted };
++          })()),
+           inflow: sig?.liqGrowth != null && Number.isFinite(Number(sig.liqGrowth)) ? Number(sig.liqGrowth) : null,
+           buyShare: sig?.triggerBuyShare != null && Number.isFinite(Number(sig.triggerBuyShare)) ? Number(sig.triggerBuyShare) : null,
+           winnerHits: sig?.walletWinnerHits ?? null,
+diff --git a/services/trader/src/live/manifest.ts b/services/trader/src/live/manifest.ts
+index 2a6ea52..021f5ce 100644
+--- a/services/trader/src/live/manifest.ts
++++ b/services/trader/src/live/manifest.ts
+@@ -26,6 +26,50 @@
+  */
+ import { db } from "@hermes/db";
+ import { sql } from "drizzle-orm";
++/**
++ * P1-3 (QA, 2026-08-06) — THE MANIFEST IS UNTRUSTED INPUT.
++ *
++ * The old check was `m && m.version >= 1 && m.elite && m.filler && m.genomes`,
++ * which admits `{version:1, genomes:{}, elite:{}, filler:{}}`. `tierRefusal`
++ * then reaches `spec.venues.includes(...)` on `undefined` and THROWS. That
++ * throw is caught by the entry path's outer catch and audited as
++ * `live_buy_failed` — so a malformed manifest does not "fail open to the old
++ * lane" as this file promised: it WEDGES THE LANE, failing every candidate,
++ * which is the failure mode the doc explicitly forbids.
++ *
++ * Validated by hand rather than a schema library: the trader package does not
++ * depend on zod, and a release-gate fix should not add one. Every rule below
++ * is a property `tierRefusal` actually relies on.
++ */
++const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
++
++function validateTier(t: unknown, where: string, issues: string[]): void {
++  if (typeof t !== "object" || t === null) { issues.push(`${where}: not an object`); return; }
++  const s = t as Record<string, unknown>;
++  if (!Array.isArray(s.venues) || s.venues.length === 0 || !s.venues.every((v) => typeof v === "string" && v.length > 0))
++    issues.push(`${where}.venues: must be a non-empty string array`);
++  for (const k of ["inflowMin", "inflowMax", "buyShareMin", "poolMinUsd"])
++    if (s[k] !== undefined && !(num(s[k]) && (s[k] as number) >= 0)) issues.push(`${where}.${k}: must be a finite number >= 0`);
++  for (const k of ["unmeasuredBuySharePasses", "crowdNetWinners", "refuseUnknownCrowd", "refuseSecondLaunch"])
++    if (s[k] !== undefined && typeof s[k] !== "boolean") issues.push(`${where}.${k}: must be boolean`);
++  if (num(s.inflowMin) && num(s.inflowMax) && (s.inflowMax as number) < (s.inflowMin as number))
++    issues.push(`${where}: inflowMax < inflowMin`);
++}
++
++/** Returns the issue list — empty means the manifest is structurally safe. */
++export function validateManifest(v: unknown): string[] {
++  const issues: string[] = [];
++  if (typeof v !== "object" || v === null) return ["manifest: not an object"];
++  const m = v as Record<string, unknown>;
++  if (!num(m.version) || (m.version as number) < 1 || !Number.isInteger(m.version)) issues.push("version: must be a positive integer");
++  const g = m.genomes;
++  if (typeof g !== "object" || g === null || Object.keys(g).length === 0) issues.push("genomes: must be a non-empty object");
++  else for (const [k, w] of Object.entries(g as Record<string, unknown>))
++    if (!(num(w) && (w as number) >= 0)) issues.push(`genomes.${k}: weight must be a finite number >= 0`);
++  validateTier(m.elite, "elite", issues);
++  validateTier(m.filler, "filler", issues);
++  return issues;
++}
+ 
+ export type ManifestTierSpec = {
+   /** minimum measured inflow; an UNMEASURED inflow passes (absence isn't evidence) */
+@@ -71,6 +115,9 @@ export type ManifestInput = {
+   secondLaunch?: boolean;
+   /** pool liquidity at seat time (R2) */
+   poolUsd?: number | null;
++  /** P1-2: false when the depth observation came from a pool with no credible
++   * quote reserve. Such an observation may never satisfy a depth floor. */
++  poolDepthTrusted?: boolean;
+ };
+ 
+ export type ManifestVerdict =
+@@ -87,8 +134,20 @@ export async function loadManifest(): Promise<FormulaManifest | null> {
+     const [row] = (await db.execute(
+       sql`SELECT value FROM config WHERE key = 'formula_manifest'`,
+     )) as unknown as { value: FormulaManifest }[];
+-    const m = row?.value ?? null;
+-    cache = { m: m && m.version >= 1 && m.elite && m.filler && m.genomes ? m : null, at: Date.now() };
++    const raw = row?.value ?? null;
++    const issues = raw == null ? ["absent"] : validateManifest(raw);
++    if (issues.length) {
++      if (raw != null) {
++        // A manifest that EXISTS but is malformed is an operator-visible
++        // incident, not a silent degrade — this is the "inert config" class.
++        console.error(`⛔ manifest INVALID — degrading to no-manifest: ${issues.join("; ").slice(0, 200)}`);
++        void db.execute(sql`INSERT INTO audit_log (actor, action, details) VALUES ('trader-live','manifest_invalid',
++          ${JSON.stringify({ issues: issues.slice(0, 8) })}::jsonb)`).catch(() => {});
++      }
++      cache = { m: null, at: Date.now() };
++      return null;
++    }
++    cache = { m: raw as FormulaManifest, at: Date.now() };
+   } catch {
+     cache = { m: null, at: Date.now() }; // fail-open; retried next cache window
+   }
+@@ -104,12 +163,26 @@ function tierRefusal(spec: ManifestTierSpec, c: ManifestInput): string | null {
+   if (spec.refuseSecondLaunch && c.secondLaunch) return "second launch (F6 re-harvest cell)";
+   // R2 — thin pool at entry (admission court): 47% dead, −$0.59/t. An
+   // unmeasured pool passes; absence of measurement is not evidence.
+-  if (spec.poolMinUsd != null && c.poolUsd != null && c.poolUsd > 0 && c.poolUsd < spec.poolMinUsd)
+-    return `pool $${Math.round(c.poolUsd)} below the $${spec.poolMinUsd} admission floor (47% dead)`;
+-  // R5 — unknown crowd: zero winners AND zero rugs on record (44% dead).
+-  if (spec.refuseUnknownCrowd && (c.winnerHits ?? 0) === 0 && (c.rugHits ?? 0) === 0)
+-    return "crowd 0W/0R — unknown (44% dead)";
+-  if (c.venue == null || !spec.venues.includes(c.venue)) return `venue ${c.venue ?? "unknown"} not in tier list`;
++  if (spec.poolMinUsd != null) {
++    // P1-2 (QA): a depth number we cannot trust must never SATISFY a depth
++    // floor. An untrusted observation is refused outright rather than compared.
++    if (c.poolDepthTrusted === false)
++      return "pool depth untrusted — no pool with a credible quote reserve";
++    if (c.poolUsd != null && c.poolUsd > 0 && c.poolUsd < spec.poolMinUsd)
++      return `pool $${Math.round(c.poolUsd)} below the $${spec.poolMinUsd} admission floor (47% dead)`;
++  }
++  // R5 — unknown crowd: MEASURED zero winners and MEASURED zero rugs (44%
++  // dead). P2 (QA, 2026-08-06): the old `(c.winnerHits ?? 0) === 0` collapsed
++  // null into 0, so an UNMEASURED crowd was refused under a rule documented as
++  // "zero history". Absence of measurement is not evidence — that epistemic
++  // rule governs every other term here (inflow, buy share, pool), and R5 now
++  // obeys it too. A null crowd is refused one line below by crowdNetWinners
++  // ("crowd unmeasured") when that term is enabled, which is the honest place
++  // for it.
++  if (spec.refuseUnknownCrowd && c.winnerHits === 0 && c.rugHits === 0)
++    return "crowd 0W/0R — measured-empty history (44% dead)";
++  if (!Array.isArray(spec.venues) || c.venue == null || !spec.venues.includes(c.venue))
++    return `venue ${c.venue ?? "unknown"} not in tier list`;
+   if (spec.crowdNetWinners) {
+     if (c.winnerHits == null || c.rugHits == null) return "crowd unmeasured";
+     if (!(c.winnerHits >= 1 && c.winnerHits > c.rugHits)) return `crowd ${c.winnerHits}W/${c.rugHits}R fails W≥1∧W>R`;
+diff --git a/services/trader/src/live/optimizer.ts b/services/trader/src/live/optimizer.ts
+index 690e627..3b93184 100644
+--- a/services/trader/src/live/optimizer.ts
++++ b/services/trader/src/live/optimizer.ts
+@@ -29,6 +29,7 @@
+  * OWNER         Data Science (contents) · Portfolio Intelligence (governance)
+  */
+ import { auditLog, db } from "@hermes/db";
++import { passFailed, passOk } from "./passHealth.js";
+ import { sql } from "drizzle-orm";
+ import type { HermesConfig } from "@hermes/core";
+ import { loadManifest, type FormulaManifest } from "./manifest.js";
+@@ -357,7 +358,11 @@ export function startManifestOptimizer(cfg: HermesConfig): void {
+       } else if (material) {
+         console.log(`🧪 manifest optimizer: deltas resolved to none after drift gate (drift ${drift.max} ${drift.verdict})`);
+       }
++      passOk("optimizer"); // the pass completed — health is edge-triggered
+     } catch (err) {
++      // Ran inert for hours behind this catch (make_interval binding bug),
++      // zeroing gate-2's evidence clock without a single alarm.
++      passFailed("optimizer", err);
+       console.warn(`manifest optimizer pass failed (next interval retries): ${err instanceof Error ? err.message.slice(0, 100) : err}`);
+     }
+   };
+diff --git a/services/trader/src/live/passHealth.ts b/services/trader/src/live/passHealth.ts
+new file mode 100644
+index 0000000..3f962d7
+--- /dev/null
++++ b/services/trader/src/live/passHealth.ts
+@@ -0,0 +1,81 @@
++/**
++ * PASS HEALTH — silence must alert (QA release requirement, 2026-08-06).
++ *
++ * FOUR defects in one week shared a single shape: a feature was armed, its
++ * query or call failed, a fail-open `catch` swallowed the failure, and the
++ * feature sat INERT while every dashboard reported it as enabled.
++ *
++ *   1. `ANY(${array})`            1,571 silent truth-engine skips
++ *   2. bound `Date` in sql`…`     F2 high-water window inert
++ *   3. `make_interval(days=>$n)`  optimizer dead; gate-2 evidence clock at zero
++ *   4. `poolMinUsd` unread        manifest v5 term inert for a day
++ *
++ * Fail-open is CORRECT for a trading loop — a broken instrument must not stop
++ * the book. What was missing is that the failure never became visible. This
++ * module makes an inert feature announce itself: N consecutive failures raise
++ * exactly one audit row (and one console line), and recovery raises one more.
++ * Deliberately edge-triggered — a permanently broken pass cannot spam the log.
++ */
++import { auditLog, db } from "@hermes/db";
++
++/** Consecutive failures before a pass is declared unhealthy. */
++const ALERT_AFTER = 3;
++
++type PassState = { fails: number; alerted: boolean; lastError: string };
++const passes = new Map<string, PassState>();
++
++function state(name: string): PassState {
++  let s = passes.get(name);
++  if (!s) { s = { fails: 0, alerted: false, lastError: "" }; passes.set(name, s); }
++  return s;
++}
++
++/** Record a successful pass. Raises a recovery audit if it had been alerting. */
++export function passOk(name: string): void {
++  const s = state(name);
++  if (s.alerted) {
++    console.log(`✅ pass "${name}" RECOVERED after ${s.fails} consecutive failures`);
++    void db.insert(auditLog).values({
++      actor: "trader",
++      action: "pass_recovered",
++      details: { pass: name, afterFailures: s.fails, lastError: s.lastError.slice(0, 300) },
++    }).catch(() => {});
++  }
++  s.fails = 0; s.alerted = false; s.lastError = "";
++}
++
++/**
++ * Record a failed pass. On the ALERT_AFTER-th consecutive failure — and only
++ * then — raise the alarm, so an inert feature can never masquerade as armed.
++ */
++export function passFailed(name: string, err: unknown): void {
++  const s = state(name);
++  s.fails += 1;
++  s.lastError = err instanceof Error ? err.message : String(err);
++  if (s.fails >= ALERT_AFTER && !s.alerted) {
++    s.alerted = true;
++    console.error(`⛔ pass "${name}" INERT — ${s.fails} consecutive failures: ${s.lastError.slice(0, 160)}`);
++    void db.insert(auditLog).values({
++      actor: "trader",
++      action: "pass_inert",
++      details: { pass: name, consecutiveFailures: s.fails, error: s.lastError.slice(0, 500) },
++    }).catch(() => {});
++  }
++}
++
++/** Wrap a fail-open pass: runs it, records health, never throws. */
++export async function guardedPass<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
++  try {
++    const out = await fn();
++    passOk(name);
++    return out;
++  } catch (err) {
++    passFailed(name, err);
++    return null;
++  }
++}
++
++/** Health snapshot for the console / hourly card. */
++export function passHealth(): { pass: string; fails: number; inert: boolean }[] {
++  return [...passes.entries()].map(([pass, s]) => ({ pass, fails: s.fails, inert: s.alerted }));
++}
+diff --git a/services/trader/src/paper.ts b/services/trader/src/paper.ts
+index 527e413..2d5264c 100644
+--- a/services/trader/src/paper.ts
++++ b/services/trader/src/paper.ts
+@@ -38,6 +38,7 @@ import {
+   safetyChecks,
+ } from "@hermes/db";
+ import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
++import { passFailed, passOk } from "./live/passHealth.js";
+ import { maybeLiveBuy, mirrorLiveSell } from "./live/executor.js";
+ import { poolPulse, syncSlotWatch } from "./slotWatch.js";
+ 
+@@ -619,14 +620,19 @@ async function openFromSignal(
+       // a 38% baseline, and every "unmeasured" cell in every other feature is
+       // this same cohort.
+       !sig?.signature ? "unrouted — no signature, no measurable edge (54% dead)"
+-      // R2 thin pool at entry — 47% dead, −$0.59/t
++      // R2 thin pool at entry — 47% dead, −$0.59/t. P1-2 (QA): an untrusted
++      // depth observation may never SATISFY the floor; `market.liquidityUsd`
++      // now carries the MEASURED quote reserve when no pool had a credible
++      // one, so a decoy reads as its true ~$5 rather than its derived $91M.
++      : market.depthTrusted === false ? "pool depth untrusted — no credible quote reserve"
+       : poolNow > 0 && poolNow < cfg.ADMISSION_MIN_POOL_USD ? `pool $${Math.round(poolNow)} below the $${cfg.ADMISSION_MIN_POOL_USD} admission floor (47% dead)`
+       // R3 rug history leads the crowd — 51% dead, −$1.17/t
+       : wh != null && (rh ?? 0) >= wh && (rh ?? 0) > 0 ? `crowd ${wh}W/${rh}R — rug history leads (51% dead)`
+       // R4 worst venue — 47% dead, −$0.59/t
+       : dex === "meteora-dbc" ? "venue meteora-dbc (47% dead, -$193/7d)"
+-      // R5 unknown crowd — 44% dead, −$0.45/t
+-      : (wh ?? 0) === 0 && (rh ?? 0) === 0 ? "crowd 0W/0R — unknown (44% dead)"
++      // R5 unknown crowd — 44% dead, −$0.45/t. P2 (QA): MEASURED zero, not
++      // null-coalesced zero — absence of measurement is not evidence.
++      : wh === 0 && rh === 0 ? "crowd 0W/0R — measured-empty history (44% dead)"
+       : null;
+     if (refuse) {
+       await audit("paper_admission_refused", { mint: signal.mint, reason: refuse, signature: sig?.signature ?? null });
+@@ -3148,7 +3154,11 @@ export async function managePositions(cfg: HermesConfig): Promise<void> {
+         markets.set(row.mint, { ...base, priceUsd: canon.tick.priceUsd, liquidityUsd: canon.tick.liquidityUsd });
+         truthUsed++;
+       }
++      passOk("market-truth"); // the pass completed — health is edge-triggered
+     } catch (err) {
++      // Fail-open is right; SILENT fail-open is not. This pass ran inert for
++      // 1,571 cycles behind exactly this catch (QA release requirement).
++      passFailed("market-truth", err);
+       console.warn(`market-truth pass skipped (aggregator path intact): ${err instanceof Error ? err.message.slice(0, 80) : err}`);
+     }
+   }
+diff --git a/services/trader/src/trail-replay.ts b/services/trader/src/trail-replay.ts
+index 6822469..3baf76e 100644
+--- a/services/trader/src/trail-replay.ts
++++ b/services/trader/src/trail-replay.ts
+@@ -28,6 +28,9 @@ interface Tick {
+ function marketFrom(t: Tick, dex: string | null): TokenMarket {
+   return {
+     priceUsd: t.price, liquidityUsd: t.liq, fdvUsd: 0, pairAddress: "", dexId: dex ?? "",
++    // Historical replay ticks predate quote-depth capture; treat the recorded
++    // liquidity as trusted so replays reproduce the decisions actually made.
++    depthTrusted: true, quoteUsd: t.liq / 2,
+     labels: [], symbol: null, name: null, pairAgeMinutes: t.ageMin,
+     volUsd: { m5: t.volM5, h1: t.volH1, h24: 0 },
+     txns: { m5: { buys: t.buys, sells: t.sells }, h1: { buys: 0, sells: 0 }, h24: { buys: 0, sells: 0 } },
+diff --git a/services/trader/test/invariants.test.ts b/services/trader/test/invariants.test.ts
+index 1a62ee9..933a2a8 100644
+--- a/services/trader/test/invariants.test.ts
++++ b/services/trader/test/invariants.test.ts
+@@ -371,7 +371,7 @@ describe("formula manifest", () => {
+     const s = await (await import("node:fs")).readFileSync(new URL("../src/live/executor.ts", import.meta.url), "utf8");
+     const i = s.indexOf("if (cfg.FORMULA_MANIFEST_ENABLED)");
+     assert.ok(i > 0, "manifest gate must be flag-gated");
+-    const branch = s.slice(i, i + 1600);
++    const branch = s.slice(i, i + 2800);
+     assert.match(branch, /audit\("live_buy_skipped"/, "manifest refusal must audit");
+     assert.match(branch, /\n\s*return;/, "manifest refusal must return");
+     assert.ok(!branch.includes("liveBuyGate"), "the solvency gate must not live inside the manifest branch");
+diff --git a/services/trader/test/router.test.ts b/services/trader/test/router.test.ts
+index 3967294..64bf71c 100644
+--- a/services/trader/test/router.test.ts
++++ b/services/trader/test/router.test.ts
+@@ -291,7 +291,7 @@ describe("F2 high-water rung evaluation", () => {
+     const s = await (await import("node:fs")).readFileSync(new URL("../src/paper.ts", import.meta.url), "utf8");
+     const i = s.indexOf("F2 APPLIED");
+     assert.ok(i > 0, "the applied gate must be present and documented");
+-    const branch = s.slice(i, i + 1800);
++    const branch = s.slice(i, i + 2800);
+     assert.match(branch, /market\.priceUsd >= n\(position\.entryPriceUsd\)/, "only positions in profit may use an excursion");
+     assert.match(branch, /!\/take_profit\|profit_lock\|basket\/\.test\(exit\.reason\)/, "any non-TP verdict must be re-derived from the live mark");
+     assert.match(branch, /audit\("rung_high_water"/, "every high-water-armed rung must be audited");
+@@ -327,10 +327,117 @@ describe("manifest admission terms are ENFORCED, not just configured", () => {
+     assert.match((unknown as any).reason, /0W\/0R/);
+   });
+ 
+-  it("the executor passes poolUsd from the TRUSTED liquidity band only", async () => {
++  it("the executor binds poolUsd to the quote-depth-selected market (P1-2)", async () => {
+     const s = await (await import("node:fs")).readFileSync(new URL("../src/live/executor.ts", import.meta.url), "utf8");
+-    const i = s.indexOf("poolUsd: await");
+-    assert.ok(i > 0, "the gate must supply poolUsd");
+-    assert.match(s.slice(i, i + 600), /BETWEEN 1200 AND 5000000/, "a decoy print must never satisfy a depth floor");
++    const i = s.indexOf("R2 (admission court) — P1-2 REWRITE");
++    assert.ok(i > 0, "the P1-2 rewrite must be present in the gate");
++    // P1-2 (QA): the numeric band was a plausibility filter, not a trust
++    // boundary — no age bound, no pair binding, no quote verification. The
++    // gate must consume the SAME observation that selected the pool.
++    assert.match(s.slice(i, i + 1600), /fetchTokenMarket\(mint\)/,
++      "poolUsd must come from the quote-depth-selected market");
++    assert.match(s.slice(i, i + 1600), /poolDepthTrusted: m\.depthTrusted/,
++      "the trust flag must travel with the depth number");
++  });
++});
++
++// ─── QA RELEASE-GATE FINDINGS (external review, 2026-08-06) ─────────────────
++// P1-1 decoy fallback · P1-2 untrusted depth · P1-3 corrupt manifest wedges
++// the lane · P2 R5 conflates null with measured-zero. Each test reproduces the
++// reviewer's attack, not a paraphrase of it.
++describe("QA P1-1: a decoy pool cannot set the mark even with NO credible alternative", () => {
++  it("publishes MEASURED quote depth, not the derived USD figure", async () => {
++    const { fetchTokenMarket } = await import("@hermes/core");
++    // The reviewer's exact scenario: the ONLY pool is the DORAE decoy.
++    // 600,070,580 base vs 0.02717 quote (~$5), reported liquidity $91,360,362.
++    const real = globalThis.fetch;
++    (globalThis as { fetch: unknown }).fetch = async () => ({
++      ok: true,
++      json: async () => ({ pairs: [{
++        chainId: "solana", dexId: "meteora", pairAddress: "FPqPST", labels: ["DLMM"],
++        baseToken: { address: "DORAE", symbol: "DORAE" },
++        priceUsd: "0.1522", priceNative: "0.002073",
++        liquidity: { usd: 91360362.47, base: 600070580, quote: 0.02717 },
++        fdv: 149944232,
++      }] }),
++    });
++    try {
++      const m = await fetchTokenMarket("DORAE");
++      assert.ok(m, "a market is still returned — the caller's floors decide");
++      assert.equal(m!.depthTrusted, false, "no credible quote reserve → untrusted");
++      assert.ok(m!.liquidityUsd < 100,
++        `must publish measured quote depth (~$5), got $${m!.liquidityUsd}`);
++      assert.notEqual(m!.liquidityUsd, 91360362.47, "the derived figure must never surface");
++    } finally { (globalThis as { fetch: unknown }).fetch = real; }
++  });
++});
++
++describe("QA P1-2: an untrusted depth observation cannot satisfy a floor", () => {
++  const M = {
++    version: 5, genomes: { BASE: 1.5 },
++    elite: { venues: ["pumpswap"], poolMinUsd: 5000 },
++    filler: { venues: ["pumpswap"], poolMinUsd: 5000 },
++  };
++  const base = { signature: "BASE", inflow: 1.4, buyShare: 0.7, winnerHits: 2, rugHits: 0, venue: "pumpswap" };
++
++  it("refuses when depth is untrusted, even if the NUMBER clears the floor", async () => {
++    const { manifestVerdict } = await import("../src/live/manifest.js");
++    const v = manifestVerdict(M as never, { ...base, poolUsd: 50_000, poolDepthTrusted: false });
++    assert.equal(v.kind, "refuse", "a plausible-looking fake must not pass");
++    assert.match((v as { reason: string }).reason, /depth untrusted/);
++  });
++
++  it("seats when depth is trusted and clears the floor", async () => {
++    const { manifestVerdict } = await import("../src/live/manifest.js");
++    assert.equal(manifestVerdict(M as never, { ...base, poolUsd: 20_000, poolDepthTrusted: true }).kind, "seat");
++  });
++});
++
++describe("QA P1-3: a corrupt manifest fails OPEN, never wedges the lane", () => {
++  it("the reviewer's payload is rejected at the boundary", async () => {
++    const { validateManifest } = await import("../src/live/manifest.js");
++    // Passed the old shallow check; then threw inside tierRefusal.
++    const issues = validateManifest({ version: 1, genomes: { BASE: 1 }, elite: {}, filler: {} });
++    assert.ok(issues.length > 0, "empty tiers must be rejected");
++    assert.ok(issues.some((i) => i.includes("venues")), `expected a venues issue, got: ${issues.join("; ")}`);
++  });
++
++  it("manifestVerdict never THROWS on a malformed tier (defence in depth)", async () => {
++    const { manifestVerdict } = await import("../src/live/manifest.js");
++    const bad = { version: 1, genomes: { BASE: 1 }, elite: {}, filler: {} };
++    const input = { signature: "BASE", inflow: 1.4, buyShare: 0.7, winnerHits: 2, rugHits: 0, venue: "pumpswap" };
++    const v = manifestVerdict(bad as never, input);   // must not throw
++    assert.equal(v.kind, "refuse", "no venues means nothing is admissible");
++  });
++
++  it("a well-formed manifest still validates clean", async () => {
++    const { validateManifest } = await import("../src/live/manifest.js");
++    assert.deepEqual(validateManifest({
++      version: 5, genomes: { BASE: 1.5 },
++      elite: { venues: ["pumpswap"], poolMinUsd: 5000, inflowMin: 1.2, inflowMax: 2.05 },
++      filler: { venues: ["pumpswap"], poolMinUsd: 5000 },
++    }), []);
++  });
++});
++
++describe("QA P2: R5 distinguishes measured-zero from unmeasured", () => {
++  const M = {
++    version: 5, genomes: { BASE: 1.5 },
++    elite: { venues: ["pumpswap"], refuseUnknownCrowd: true },
++    filler: { venues: ["pumpswap"], refuseUnknownCrowd: true },
++  };
++  const base = { signature: "BASE", inflow: 1.4, buyShare: 0.7, venue: "pumpswap" };
++
++  it("MEASURED 0W/0R is refused", async () => {
++    const { manifestVerdict } = await import("../src/live/manifest.js");
++    const v = manifestVerdict(M as never, { ...base, winnerHits: 0, rugHits: 0 });
++    assert.equal(v.kind, "refuse");
++    assert.match((v as { reason: string }).reason, /measured-empty/);
++  });
++
++  it("UNMEASURED crowd is NOT refused by R5 — absence of measurement is not evidence", async () => {
++    const { manifestVerdict } = await import("../src/live/manifest.js");
++    const v = manifestVerdict(M as never, { ...base, winnerHits: null, rugHits: null });
++    assert.equal(v.kind, "seat", "R5 must not fire on nulls; crowdNetWinners owns that case");
+   });
+ });

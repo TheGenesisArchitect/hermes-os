@@ -596,3 +596,57 @@ Baseline death rate: 38% — a feature only matters if its cells deviate from th
 counter (N consecutive silent failures → audit row + push) is specified and
 NOT built. Four defects this week were inert-but-armed features whose
 failures were swallowed by fail-open catches.
+
+---
+
+# SECOND-PASS REVIEW ARTIFACT — `e113e2f`
+
+**Patch:** `docs/e113e2f-review.patch` (1,132 lines, 10 files)
+**Range:** `6370577..e113e2f` · **Suite:** 65/65
+
+Generated because the GitHub connector returns 404 on this private repo.
+The patch is the artifact; this section is the map, not a substitute.
+
+## The widened assertion windows — the reviewer asked to scrutinise these
+
+Three windows grew. My claim is that each still brackets the SAME
+executable gate and the semantic object never left the execution path;
+the growth is comment volume from the P1-2 rewrite. Verify against the
+patch — the executable gate spans ~61 lines of source:
+
+```
+line 11  if (cfg.FORMULA_MANIFEST_ENABLED) {   <- window start anchor
+line 43    if (v.kind === "refuse") {
+line 44      await audit("live_buy_skipped", ...)   <- asserted
+line 45      return;                                 <- asserted
+line 61  }                                       <- gate ends
+```
+
+| window | file:line | what it still proves | escape risk |
+|---|---|---|---|
+| 1600→2800 | `invariants.test.ts:374` | refusal audits AND returns inside the flag-gated branch | the branch is ~2.3k chars; a 2800 window cannot reach past the gate close |
+| 1800→2800 | `router.test.ts:294` | same gate, admission-terms suite | same bound |
+| 900→1600 | `router.test.ts:337,339` | `fetchTokenMarket(mint)` + `poolDepthTrusted` binding | both live INSIDE the verdict-input object literal |
+
+**The honest weakness:** these are source-text assertions, not behavioural
+ones. They prove a string appears near an anchor — they cannot prove the
+call executes. The behavioural coverage for the same properties is in the
+pure-function tests (`manifestVerdict` P1-2/P2 cases, `validateManifest`
+P1-3 cases, `fetchTokenMarket` P1-1 case with a stubbed fetch). If you
+judge the source assertions too weak to certify, the behavioural set is
+what should carry the verdict.
+
+## Finding-by-finding map into the patch
+
+| finding | patch hunks to read |
+|---|---|
+| P1-1 | `dexscreener.ts`: `TokenMarket` +`depthTrusted`/`quoteUsd`; `pairToMarket` untrusted branch. Test: "a decoy pool cannot set the mark even with NO credible alternative" |
+| P1-2 | `executor.ts`: the `R2 ... P1-2 REWRITE` block replacing the candidate_ticks band query; `manifest.ts`: `poolDepthTrusted` refusal BEFORE the numeric compare |
+| P1-3 | `manifest.ts`: `validateManifest()` + `validateTier()`, `loadManifest` degrade path, `manifest_invalid` audit, `Array.isArray(spec.venues)` |
+| P2 | `manifest.ts`: `c.winnerHits === 0 && c.rugHits === 0` (was `?? 0`); `paper.ts` same |
+| pass-health | `passHealth.ts` (new); wired in `paper.ts` + `optimizer.ts` at both the catch and the success path |
+
+## What I did NOT do
+
+  (only that verdict returns `refuse` instead of throwing).
+  read-only-verifiable in `passHealth.ts`.
