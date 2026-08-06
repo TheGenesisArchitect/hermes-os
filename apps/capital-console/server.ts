@@ -56,8 +56,12 @@ async function page(): Promise<string> {
   const capRows = await q`
     WITH t AS (
       SELECT p.tier, p.size_usd::float sz, p.realized_pnl_usd::float pnl, p.entry_price_usd::float e,
+        -- PHANTOM-SAFE OFFER (DORAE #8165): the upper bound matters as much as
+        -- the lower. A decoy DLMM pool reporting $91M of "liquidity" on $5 of
+        -- real quote inflated this denominator by ~$48k in a single tick.
         (SELECT max(ct.price_usd::float) FROM candidate_ticks ct WHERE ct.mint = p.mint
-           AND ct.snapped_at BETWEEN p.opened_at AND p.closed_at AND ct.liquidity_usd::float >= 1200) hi
+           AND ct.snapped_at BETWEEN p.opened_at AND p.closed_at
+           AND ct.liquidity_usd::float BETWEEN 1200 AND 5000000) hi
       FROM positions p WHERE p.lane='paper' AND p.status='closed'
         AND p.closed_at > now() - interval '24 hours' AND p.entry_price_usd::float > 0)
     SELECT tier, count(*) n,
