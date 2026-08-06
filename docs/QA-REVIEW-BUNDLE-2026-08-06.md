@@ -650,3 +650,11 @@ what should carry the verdict.
 
   (only that verdict returns `refuse` instead of throwing).
   read-only-verifiable in `passHealth.ts`.
+
+## What I did NOT do (completing the truncated list)
+
+- No behavioural test that a corrupt manifest leaves the OLD lane trading —
+  only that `manifestVerdict` returns `refuse` instead of throwing.
+- `pass_inert` / `pass_recovered` have no unit test; the state machine is
+  read-only-verifiable in `passHealth.ts`.
+- No live capital has touched any of this. Kill remains ENGAGED.
