@@ -1,0 +1,111 @@
+diff --git a/services/trader/src/live/optimizer.ts b/services/trader/src/live/optimizer.ts
+index 690e627..3b93184 100644
+--- a/services/trader/src/live/optimizer.ts
++++ b/services/trader/src/live/optimizer.ts
+@@ -29,6 +29,7 @@
+  * OWNER         Data Science (contents) · Portfolio Intelligence (governance)
+  */
+ import { auditLog, db } from "@hermes/db";
++import { passFailed, passOk } from "./passHealth.js";
+ import { sql } from "drizzle-orm";
+ import type { HermesConfig } from "@hermes/core";
+ import { loadManifest, type FormulaManifest } from "./manifest.js";
+@@ -357,7 +358,11 @@ export function startManifestOptimizer(cfg: HermesConfig): void {
+       } else if (material) {
+         console.log(`🧪 manifest optimizer: deltas resolved to none after drift gate (drift ${drift.max} ${drift.verdict})`);
+       }
++      passOk("optimizer"); // the pass completed — health is edge-triggered
+     } catch (err) {
++      // Ran inert for hours behind this catch (make_interval binding bug),
++      // zeroing gate-2's evidence clock without a single alarm.
++      passFailed("optimizer", err);
+       console.warn(`manifest optimizer pass failed (next interval retries): ${err instanceof Error ? err.message.slice(0, 100) : err}`);
+     }
+   };
+diff --git a/services/trader/src/live/passHealth.ts b/services/trader/src/live/passHealth.ts
+new file mode 100644
+index 0000000..3f962d7
+--- /dev/null
++++ b/services/trader/src/live/passHealth.ts
+@@ -0,0 +1,81 @@
++/**
++ * PASS HEALTH — silence must alert (QA release requirement, 2026-08-06).
++ *
++ * FOUR defects in one week shared a single shape: a feature was armed, its
++ * query or call failed, a fail-open `catch` swallowed the failure, and the
++ * feature sat INERT while every dashboard reported it as enabled.
++ *
++ *   1. `ANY(${array})`            1,571 silent truth-engine skips
++ *   2. bound `Date` in sql`…`     F2 high-water window inert
++ *   3. `make_interval(days=>$n)`  optimizer dead; gate-2 evidence clock at zero
++ *   4. `poolMinUsd` unread        manifest v5 term inert for a day
++ *
++ * Fail-open is CORRECT for a trading loop — a broken instrument must not stop
++ * the book. What was missing is that the failure never became visible. This
++ * module makes an inert feature announce itself: N consecutive failures raise
++ * exactly one audit row (and one console line), and recovery raises one more.
++ * Deliberately edge-triggered — a permanently broken pass cannot spam the log.
++ */
++import { auditLog, db } from "@hermes/db";
++
++/** Consecutive failures before a pass is declared unhealthy. */
++const ALERT_AFTER = 3;
++
++type PassState = { fails: number; alerted: boolean; lastError: string };
++const passes = new Map<string, PassState>();
++
++function state(name: string): PassState {
++  let s = passes.get(name);
++  if (!s) { s = { fails: 0, alerted: false, lastError: "" }; passes.set(name, s); }
++  return s;
++}
++
++/** Record a successful pass. Raises a recovery audit if it had been alerting. */
++export function passOk(name: string): void {
++  const s = state(name);
++  if (s.alerted) {
++    console.log(`✅ pass "${name}" RECOVERED after ${s.fails} consecutive failures`);
++    void db.insert(auditLog).values({
++      actor: "trader",
++      action: "pass_recovered",
++      details: { pass: name, afterFailures: s.fails, lastError: s.lastError.slice(0, 300) },
++    }).catch(() => {});
++  }
++  s.fails = 0; s.alerted = false; s.lastError = "";
++}
++
++/**
++ * Record a failed pass. On the ALERT_AFTER-th consecutive failure — and only
++ * then — raise the alarm, so an inert feature can never masquerade as armed.
++ */
++export function passFailed(name: string, err: unknown): void {
++  const s = state(name);
++  s.fails += 1;
++  s.lastError = err instanceof Error ? err.message : String(err);
++  if (s.fails >= ALERT_AFTER && !s.alerted) {
++    s.alerted = true;
++    console.error(`⛔ pass "${name}" INERT — ${s.fails} consecutive failures: ${s.lastError.slice(0, 160)}`);
++    void db.insert(auditLog).values({
++      actor: "trader",
++      action: "pass_inert",
++      details: { pass: name, consecutiveFailures: s.fails, error: s.lastError.slice(0, 500) },
++    }).catch(() => {});
++  }
++}
++
++/** Wrap a fail-open pass: runs it, records health, never throws. */
++export async function guardedPass<T>(name: string, fn: () => Promise<T>): Promise<T | null> {
++  try {
++    const out = await fn();
++    passOk(name);
++    return out;
++  } catch (err) {
++    passFailed(name, err);
++    return null;
++  }
++}
++
++/** Health snapshot for the console / hourly card. */
++export function passHealth(): { pass: string; fails: number; inert: boolean }[] {
++  return [...passes.entries()].map(([pass, s]) => ({ pass, fails: s.fails, inert: s.alerted }));
++}

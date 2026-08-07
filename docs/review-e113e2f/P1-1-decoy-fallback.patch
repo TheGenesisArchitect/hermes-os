@@ -1,0 +1,37 @@
+diff --git a/packages/core/src/market/dexscreener.ts b/packages/core/src/market/dexscreener.ts
+index 8e3621c..49cad78 100644
+--- a/packages/core/src/market/dexscreener.ts
++++ b/packages/core/src/market/dexscreener.ts
+@@ -27,6 +27,15 @@ interface DsPair {
+ export interface TokenMarket {
+   priceUsd: number;
+   liquidityUsd: number;
++  /** P1-1 (QA, 2026-08-06): FALSE when no pool for this mint had a credible
++   * quote-side reserve. The old fallback selected an untrusted pool and then
++   * published its DERIVED `liquidity.usd` — so a $5 decoy could still present
++   * as a deep pool. When this is false, `liquidityUsd` carries the MEASURED
++   * quote value (conservative, roughly half a real pool's total) and no
++   * consumer may treat the observation as a depth guarantee. */
++  depthTrusted: boolean;
++  /** measured quote-side reserve in USD — the only non-circular depth signal */
++  quoteUsd: number;
+   fdvUsd: number;
+   pairAddress: string;
+   dexId: string;
+@@ -50,9 +59,15 @@ export interface TokenMarket {
+ /** Map a (best) pair onto the TokenMarket shape. */
+ function pairToMarket(best: DsPair): TokenMarket {
+   const zero = { buys: 0, sells: 0 };
++  const qUsd = quoteUsd(best);
++  const trusted = qUsd >= MIN_QUOTE_USD;
+   return {
+     priceUsd: Number(best.priceUsd),
+-    liquidityUsd: best.liquidity?.usd ?? 0,
++    // P1-1: an untrusted pool publishes its MEASURED quote depth, never the
++    // derived (circular) USD figure. A $5 decoy now reads as $5.
++    liquidityUsd: trusted ? (best.liquidity?.usd ?? 0) : qUsd,
++    depthTrusted: trusted,
++    quoteUsd: qUsd,
+     fdvUsd: best.fdv ?? 0,
+     pairAddress: best.pairAddress,
+     dexId: best.dexId,
