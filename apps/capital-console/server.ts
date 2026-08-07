@@ -114,13 +114,13 @@ async function page(): Promise<string> {
   const m = Object.fromEntries(mani.map((r) => [r.key, r.value]));
   const manifest = (m["formula_manifest"] ?? {}) as Record<string, unknown>;
   const prop = (m["formula_manifest_proposal"] ?? {}) as Record<string, unknown>;
-  return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="30">
+  return `<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="5">
 <title>Capital Allocation Console</title>
 <style>body{font:13px/1.5 ui-monospace,monospace;background:#0b0e14;color:#cdd6f4;margin:2rem;max-width:1100px}
 h1{font-size:16px;color:#89b4fa}h2{font-size:13px;color:#a6e3a1;border-bottom:1px solid #313244;margin-top:1.6rem}
 table{border-collapse:collapse;width:100%}td,th{padding:2px 10px;text-align:left;border-bottom:1px solid #1e1e2e}
 .k{color:#f38ba8}.g{color:#a6e3a1}.d{color:#7f849c}</style>
-<h1>▦ CAPITAL ALLOCATION CONSOLE <span class="d">· read-only · refresh 30s · ${new Date().toISOString().slice(11, 19)}Z</span></h1>
+<h1>▦ CAPITAL ALLOCATION CONSOLE <span class="d">· read-only · refresh 5s · ${new Date().toISOString().slice(11, 19)}Z</span></h1>
 <h2>PIPELINE HEALTH <span class="d">· if any of these is red, every number below it is stale</span></h2>
 <table><tr>
 <td>trader <b class="${stale(ph!.trader_age, 120)}">${esc(ph!.trader_age)}s</b><span class="d"> ago</span></td>
@@ -186,8 +186,37 @@ ${attr.map((r) => `<tr><td style="max-width:640px">${esc(r.gate)}</td><td>${esc(
 execution throughput, never manufactures scarcity. Mode changes are operator ratification acts; this console has no controls.</p>`;
 }
 
+// ── POLL CADENCE (operator, 2026-08-07: "30s is much too long between live
+// trades") ───────────────────────────────────────────────────────────────────
+// Two changes, in the right order. FIRST the page was made cheap: the capture
+// panel ran a max() over 5.9M candidate_ticks rows once per closed position
+// (161x per render, ~4.2s). A composite index (mint, snapped_at) INCLUDE
+// (price_usd, liquidity_usd) took a render to ~1.2s. ONLY THEN was the
+// interval shortened — polling harder against a slow page would have stampeded
+// the same database the manage loop needs every 2s.
+//
+// The cache is the rail: however many tabs are open and however fast they
+// refresh, the console touches the DB at most once per CACHE_MS. A read-only
+// window must never become load on the trading path.
+const CACHE_MS = 2_500;
+let cached: { html: string; at: number } | null = null;
+let inflight: Promise<string> | null = null;
+
+async function cachedPage(): Promise<string> {
+  if (cached && Date.now() - cached.at < CACHE_MS) return cached.html;
+  // Collapse concurrent requests onto ONE query pass (multi-tab safety).
+  if (!inflight) {
+    inflight = page()
+      .then((html) => { cached = { html, at: Date.now() }; return html; })
+      .finally(() => { inflight = null; });
+  }
+  return inflight;
+}
+
 http.createServer((req, res) => {
   if (req.method !== "GET") { res.writeHead(405).end(); return; }
-  page().then((html) => { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); res.end(html); })
-    .catch((e) => { res.writeHead(500, { "content-type": "text/plain" }); res.end(`console error (trading unaffected): ${e instanceof Error ? e.message : e}`); });
-}).listen(3900, () => console.log("▦ capital console listening on http://localhost:3900 (read-only)"));
+  cachedPage().then((html) => {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    res.end(html);
+  }).catch((e) => { res.writeHead(500, { "content-type": "text/plain" }); res.end(`console error (trading unaffected): ${e instanceof Error ? e.message : e}`); });
+}).listen(3900, () => console.log("▦ capital console listening on http://localhost:3900 (read-only, 5s poll)"));
