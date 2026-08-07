@@ -70,6 +70,36 @@ async function page(): Promise<string> {
       round(sum(pnl)::numeric, 2) captured
     FROM t WHERE hi IS NOT NULL GROUP BY tier ORDER BY offered DESC NULLS LAST`;
   const [f2] = await q`SELECT count(*) n FROM audit_log WHERE action='rung_high_water' AND created_at > now() - interval '24 hours'`;
+  // ── EXECUTIVE KPI BOARD (operator, 2026-08-07) ────────────────────────────
+  // The console answered "is it working". Investors and the exec team need
+  // "how is it performing" — per lane, on one screen, with the health of the
+  // measurement itself visible so a stalled pipeline can never masquerade as
+  // a flat tape (this panel exists because scout/recorder died for 11h and
+  // the page kept rendering unchanged numbers with no alarm).
+  const lanes = await q`
+    SELECT p.lane,
+      count(*) FILTER (WHERE p.closed_at > now() - interval '24 hours') closes_24h,
+      count(*) FILTER (WHERE p.closed_at > now() - interval '24 hours' AND p.realized_pnl_usd > 0) green_24h,
+      round(coalesce(sum(p.realized_pnl_usd) FILTER (WHERE p.closed_at > now() - interval '24 hours'),0)::numeric,2) pnl_24h,
+      round(coalesce(sum(p.realized_pnl_usd) FILTER (WHERE p.closed_at > now() - interval '7 days'),0)::numeric,2) pnl_7d,
+      round(coalesce(sum(p.realized_pnl_usd),0)::numeric,2) pnl_all,
+      count(*) FILTER (WHERE p.status='closed') n_all,
+      round(coalesce(avg(p.realized_pnl_usd) FILTER (WHERE p.closed_at > now() - interval '7 days'),0)::numeric,3) ev_7d,
+      round(coalesce(min(p.realized_pnl_usd) FILTER (WHERE p.closed_at > now() - interval '7 days'),0)::numeric,2) worst_7d,
+      count(*) FILTER (WHERE p.exit_reason='live_unsellable' AND p.closed_at > now() - interval '7 days') unsellable_7d
+    FROM positions p WHERE p.status='closed' GROUP BY p.lane`;
+  // PIPELINE HEALTH — the measurement's own vital signs. A stale writer here
+  // invalidates every number above it, so it renders beside them, not buried.
+  const [ph] = await q`SELECT
+    round(extract(epoch from (now() - to_timestamp((value->>'ts')::bigint/1000)))) trader_age
+    FROM config WHERE key='trader_health'`;
+  const [pw] = await q`SELECT
+    (SELECT round(extract(epoch from (now()-max(created_at)))) FROM audit_log WHERE actor='scout') scout_age,
+    (SELECT round(extract(epoch from (now()-max(created_at)))) FROM audit_log WHERE actor='recorder') recorder_age,
+    (SELECT count(*) FROM candidate_outcomes WHERE first_seen_at > now() - interval '1 hour') arrivals_1h,
+    (SELECT count(*) FROM audit_log WHERE action='paper_admission_refused' AND created_at > now() - interval '24 hours') refused_24h,
+    (SELECT count(*) FROM audit_log WHERE action='pass_inert' AND created_at > now() - interval '24 hours') inert_24h`;
+  const stale = (s: unknown, limit: number) => (Number(s ?? 1e9) > limit ? "k" : "g");
   const capTotal = capRows.reduce((a, r) => ({ o: a.o + Number(r.offered ?? 0), c: a.c + Number(r.captured ?? 0) }), { o: 0, c: 0 });
   const pctOf = (c: number, o: number) => (o > 0 ? ((100 * c) / o).toFixed(1) + "%" : "—");
   const mani = await q`SELECT key, value FROM config WHERE key IN ('formula_manifest','formula_manifest_proposal')`;
@@ -91,6 +121,27 @@ h1{font-size:16px;color:#89b4fa}h2{font-size:13px;color:#a6e3a1;border-bottom:1p
 table{border-collapse:collapse;width:100%}td,th{padding:2px 10px;text-align:left;border-bottom:1px solid #1e1e2e}
 .k{color:#f38ba8}.g{color:#a6e3a1}.d{color:#7f849c}</style>
 <h1>▦ CAPITAL ALLOCATION CONSOLE <span class="d">· read-only · refresh 30s · ${new Date().toISOString().slice(11, 19)}Z</span></h1>
+<h2>PIPELINE HEALTH <span class="d">· if any of these is red, every number below it is stale</span></h2>
+<table><tr>
+<td>trader <b class="${stale(ph!.trader_age, 120)}">${esc(ph!.trader_age)}s</b><span class="d"> ago</span></td>
+<td>scout <b class="${stale(pw!.scout_age, 900)}">${esc(pw!.scout_age)}s</b><span class="d"> ago</span></td>
+<td>recorder <b class="${stale(pw!.recorder_age, 900)}">${esc(pw!.recorder_age)}s</b><span class="d"> ago</span></td>
+<td>arrivals/h <b class="${Number(pw!.arrivals_1h) > 0 ? "g" : "k"}">${esc(pw!.arrivals_1h)}</b></td>
+<td>refused 24h <b>${esc(pw!.refused_24h)}</b></td>
+<td>inert passes <b class="${Number(pw!.inert_24h) > 0 ? "k" : "g"}">${esc(pw!.inert_24h)}</b></td>
+</tr></table>
+<h2>LANE SCOREBOARD <span class="d">· paper is the sensor · live is the capital</span></h2>
+<table><tr><th>lane</th><th>24h P&amp;L</th><th>24h closes</th><th>win rate</th><th>7d P&amp;L</th><th>7d EV/trade</th><th>7d worst</th><th>unsellable 7d</th><th>all-time</th></tr>
+${lanes.map((L) => `<tr><td><b>${esc(L.lane)}</b></td>
+<td class="${Number(L.pnl_24h) < 0 ? "k" : "g"}"><b>${usd(L.pnl_24h)}</b></td>
+<td>${esc(L.closes_24h)}</td>
+<td>${Number(L.closes_24h) > 0 ? Math.round((100 * Number(L.green_24h)) / Number(L.closes_24h)) + "%" : "—"}</td>
+<td class="${Number(L.pnl_7d) < 0 ? "k" : "g"}">${usd(L.pnl_7d)}</td>
+<td>${usd(L.ev_7d)}</td>
+<td class="k">${usd(L.worst_7d)}</td>
+<td class="${Number(L.unsellable_7d) > 0 ? "k" : "g"}">${esc(L.unsellable_7d)}</td>
+<td class="${Number(L.pnl_all) < 0 ? "k" : "g"}">${usd(L.pnl_all)} <span class="d">(${esc(L.n_all)})</span></td></tr>`).join("")}
+</table>
 <h2>OFFER vs CAPTURE — 24h, trades we TOOK <span class="d">· the core KPI · target band 40–70%</span></h2>
 <table><tr><th>tier</th><th>n</th><th>offered ≥1.3×</th><th>offered $</th><th>captured $</th><th>capture %</th></tr>
 ${capRows.map((r) => `<tr><td>${esc(r.tier)}</td><td>${esc(r.n)}</td><td>${esc(r.offered_13)}</td><td>$${Number(r.offered ?? 0).toFixed(2)}</td><td class="${Number(r.captured) < 0 ? "k" : "g"}">${usd(r.captured)}</td><td><b class="${Number(r.captured) / Math.max(Number(r.offered ?? 0), 1e-9) >= 0.4 ? "g" : "k"}">${pctOf(Number(r.captured ?? 0), Number(r.offered ?? 0))}</b></td></tr>`).join("")}
