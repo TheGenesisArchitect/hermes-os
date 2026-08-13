@@ -83,7 +83,21 @@ export async function scoreCandidateWalletEdge(mint: string): Promise<(WalletEdg
       wins: Number(r.wins),
       rugs: Number(r.rugs),
     }));
-    return { ...walletEdgeFrom(reps, holders.length), holders: holders.length };
+
+    const [deployRow] = (await db.execute(sql`
+      select count(co.mint)::int as tokens,
+        count(*) filter (where co.label = 'winner')::int as wins,
+        count(*) filter (where co.label = 'rug')::int as rugs
+      from token_deployers d
+      left join candidate_outcomes co on co.mint = d.mint
+      where d.mint = ${mint} and d.deployer is not null
+      group by d.deployer
+    `)) as unknown as { tokens: number; wins: number; rugs: number }[];
+    const deployerRep = deployRow
+      ? { tokens: Number(deployRow.tokens), wins: Number(deployRow.wins), rugs: Number(deployRow.rugs) }
+      : null;
+
+    return { ...walletEdgeFrom(reps, holders.length, deployerRep), holders: holders.length };
   } catch (err) {
     console.error(`wallet edge score failed for ${mint}: ${err instanceof Error ? err.message : err}`);
     return null;

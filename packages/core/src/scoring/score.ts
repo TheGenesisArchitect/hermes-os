@@ -130,7 +130,7 @@ export function computeScore(
       liquidityUsd: market.liquidityUsd,
       dexId: market.dexId,
       pairAgeMinutes: market.pairAgeMinutes,
-      narrative: narrative ?? "unavailable (no ANTHROPIC_API_KEY)",
+      narrative: narrative ?? "unavailable (no NARRATIVE_API_URL)",
     },
   };
 }

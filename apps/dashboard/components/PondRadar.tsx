@@ -52,6 +52,14 @@ function WalletGraph({ intel }: { intel: WalletIntel }) {
           <div className="space-y-1">{intel.topRugs.map((r) => row(r, "rug"))}</div>
         </div>
       </div>
+      {intel.topDeployers.length > 0 ? (
+        <div className="mt-3">
+          <div className="mb-1 text-[10px] uppercase tracking-wide" style={{ color: "var(--status-good)" }}>🧬 Top deployers</div>
+          <div className="space-y-1">
+            {intel.topDeployers.map((r) => row(r, r.wins >= r.rugs ? "win" : "rug"))}
+          </div>
+        </div>
+      ) : null}
       <p className="mt-2 text-[10.5px]" style={{ color: "var(--text-muted)" }}>
         Reputation from the holder graph × labeled outcomes — the persistent layer across one-shot tokens. A candidate whose holders include a winner-wallet rises; an all-fresh holder set is the rug tell.
       </p>

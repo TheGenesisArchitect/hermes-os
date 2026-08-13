@@ -37,12 +37,12 @@ async function scoreCandidate(candidate: TokenCandidate): Promise<ScoreBreakdown
   try {
     const market = await fetchTokenMarket(candidate.mint);
     if (!market) return null;
-    const narrative = await scoreNarrative(cfg.ANTHROPIC_API_KEY, {
+    const narrative = await scoreNarrative(cfg.NARRATIVE_API_URL, {
       name: candidate.name,
       symbol: candidate.symbol,
       dex: candidate.dex,
       liquidityUsd: candidate.liquidityUsd,
-    }).catch((err) => {
+    }, cfg.NARRATIVE_API_KEY).catch((err) => {
       console.error(`   narrative scoring failed: ${err instanceof Error ? err.message : err}`);
       return null;
     });

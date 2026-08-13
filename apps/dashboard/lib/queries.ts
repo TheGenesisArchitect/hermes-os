@@ -382,18 +382,18 @@ export async function getTokenDetail(mint: string) {
   const posIds = tokenPositions.map((p) => p.id);
   const tokenFills = posIds.length
     ? await db
-        .select()
-        .from(fills)
-        .where(eq(fills.positionId, posIds[0]!)) // most-recent position's fills (list is desc)
-        .orderBy(asc(fills.filledAt))
+      .select()
+      .from(fills)
+      .where(eq(fills.positionId, posIds[0]!)) // most-recent position's fills (list is desc)
+      .orderBy(asc(fills.filledAt))
     : [];
   const managementTicks = posIds.length
     ? await db
-        .select()
-        .from(positionTicks)
-        .where(eq(positionTicks.positionId, posIds[0]!))
-        .orderBy(asc(positionTicks.snappedAt))
-        .limit(200)
+      .select()
+      .from(positionTicks)
+      .where(eq(positionTicks.positionId, posIds[0]!))
+      .orderBy(asc(positionTicks.snappedAt))
+      .limit(200)
     : [];
   const mgmtTrajectory = managementTicks.map((r) => ({
     markMultiple: num(r.markMultiple),
@@ -722,14 +722,14 @@ export async function getTimingGrid(): Promise<TimingGridView> {
   const ids = [...open.map((p) => p.id), ...closed.map((p) => p.id)];
   const tickRows = ids.length
     ? await db
-        .select({
-          positionId: positionTicks.positionId,
-          ageMinutes: positionTicks.ageMinutes,
-          markMultiple: positionTicks.markMultiple,
-        })
-        .from(positionTicks)
-        .where(inArray(positionTicks.positionId, ids))
-        .orderBy(asc(positionTicks.snappedAt))
+      .select({
+        positionId: positionTicks.positionId,
+        ageMinutes: positionTicks.ageMinutes,
+        markMultiple: positionTicks.markMultiple,
+      })
+      .from(positionTicks)
+      .where(inArray(positionTicks.positionId, ids))
+      .orderBy(asc(positionTicks.snappedAt))
     : [];
   const byPos = new Map<number, TimingTradePoint[]>();
   for (const r of tickRows) {
@@ -1333,9 +1333,9 @@ export async function getWatchingNow(): Promise<WatchingCandidate[]> {
   const posRows =
     mints.length > 0
       ? await db
-          .select({ mint: positions.mint, status: positions.status, pnl: positions.realizedPnlUsd })
-          .from(positions)
-          .where(inArray(positions.mint, mints))
+        .select({ mint: positions.mint, status: positions.status, pnl: positions.realizedPnlUsd })
+        .from(positions)
+        .where(inArray(positions.mint, mints))
       : [];
   const posState = new Map<string, { open: boolean; pnl: number }>();
   for (const r of posRows) {
@@ -2193,15 +2193,15 @@ async function probeSellRoute(cfg: ReturnType<typeof loadConfig>): Promise<SellR
     }),
     cfg.JUPITER_SELFHOSTED_URL
       ? probeQuoteRoute("jupiter-selfhosted", `${cfg.JUPITER_SELFHOSTED_URL.replace(/\/$/, "")}/quote?${qs}`, (b) => {
-          const body = b as { outAmount?: string; error?: string } | null;
-          return body?.outAmount ? { ok: true, note: "route ok (self-hosted)" } : { ok: false, note: body?.error ?? "no route" };
-        })
+        const body = b as { outAmount?: string; error?: string } | null;
+        return body?.outAmount ? { ok: true, note: "route ok (self-hosted)" } : { ok: false, note: body?.error ?? "no route" };
+      })
       : Promise.resolve<RouteProbe>({ name: "jupiter-selfhosted", ok: false, latencyMs: null, note: "dormant (no URL)", dormant: true }),
     cfg.FLUXBEAM_ENABLED
       ? probeQuoteRoute("fluxbeam", `${fluxBase}/quote?${qs}`, (b) => {
-          const body = b as { quote?: { outAmount?: string }; error?: string } | null;
-          return body?.quote?.outAmount ? { ok: true, note: "route ok (fluxbeam pools)" } : { ok: false, note: body?.error ?? "no route" };
-        })
+        const body = b as { quote?: { outAmount?: string }; error?: string } | null;
+        return body?.quote?.outAmount ? { ok: true, note: "route ok (fluxbeam pools)" } : { ok: false, note: body?.error ?? "no route" };
+      })
       : Promise.resolve<RouteProbe>({ name: "fluxbeam", ok: false, latencyMs: null, note: "disabled", dormant: true }),
     probeReach("pumpportal", "https://pumpportal.fun/", "reachable · build-only (pump.fun/pumpswap)"),
   ];
@@ -2299,12 +2299,12 @@ export async function getSystemHealth(): Promise<SystemHealthView> {
   const pp = scoutHealth?.pumpportal;
   const pumpportal: PumpPortalHealthView | null = pp
     ? {
-        connected: !!pp.connected,
-        heartbeatAgeSec: pp.lastMessageAt ? Math.max(0, Math.round((Date.now() - pp.lastMessageAt) / 1000)) : null,
-        lastMigrationAgeSec: pp.lastMigrationAt ? Math.max(0, Math.round((Date.now() - pp.lastMigrationAt) / 1000)) : null,
-        migrationsSeen: pp.migrationsSeen ?? 0,
-        reconnects: pp.reconnects ?? 0,
-      }
+      connected: !!pp.connected,
+      heartbeatAgeSec: pp.lastMessageAt ? Math.max(0, Math.round((Date.now() - pp.lastMessageAt) / 1000)) : null,
+      lastMigrationAgeSec: pp.lastMigrationAt ? Math.max(0, Math.round((Date.now() - pp.lastMigrationAt) / 1000)) : null,
+      migrationsSeen: pp.migrationsSeen ?? 0,
+      reconnects: pp.reconnects ?? 0,
+    }
     : null;
 
   const cfg = loadConfig();
@@ -2535,12 +2535,12 @@ export async function getWalletStatus(): Promise<WalletStatus> {
     })
     .from(positions)
     .where(eq(positions.lane, "live"))) as {
-    openPositions: number;
-    openExposure: number;
-    cumRealized: number;
-    todayRealized: number;
-    closes: number;
-  }[];
+      openPositions: number;
+      openExposure: number;
+      cumRealized: number;
+      todayRealized: number;
+      closes: number;
+    }[];
 
   // Kill state.
   const killRows = (await db.execute(
@@ -2556,8 +2556,8 @@ export async function getWalletStatus(): Promise<WalletStatus> {
   // few dollars every window.
   const mirrorVenues = cfg.LIVE_MIRROR_PAPER
     ? cfg.LIVE_MIRROR_VENUES.split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
+      .map((s) => s.trim())
+      .filter(Boolean)
     : [];
   const [regimeRow] = (
     mirrorVenues.length > 0
@@ -2581,8 +2581,8 @@ export async function getWalletStatus(): Promise<WalletStatus> {
     cfg.LIVE_REGIME_GATE &&
     (cfg.LIVE_MIRROR_PAPER
       ? windowGrossUsd >= cfg.LIVE_MIRROR_REGIME_MIN_GROSS_USD &&
-        windowEdgePct !== null &&
-        windowEdgePct <= -cfg.LIVE_MIRROR_REGIME_MAX_LOSS_PCT * 100
+      windowEdgePct !== null &&
+      windowEdgePct <= -cfg.LIVE_MIRROR_REGIME_MAX_LOSS_PCT * 100
       : windowPnlUsd <= -cfg.LIVE_REGIME_MAX_LOSS_USD);
 
   // Trade-for-trade: most recent live positions.
@@ -2735,12 +2735,12 @@ async function laneStats(lane: string): Promise<LaneStats> {
     })
     .from(positions)
     .where(eq(positions.lane, lane))) as {
-    opens: number;
-    closes: number;
-    realized: number;
-    winners: number;
-    bestPeak: number | null;
-  }[];
+      opens: number;
+      closes: number;
+      realized: number;
+      winners: number;
+      bestPeak: number | null;
+    }[];
   const closes = Number(row?.closes ?? 0);
   const winners = Number(row?.winners ?? 0);
   return {
@@ -2896,6 +2896,7 @@ export interface WalletIntel {
   rugWallets: number; // serial rugs (rugs≥2, wins=0, ≥2 tokens)
   topWinners: WalletRow[];
   topRugs: WalletRow[];
+  topDeployers: WalletRow[];
   liveWinnerHits: number; // in-window candidates currently carrying a winner-rep holder
 }
 
@@ -2911,13 +2912,28 @@ export async function getWalletIntel(): Promise<WalletIntel> {
   const top = (await db.execute(sql`
     select wallet, tokens, wins, rugs, score::float as score from wallet_reputation
     where tokens >= 3 and wins >= 1 and rugs = 0
-    order by wins desc, tokens desc limit 6
+    order by score desc, wins desc, tokens desc limit 6
   `)) as unknown as WalletRow[];
 
   const bottom = (await db.execute(sql`
     select wallet, tokens, wins, rugs, score::float as score from wallet_reputation
     where tokens >= 3 and rugs >= 2 and wins = 0
     order by rugs desc, tokens desc limit 6
+  `)) as unknown as WalletRow[];
+
+  const deployers = (await db.execute(sql`
+    select d.deployer as wallet,
+      count(*)::int as tokens,
+      count(*) filter (where co.label = 'winner')::int as wins,
+      count(*) filter (where co.label = 'rug')::int as rugs,
+      round((count(*) filter (where co.label = 'winner')::numeric - count(*) filter (where co.label = 'rug')::numeric) / nullif(count(*), 0), 4)::float as score
+    from token_deployers d
+    left join candidate_outcomes co on co.mint = d.mint
+    where d.deployer is not null
+    group by d.deployer
+    having count(*) >= 2
+    order by score desc, wins desc, rugs asc, tokens desc
+    limit 6
   `)) as unknown as WalletRow[];
 
   const [live] = (await db.execute(sql`
@@ -2931,6 +2947,7 @@ export async function getWalletIntel(): Promise<WalletIntel> {
     rugWallets: Number(cov?.rug_wallets ?? 0),
     topWinners: top.map((r) => ({ wallet: r.wallet, tokens: Number(r.tokens), wins: Number(r.wins), rugs: Number(r.rugs), score: Number(r.score) })),
     topRugs: bottom.map((r) => ({ wallet: r.wallet, tokens: Number(r.tokens), wins: Number(r.wins), rugs: Number(r.rugs), score: Number(r.score) })),
+    topDeployers: deployers.map((r) => ({ wallet: r.wallet, tokens: Number(r.tokens), wins: Number(r.wins), rugs: Number(r.rugs), score: Number(r.score) })),
     liveWinnerHits: Number(live?.n ?? 0),
   };
 }
@@ -4171,18 +4188,18 @@ export async function getSignatureConsole(windowHours = 24): Promise<SignatureCo
       WHERE rn <= 8`),
     db.execute(sql`SELECT value FROM config WHERE key='smart_money_forecast'`),
   ])) as unknown as [
-    { signature: string; n: number; pnl: number; dep: number }[],
-    { signature: string; confirms: number; sm: number; inflow: number | null }[],
-    { signature: string; reason: string; n: number }[],
-    { signature: string; n: number }[],
-    { signature: string; pnl: number }[],
-    { signature: string; kept: number; offered: number }[],
-    { signature: string; n: number; gap: number }[],
-    { signature: string; n: number; unsellable: number; banked: number; pnl: number; dep: number }[],
-    (SignatureTradeMini & { signature: string; rn: number })[],
-    { signature: string; symbol: string | null; reason: string; peak: number; label: string; wh: number | null; net: number | null; at: string; rn: number }[],
-    { value: { createdAt: string; horizonDays: number; scenarios: { base: { p10: number[]; p50: number[]; p90: number[] } } } }[],
-  ];
+      { signature: string; n: number; pnl: number; dep: number }[],
+      { signature: string; confirms: number; sm: number; inflow: number | null }[],
+      { signature: string; reason: string; n: number }[],
+      { signature: string; n: number }[],
+      { signature: string; pnl: number }[],
+      { signature: string; kept: number; offered: number }[],
+      { signature: string; n: number; gap: number }[],
+      { signature: string; n: number; unsellable: number; banked: number; pnl: number; dep: number }[],
+      (SignatureTradeMini & { signature: string; rn: number })[],
+      { signature: string; symbol: string | null; reason: string; peak: number; label: string; wh: number | null; net: number | null; at: string; rn: number }[],
+      { value: { createdAt: string; horizonDays: number; scenarios: { base: { p10: number[]; p50: number[]; p90: number[] } } } }[],
+    ];
 
   const regimeBy = new Map(regimeRows.map((r) => [r.signature, r]));
   const signalBy = new Map(signalRows.map((r) => [r.signature, r]));

@@ -24,6 +24,8 @@ export interface WalletEdge {
   strictHits: number; // clean-winner wallets among holders (never rugged — PRECISION tier)
   rugHits: number; // serial-rug wallets among holders
   known: number; // holders with a qualifying reputation record
+  deployerHits: number; // deployer reputation hit present on the mint
+  deployerKnown: number; // whether the deployer has enough launch history to count
 }
 
 /** clean winner: held a winner, never rugged, enough sample */
@@ -47,17 +49,22 @@ const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
  * itself the danger signal and pulls the edge below neutral. Presence-weighted
  * with diminishing returns past the first couple of hits.
  */
-export function walletEdgeFrom(reps: WalletRep[], holdersSampled: number): WalletEdge {
+export function walletEdgeFrom(reps: WalletRep[], holdersSampled: number, deployerRep: WalletRep | null = null): WalletEdge {
   const known = reps.filter((r) => r.tokens >= WALLET_MIN_SAMPLE);
   const strictHits = known.filter(isWinnerRep).length;
   const winnerHits = known.filter(isNetPositiveRep).length; // superset of strict
   const rugHits = known.filter(isRugRep).length;
+  const deployerKnown = deployerRep && deployerRep.tokens >= WALLET_MIN_SAMPLE ? 1 : 0;
+  const deployerStrict = deployerKnown && deployerRep ? isWinnerRep(deployerRep) : false;
+  const deployerPositive = deployerKnown && deployerRep ? isNetPositiveRep(deployerRep) && !deployerStrict : false;
+  const deployerRug = deployerKnown && deployerRep ? isRugRep(deployerRep) : false;
   const allFresh = holdersSampled > 0 && known.length === 0;
   // Strict (never-rugged) winners carry the full validated weight; recovered
   // (net-positive) winners carry half — 58% win cohort vs the 2.2× strict lift.
   const winTerm = 0.2 * Math.min(strictHits, 3) + 0.1 * Math.min(winnerHits - strictHits, 3);
   const rugTerm = 0.14 * Math.min(rugHits, 3);
+  const deployerTerm = deployerStrict ? 0.16 : deployerPositive ? 0.08 : deployerRug ? -0.16 : 0;
   const freshPenalty = allFresh ? 0.12 : 0;
-  const edge = clamp01(0.5 + winTerm - rugTerm - freshPenalty);
-  return { edge, winnerHits, strictHits, rugHits, known: known.length };
+  const edge = clamp01(0.5 + winTerm - rugTerm + deployerTerm - freshPenalty);
+  return { edge, winnerHits, strictHits, rugHits, known: known.length, deployerHits: deployerStrict || deployerPositive ? 1 : 0, deployerKnown };
 }

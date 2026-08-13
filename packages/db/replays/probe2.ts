@@ -1,0 +1,20 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const url = /DATABASE_URL=(.+)/.exec(fs.readFileSync(path.join(root, ".env"), "utf8"))?.[1]?.trim();
+(async () => {
+    const q = postgres(url!, { idle_timeout: 5 });
+    const lanes = await q`select lane, status, count(*)::int n from positions group by lane, status order by lane, status`;
+    const ticks = await q`select count(distinct position_id)::int positions_with_ticks, count(*)::int total_ticks from position_ticks`;
+    const byLane = await q`select p.lane, count(distinct pt.position_id)::int with_ticks from position_ticks pt join positions p on p.id=pt.position_id group by p.lane`;
+    const sigs = await q`select coalesce(signature,'?') sig, count(*)::int n from positions where status='closed' group by signature order by n desc limit 12`;
+    const span = await q`select min(opened_at) lo, max(opened_at) hi from positions`;
+    console.log("positions:", JSON.stringify(lanes));
+    console.log("ticks:", JSON.stringify(ticks));
+    console.log("with_ticks by lane:", JSON.stringify(byLane));
+    console.log("closed by sig:", JSON.stringify(sigs));
+    console.log("span:", JSON.stringify(span));
+    await q.end();
+})();

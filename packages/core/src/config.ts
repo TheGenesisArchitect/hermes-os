@@ -21,6 +21,10 @@ const envSchema = z.object({
   // tried first, then these, then keyless public fallbacks. Removes the RPC as a
   // single point of failure once Jupiter is no longer the dependency.
   RPC_URLS: z.string().default(""),
+  // Internal narrative service for memecoin hook scoring. Keep Claude out of the
+  // critical path: the scorer calls this API directly when configured.
+  NARRATIVE_API_URL: z.string().default(""),
+  NARRATIVE_API_KEY: z.string().optional().default(""),
   // Self-hosted Jupiter Swap API base (e.g. http://localhost:8080/swap/v1). Empty
   // = provider dormant (router skips it). Set once the jupiter-swap-api container
   // is up (see docs/SWAP_ROUTE_RESILIENCE_SPEC.md) → live execution survives a

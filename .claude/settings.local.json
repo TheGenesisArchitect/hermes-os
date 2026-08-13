@@ -1,14 +1,14 @@
 ﻿{
-    "$comment":  [
-                     "WRITTEN BY ops/omniroute.ps1 - do not hand-edit; toggle with the script.",
-                     "Remaps the opus/sonnet/haiku picker slots onto OmniRoute routing aliases.",
-                     "Remove with: . .\\ops\\omniroute.ps1 -Off"
-                 ],
-    "env":  {
-                "ANTHROPIC_BASE_URL":  "http://127.0.0.1:20128",
-                "ANTHROPIC_AUTH_TOKEN":  "omniroute-local",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL":  "auto/best-reasoning",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL":  "auto/best-coding",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL":  "auto/coding:free"
-            }
+    "$comment": [
+        "WRITTEN BY ops/omniroute.ps1 - do not hand-edit; toggle with the script.",
+        "Remaps the opus/sonnet/haiku picker slots onto OmniRoute routing aliases.",
+        "Remove with: . .\\ops\\omniroute.ps1 -Off"
+    ],
+    "env": {
+        "ANTHROPIC_BASE_URL": "http://127.0.0.1:20128",
+        "ANTHROPIC_AUTH_TOKEN": "omniroute-local",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "auto/best-reasoning",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "auto/best-reasoning",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "auto/coding:free"
+    }
 }
