@@ -31,9 +31,9 @@
 # glyphs corrupt string quoting. Keep this file plain ASCII.
 param([switch]$Off)
 
-$Gateway  = "http://127.0.0.1:20128"
+$Gateway = "http://127.0.0.1:20128"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$Local    = Join-Path $RepoRoot ".claude\settings.local.json"
+$Local = Join-Path $RepoRoot ".claude\settings.local.json"
 
 if ($Off) {
   Remove-Item Env:ANTHROPIC_BASE_URL -ErrorAction SilentlyContinue
@@ -49,7 +49,8 @@ if ($Off) {
 # milliseconds; /v1/models enumerates hundreds of providers and takes ~48s.
 try {
   $null = Invoke-WebRequest -Uri "$Gateway/healthz" -UseBasicParsing -TimeoutSec 10
-} catch {
+}
+catch {
   Write-Host "omniroute NOT reachable at $Gateway - nothing changed." -ForegroundColor Red
   Write-Host "  start it:  docker start omniroute" -ForegroundColor DarkGray
   return
@@ -57,9 +58,9 @@ try {
 
 # 1. This shell. ANTHROPIC_BASE_URL carries NO /v1 (Anthropic clients append
 #    /v1/messages themselves); OPENAI_BASE_URL does (OpenAI clients do not).
-$env:ANTHROPIC_BASE_URL  = $Gateway
+$env:ANTHROPIC_BASE_URL = $Gateway
 $env:ANTHROPIC_AUTH_TOKEN = "omniroute-local"
-$env:OPENAI_BASE_URL     = "$Gateway/v1"
+$env:OPENAI_BASE_URL = "$Gateway/v1"
 
 # 2. The model picker for VS Code / Claude Code sessions in this repo.
 $settings = @{
@@ -68,12 +69,17 @@ $settings = @{
     "Remaps the opus/sonnet/haiku picker slots onto OmniRoute routing aliases.",
     "Remove with: . .\ops\omniroute.ps1 -Off"
   )
-  env = [ordered]@{
-    ANTHROPIC_BASE_URL            = $Gateway
-    ANTHROPIC_AUTH_TOKEN          = "omniroute-local"
-    ANTHROPIC_DEFAULT_OPUS_MODEL  = "auto/best-reasoning"
-    ANTHROPIC_DEFAULT_SONNET_MODEL = "auto/best-coding"
-    ANTHROPIC_DEFAULT_HAIKU_MODEL = "auto/coding:free"
+  env        = [ordered]@{
+    ANTHROPIC_BASE_URL             = $Gateway
+    ANTHROPIC_AUTH_TOKEN           = "omniroute-local"
+    ANTHROPIC_DEFAULT_OPUS_MODEL   = "auto/best-reasoning"
+    # sonnet uses best-reasoning, NOT best-coding: the coding variant's dynamic
+    # ranking currently resolves to the non-functional felo-chat provider (verified
+    # 2026-08-12), which presents as a dead/rate-limited session. best-reasoning and
+    # best-fast resolve to big-pickle and work. Restore best-coding once OmniRoute
+    # fixes the coding-variant routing upstream.
+    ANTHROPIC_DEFAULT_SONNET_MODEL = "auto/best-reasoning"
+    ANTHROPIC_DEFAULT_HAIKU_MODEL  = "auto/coding:free"
   }
 }
 $dir = Split-Path -Parent $Local
@@ -83,7 +89,7 @@ $settings | ConvertTo-Json -Depth 5 | Out-File -FilePath $Local -Encoding utf8
 Write-Host "omniroute ON  ->  $Gateway" -ForegroundColor Green
 Write-Host "  model picker (next session):" -ForegroundColor DarkGray
 Write-Host "    /model opus    -> auto/best-reasoning   deep work, best available" -ForegroundColor DarkGray
-Write-Host "    /model sonnet  -> auto/best-coding      default coding driver" -ForegroundColor DarkGray
+Write-Host "    /model sonnet  -> auto/best-reasoning   default (best-coding route broken -> felo-chat)" -ForegroundColor DarkGray
 Write-Host "    /model haiku   -> auto/coding:free      free tiers, bulk work" -ForegroundColor DarkGray
 Write-Host "  rate limits fail over inside the gateway - no switching needed." -ForegroundColor DarkGray
 Write-Host "  billing: gateway-routed Claude meters the API key in the gateway" -ForegroundColor DarkGray

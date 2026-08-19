@@ -27,7 +27,7 @@ let latestEff = loadConfig();
 setDrainHandler((mint) => void fastDrainExit(latestEff, mint));
 import { readEffectiveConfig, refreshAdaptivePolicy } from "./adaptive.js";
 import { startManifestOptimizer } from "./live/optimizer.js";
-import { guardLiveBook, liveLaneStatus, scanLiveIndependent, processLiveCloseRequests, processLiveRequeues, processWalletSends, snapshotLiveEquity, startSniperRefresh, sweepLiveBook } from "./live/executor.js";
+import { guardLiveBook, liveLaneStatus, processManualBuyRequests, scanLiveIndependent, processLiveCloseRequests, processLiveRequeues, processWalletSends, snapshotLiveEquity, startSniperRefresh, sweepLiveBook } from "./live/executor.js";
 
 async function killSwitchEngaged(): Promise<boolean> {
   const [row] = await db.select().from(config).where(eq(config.key, "kill_switch"));
@@ -168,6 +168,9 @@ while (true) {
     void processWalletSends(eff);
     // Operator's manual live-close queue — same trust model as wallet sends.
     void processLiveCloseRequests(eff);
+    // Operator's manual BUY queue (Workstream C) — the operator is the signal;
+    // hard safety gates run, the score funnel does not. Same single-money-mover model.
+    void processManualBuyRequests(eff);
     // Bounded retry of unroutable young-pool buys (the BIO fix).
     void processLiveRequeues(eff);
     // THE INDEPENDENT LIVE SCAN — live evaluates every fresh armed candidate on

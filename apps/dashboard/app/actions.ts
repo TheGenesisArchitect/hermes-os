@@ -177,6 +177,40 @@ export async function requestLiveClose(positionId: number): Promise<void> {
   revalidatePath("/");
 }
 
+/**
+ * Manual BUY (Workstream C, SPEC-WALLET-GRAPH-VALUE §3). The operator is the
+ * signal: writes `manual_buy_request`, the trader consumes it on its next entry
+ * poll, runs ONLY the hard adversarial gates (honeypot / mint authority / depth /
+ * fee viability), and executes through the same live path as an auto entry — the
+ * trader stays the single money-mover. The score/confirm funnel does NOT run.
+ */
+export async function requestManualBuy(mint: string, sizeUsd: number, lane: "live" | "paper"): Promise<void> {
+  const value = { mint: mint.trim(), sizeUsd, lane, status: "pending", requestedAt: new Date().toISOString() };
+  await db
+    .insert(config)
+    .values({ key: "manual_buy_request", value, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: config.key, set: { value, updatedAt: new Date() } });
+  await db.insert(auditLog).values({
+    actor: "user",
+    action: "manual_buy_requested",
+    details: { mint: value.mint, sizeUsd, lane, via: "dashboard" },
+  });
+  revalidatePath("/");
+}
+
+/** Read back the manual-buy verdict so the control can report it (the DIP lesson:
+ * a silent failure looks like the click did nothing). */
+export async function getManualBuyStatus(
+  mint: string,
+): Promise<"pending" | "failed" | "done" | "superseded" | null> {
+  const [row] = await db.select().from(config).where(eq(config.key, "manual_buy_request"));
+  const v = row?.value as { mint?: string; status?: string } | undefined;
+  if (!v || v.mint !== mint.trim()) return v ? "superseded" : null;
+  if (v.status === "failed") return "failed";
+  if (v.status === "done") return "done";
+  return "pending";
+}
+
 /** Toggle the kill switch: when enabled, the trader stops opening new positions. */
 export async function toggleKillSwitch(): Promise<void> {
   const current = await getKillSwitch();

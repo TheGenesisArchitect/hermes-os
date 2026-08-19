@@ -32,6 +32,7 @@ import {
   fetchTokenMarket,
   profileOf,
   resilientFetch,
+  runSafetyPipeline,
   signatureExitOverrides,
   sizeFraction,
   type HermesConfig,
@@ -235,8 +236,8 @@ async function liveBuyGate(cfg: HermesConfig, mint: string, routed = false): Pro
     .select({ pnl: sql<number>`coalesce(sum(${positions.realizedPnlUsd}::float), 0)` })
     .from(positions)
     .where(and(eq(positions.lane, "live"), gte(positions.closedAt, sql`date_trunc('day', now())`)))) as {
-    pnl: number;
-  }[];
+      pnl: number;
+    }[];
   // THROTTLE, don't halt: at/beyond the daily cap the sizer shrinks toward the
   // floor (see maybeLiveBuy) but live stays present for the tail. Only if the
   // throttle is disabled does the cap hard-halt. The cumulative KILL is the floor.
@@ -256,8 +257,8 @@ async function liveBuyGate(cfg: HermesConfig, mint: string, routed = false): Pro
     // book live is really shadowing.
     const mirrorVenues = cfg.LIVE_MIRROR_PAPER
       ? cfg.LIVE_MIRROR_VENUES.split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
+        .map((s) => s.trim())
+        .filter(Boolean)
       : [];
     const base = db
       .select({
@@ -271,24 +272,24 @@ async function liveBuyGate(cfg: HermesConfig, mint: string, routed = false): Pro
     const scoped =
       mirrorVenues.length > 0
         ? base
-            .innerJoin(tokens, eq(tokens.mint, positions.mint))
-            .where(
-              and(
-                eq(positions.lane, "paper"),
-                eq(positions.book, "core"),
-                eq(positions.status, "closed"),
-                gte(positions.closedAt, sql`now() - make_interval(mins => ${cfg.LIVE_REGIME_WINDOW_MIN})`),
-                inArray(tokens.dex, mirrorVenues),
-              ),
-            )
-        : base.where(
+          .innerJoin(tokens, eq(tokens.mint, positions.mint))
+          .where(
             and(
               eq(positions.lane, "paper"),
               eq(positions.book, "core"),
               eq(positions.status, "closed"),
               gte(positions.closedAt, sql`now() - make_interval(mins => ${cfg.LIVE_REGIME_WINDOW_MIN})`),
+              inArray(tokens.dex, mirrorVenues),
             ),
-          );
+          )
+        : base.where(
+          and(
+            eq(positions.lane, "paper"),
+            eq(positions.book, "core"),
+            eq(positions.status, "closed"),
+            gte(positions.closedAt, sql`now() - make_interval(mins => ${cfg.LIVE_REGIME_WINDOW_MIN})`),
+          ),
+        );
     const [rg] = (await scoped) as { pnl: number; gross: number }[];
     const scope = mirrorVenues.length > 0 ? "mirror-venues" : "paper";
     const net = n(rg?.pnl);
@@ -524,7 +525,7 @@ async function executeSwap(
       confirmed = true;
       break;
     }
-    await rpc.send(tx, { skipPreflight: true, maxRetries: 0 }).catch(() => {});
+    await rpc.send(tx, { skipPreflight: true, maxRetries: 0 }).catch(() => { });
     await new Promise((r) => setTimeout(r, 2_000));
   }
   if (!confirmed) throw new Error(`tx unconfirmed after 45s: ${signature}`);
@@ -750,7 +751,7 @@ export function livePositionUsd(
     (paperFrac != null && paperFrac > 0
       ? paperFrac
       : sizeFraction(sig?.stars ?? 0, cfg.POSITION_FRAC_MIN, cfg.POSITION_FRAC_MAX) *
-        (sig ? profileOf(sig.signature).size : 1)) * starBoost,
+      (sig ? profileOf(sig.signature).size : 1)) * starBoost,
   );
   // GENOME WEIGHT — the winning formula's allocation term (ratified
   // 2026-07-29). Selection decides WHETHER we board; this decides HOW MUCH,
@@ -835,6 +836,13 @@ export async function maybeLiveBuy(
    * live was deploying 1.82% per trade against paper's 0.61%.
    */
   paperFrac: number | null = null,
+  /**
+   * OPERATOR MANUAL BUY (Workstream C): an absolute USD size the operator chose.
+   * When set, it WINS over the sizer's fraction — the operator is the signal —
+   * but it is still clamped by the hard caps (fee-viable floor, per-position and
+   * exposure backstops). Null = normal auto sizing.
+   */
+  manualSizeUsd: number | null = null,
 ): Promise<void> {
   // STAGE CLOCK (operator, 2026-07-23: "the fastest horse — timing is
   // everything"). Every live open records where its milliseconds went, so
@@ -852,7 +860,7 @@ export async function maybeLiveBuy(
   // daemon — and the single-daemon invariant is now actively enforced at
   // startup after the duplicate-daemon incident.
   if (liveBuyInFlight.has(mint)) {
-    await audit("live_buy_skipped", { mint, reason: "buy already in flight (claim race)" }).catch(() => {});
+    await audit("live_buy_skipped", { mint, reason: "buy already in flight (claim race)" }).catch(() => { });
     return;
   }
   liveBuyInFlight.add(mint);
@@ -988,37 +996,37 @@ export async function maybeLiveBuy(
     // at +$1,205 refused vs −$173 taken. Skipped wholesale when the flag is off;
     // the executability and solvency rails below are deliberately OUTSIDE it.
     if (cfg.LIVE_STRATEGY_GATES) {
-    // ── REGIME CLASS GATE ────────────────────────────────────────────────────
-    // The market is regime-centric (operator, 2026-07-22): CLIMBER went green
-    // in the very window after the static audit blocked it. So live capital
-    // follows the REGIME with evidence: a class is admitted when its trailing
-    // paper tape (the free 24/7 sensor) is profitable at real sample size, and
-    // benched when it is not. Below min sample, the audit's proven core
-    // (RISER / MOON_FAST / MOON_STEADY / MOON_SLOW) trades on its priors and
-    // everything else waits for paper to prove the turn. A benched class was
-    // mostly the unknown-crowd rugs now refused upstream — winner-rep rides.
-    if (sig && cfg.LIVE_REGIME_CLASS_GATE && !winnerRepCrowd) {
-      const health = await classRegimeHealth(cfg, sig.signature);
-      if (!health.allowed) {
-        await audit("live_buy_skipped", { mint, reason: `${sig.signature} — regime gate: ${health.why}` });
+      // ── REGIME CLASS GATE ────────────────────────────────────────────────────
+      // The market is regime-centric (operator, 2026-07-22): CLIMBER went green
+      // in the very window after the static audit blocked it. So live capital
+      // follows the REGIME with evidence: a class is admitted when its trailing
+      // paper tape (the free 24/7 sensor) is profitable at real sample size, and
+      // benched when it is not. Below min sample, the audit's proven core
+      // (RISER / MOON_FAST / MOON_STEADY / MOON_SLOW) trades on its priors and
+      // everything else waits for paper to prove the turn. A benched class was
+      // mostly the unknown-crowd rugs now refused upstream — winner-rep rides.
+      if (sig && cfg.LIVE_REGIME_CLASS_GATE && !winnerRepCrowd) {
+        const health = await classRegimeHealth(cfg, sig.signature);
+        if (!health.allowed) {
+          await audit("live_buy_skipped", { mint, reason: `${sig.signature} — regime gate: ${health.why}` });
+          return;
+        }
+      }
+      // ── INFLOW BAND GATE ─────────────────────────────────────────────────────
+      // Concentrate live capital in the measured high-probability band: pool
+      // inflow ≥1.30× at trigger wins 71.2% vs 44.8% below (rugs 11% vs 36%),
+      // and the 2×+ surge band ran 18-for-18 this week. A missing reading does
+      // not veto — absence of measurement is not evidence of weakness — but a
+      // MEASURED weak inflow is exactly the coin-flip cohort live cannot afford.
+      // (Winner-rep crowds exempt: inside 1.05–1.30 they ran 70%/12% vs the
+      // band's 29%/58% fakes — the crowd is the finer instrument.)
+      if (sig && !winnerRepCrowd && sig.liqGrowth != null && sig.liqGrowth < cfg.LIVE_MIN_INFLOW) {
+        await audit("live_buy_skipped", {
+          mint,
+          reason: `inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.LIVE_MIN_INFLOW}× band (71% vs 45% win)`,
+        });
         return;
       }
-    }
-    // ── INFLOW BAND GATE ─────────────────────────────────────────────────────
-    // Concentrate live capital in the measured high-probability band: pool
-    // inflow ≥1.30× at trigger wins 71.2% vs 44.8% below (rugs 11% vs 36%),
-    // and the 2×+ surge band ran 18-for-18 this week. A missing reading does
-    // not veto — absence of measurement is not evidence of weakness — but a
-    // MEASURED weak inflow is exactly the coin-flip cohort live cannot afford.
-    // (Winner-rep crowds exempt: inside 1.05–1.30 they ran 70%/12% vs the
-    // band's 29%/58% fakes — the crowd is the finer instrument.)
-    if (sig && !winnerRepCrowd && sig.liqGrowth != null && sig.liqGrowth < cfg.LIVE_MIN_INFLOW) {
-      await audit("live_buy_skipped", {
-        mint,
-        reason: `inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.LIVE_MIN_INFLOW}× band (71% vs 45% win)`,
-      });
-      return;
-    }
     } // ══ end strategy region 1 ═══════════════════════════════════════════════
 
     // ── POOL-DEPTH FLOOR ── KEPT: EXECUTABILITY, NOT STRATEGY ────────────────
@@ -1184,15 +1192,15 @@ export async function maybeLiveBuy(
     // executed or afforded. All seven exception doors live in here too, and go
     // with the gates — a door exists only to punch back through a gate.
     if (cfg.LIVE_STRATEGY_GATES) {
-    // ── CLONE-WAVE GATE (live only) ──────────────────────────────────────────
-    // Bear Ripper ×2 (2026-07-22): same ticker relaunched minutes after its
-    // sibling rugged; both live entries died −$4 unsellable while the paper
-    // clone-wave cohort ran net POSITIVE (+$68, 68% win, 48h) — paper can mark-
-    // sell, real capital cannot exit a drained pool. So live refuses a ticker
-    // whose sibling rugged in the last hour or is still open live; paper keeps
-    // exploring the wave and earns the sensor data.
-    if (symbol) {
-      const [wave] = (await db.execute(sql`
+      // ── CLONE-WAVE GATE (live only) ──────────────────────────────────────────
+      // Bear Ripper ×2 (2026-07-22): same ticker relaunched minutes after its
+      // sibling rugged; both live entries died −$4 unsellable while the paper
+      // clone-wave cohort ran net POSITIVE (+$68, 68% win, 48h) — paper can mark-
+      // sell, real capital cannot exit a drained pool. So live refuses a ticker
+      // whose sibling rugged in the last hour or is still open live; paper keeps
+      // exploring the wave and earns the sensor data.
+      if (symbol) {
+        const [wave] = (await db.execute(sql`
         SELECT 1 FROM positions p JOIN tokens t ON t.mint = p.mint
         WHERE t.symbol = ${symbol} AND p.mint <> ${mint}
           AND ((p.status = 'closed' AND p.closed_at > now() - interval '60 minutes'
@@ -1200,418 +1208,418 @@ export async function maybeLiveBuy(
                      OR p.realized_pnl_usd::float <= -0.8 * p.size_usd::float))
                OR (p.status = 'open' AND p.lane = 'live'))
         LIMIT 1`)) as unknown as unknown[];
-      if (wave) {
-        // GOLDEN WINDOW (operator 2026-07-26: "Open the golden window door"):
-        // launches 3-4+ of a ticker are the measured golden cell (+19.5¢/$;
-        // paper's relaunch probes ran 75% win / +$4.27 over the last 24h while
-        // live refused them all). A relaunch with F6 launch order ≥3 now
-        // boards at TICKET size; launch #2 (the adversary's re-harvest,
-        // −2.3¢/$) and unknown orders stay refused.
-        const lo = sig?.launchOrder ?? null;
-        if (lo != null && lo >= 3) {
-          subFloorTicket = true;
-          goldenWindow = true;
-          await audit("live_golden_window", {
-            mint,
-            symbol,
-            launchOrder: lo,
-            reason: `golden window: launch #${lo} of ${symbol} — relaunch boards at ticket size (L3-4 +19.5¢/$; paper relaunch probes 75% win/24h)`,
-          });
-        } else {
-          await audit("live_buy_skipped", {
-            mint,
-            reason: `clone wave: ${symbol} rugged or still open on another mint <60m, launch order ${lo ?? "unknown"} — live refuses (golden window opens at L3+)`,
-          });
-          return;
-        }
-      }
-    }
-    // ── WALLET-GRAPH ANTI-GATE ───────────────────────────────────────────────
-    // 7d study (n=9,771 armed+labeled): holder sets whose known wallets net out
-    // NEGATIVE (more rug history than winner history) ran 9.6% win / 49.3% rug /
-    // 4.1% moon-3× — the worst measured cohort, half the tape. A MEASURED bad
-    // crowd is exactly what real capital refuses; an unknown crowd passes.
-    if (sig && sig.walletWinnerHits != null && sig.walletRugHits != null && sig.walletWinnerHits - sig.walletRugHits <= -1) {
-      await audit("live_buy_skipped", {
-        mint,
-        reason: `wallet graph: net rep ${sig.walletWinnerHits - sig.walletRugHits} — rug-history crowd (49% rug vs 10% win cohort)`,
-      });
-      return;
-    }
-    // ── FORMULA v2 GATE — F1 CROWD, ALL BANDS (ratified 2026-07-24) ─────────
-    // Canon GCE-FORMULA-001 + model run: crowd-pass (wh ≥ 1 AND wh > rh) ran
-    // $1.29/trade at 5% dead in the signature era vs crowd-fail's $0.28 at
-    // 14% — and live's ENTIRE loss history (168 trades, −$128.82, 21% dead)
-    // is the crowd-fail cohort. Live is the exploit lane: SENSOR-tier flow
-    // (crowd-fail) trades as paper probes only, never real capital. Also F3:
-    // inflow above the ceiling is the manufactured-spike envelope — the 07-23
-    // atomic wave's costume.
-    if (sig) {
-      // STRONG-ONLY BUILD-BACK (operator 2026-07-27, wallet at $109): while
-      // LIVE_INFLOW_FLOOR > INFLOW_FLOOR, live boards MEASURED strong inflow
-      // only — the 94-100%-win / 0-12%-rug band (9.4¢/$ 3d) — and every
-      // exception (sub-floor tickets, moonshots, golden-window relaunches)
-      // waits. Unmeasured inflow refuses too: strong must be measured.
-      // Exit the mode by lowering LIVE_INFLOW_FLOOR once the balance rebuilds.
-      if (cfg.LIVE_INFLOW_FLOOR > cfg.INFLOW_FLOOR && !goldenWindow) {
-        const lgBB = sig.liqGrowth != null ? Number(sig.liqGrowth) : null;
-        if (lgBB == null || !Number.isFinite(lgBB)) {
-          await audit("live_buy_skipped", {
-            mint,
-            reason: `build-back mode: inflow unmeasured — measured flow only until the balance rebuilds`,
-          });
-          return;
-        }
-        if (lgBB < cfg.LIVE_INFLOW_FLOOR && lgBB >= cfg.INFLOW_FLOOR) {
-          // BUILD-BACK TICKET (ratified 2026-07-27): the binary refusal below
-          // the strong floor skipped 68 mints at 76% would-have-won (+$21.40
-          // CF/48h at ticket size) — procyclical: losses tightened the gate
-          // that skips the winners that rebuild the balance. In-envelope
-          // measured flow now pays TICKET money instead of refusing; every
-          // downstream gate (crowd, seat, depth, mirror) still applies.
-          // Sub-envelope (<INFLOW_FLOOR) falls through to the sub-floor doors,
-          // which already ticket-or-refuse on crowd depth.
-          buildBackTicket = true;
-          await audit("live_buildback_ticket", {
-            mint,
-            inflow: lgBB,
-            reason: `build-back mode: in-envelope inflow ${lgBB.toFixed(2)}× below the strong ${cfg.LIVE_INFLOW_FLOOR}× floor — ticket size instead of refusal (68-skip/76%-win counterfactual, ratified 2026-07-27)`,
-          });
-        }
-      }
-      const wh = sig.walletWinnerHits;
-      const rh = sig.walletRugHits;
-      const crowdPass = wh != null && rh != null && wh >= 1 && wh - rh >= 1;
-      // MOON SHOT (ratified 2026-07-24: "these are the shots we should be
-      // taking... the Math outweighs a pass"): a 2★ MOON-class candidate
-      // fires in BOTH lanes at slot size even with an unproven crowd — the
-      // fingerprint + conviction is the qualification, the slot cap and exit
-      // chain bound the rug. Seat discipline below still declines >1.65.
-      const moonShot =
-        cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
-        typeof sig.signature === "string" && sig.signature.startsWith("MOON") &&
-        !(sig.triggerMultiple != null && Number(sig.triggerMultiple) > cfg.CONVICTION_SEAT_MAX);
-      if (moonShot && !crowdPass) {
-        await audit("live_moonshot_tier", {
-          mint,
-          walletWinnerHits: wh ?? null,
-          walletRugHits: rh ?? null,
-          inflow: sig.liqGrowth ?? null,
-          reason: "2★ moon fingerprint — SHOT fires live at slot size (crowd unproven; alert cohort 11/20 winners)",
-        });
-      } else if (!crowdPass) {
-        await audit("entry_crowd_unknown_refused", {
-          mint,
-          lane: "live",
-          inflow: sig.liqGrowth ?? null,
-          walletWinnerHits: wh ?? null,
-          walletRugHits: rh ?? null,
-          reason: `crowd ${wh ?? "?"}W/${rh ?? "?"}R — F1 requires winners aboard and outnumbering (crowd-fail: $0.28/t, 14% dead; live fail-cohort −$128.82 all-time)`,
-        });
-        return;
-      }
-      // RECOVERED TIER (ratified 2026-07-24): winner hits are now net-positive
-      // wallets — a crowd with NO never-rugged winner passes F1 but at the
-      // reduced clip (inherited from paper via paperFrac). Audited so the
-      // counterfactual watch can split PRECISION vs RECOVERED cohorts.
-      if (sig.walletStrictHits === 0) {
-        recoveredTier = true;
-        // RECOVERED-TIER DEMOTION (2026-07-27/28, venue-wide) with SUPERVISED
-        // RETRIAL (operator "Re-admit and unbench", 2026-07-28 hunt window):
-        // the cohort was convicted on drains that predate the full armor
-        // stack. When RECOVERED_READMIT_TICKETS > 0, up to that many boardings
-        // per day re-enter at TICKET size under strand probe + drain guard +
-        // ws live-first + 3× flee + late-arm ladder; every boarding audited
-        // as live_recovered_readmit so the retrial scores cleanly. At 0 (the
-        // default) the demotion is fully closed.
-        if (cfg.RECOVERED_READMIT_TICKETS > 0) {
-          const [rc] = (await db.execute(sql`
-            SELECT count(*)::int n FROM audit_log
-            WHERE action = 'live_recovered_readmit' AND created_at >= date_trunc('day', now())`)) as unknown as { n: number }[];
-          if ((rc?.n ?? 0) >= cfg.RECOVERED_READMIT_TICKETS) {
-            await audit("live_buy_skipped", {
+        if (wave) {
+          // GOLDEN WINDOW (operator 2026-07-26: "Open the golden window door"):
+          // launches 3-4+ of a ticker are the measured golden cell (+19.5¢/$;
+          // paper's relaunch probes ran 75% win / +$4.27 over the last 24h while
+          // live refused them all). A relaunch with F6 launch order ≥3 now
+          // boards at TICKET size; launch #2 (the adversary's re-harvest,
+          // −2.3¢/$) and unknown orders stay refused.
+          const lo = sig?.launchOrder ?? null;
+          if (lo != null && lo >= 3) {
+            subFloorTicket = true;
+            goldenWindow = true;
+            await audit("live_golden_window", {
               mint,
-              reason: `RECOVERED retrial cap reached (${cfg.RECOVERED_READMIT_TICKETS}/night) — demotion holds for the rest of the day`,
-            });
-            return;
-          }
-          subFloorTicket = true; // ticket size, never the sizer's full clip
-          await audit("live_recovered_readmit", {
-            mint,
-            walletWinnerHits: wh ?? null,
-            walletRugHits: rh ?? null,
-            reason: `RECOVERED supervised retrial ${(rc?.n ?? 0) + 1}/${cfg.RECOVERED_READMIT_TICKETS} — ticket size under full armor (operator word 2026-07-28)`,
-          });
-        } else {
-          // ── THE CLIFF-SAFE DOOR (operator 2026-07-29: "Lets open the cliff
-          // safe pools now. Live wallet needs attempts at bat.") ────────────
-          // The demotion convicted this tier on drains — but the recovery-
-          // cliff study (130 protective exits) says the drain only wins BELOW
-          // the cliff: fire with the pool over $12k and we keep 95%. So the
-          // tier reopens exactly where the physics protect us: entry pool ≥
-          // LIVE_UNLOCKED_LP_MIN_POOL_USD ($16k → the −25% drain alarm still
-          // rings above the $12k/95% line), at TICKET size, under the full
-          // armor (sniper chambered, strand probe, drain guard on chain
-          // truth, basis-first, floor_45, late-arm ladder). Sub-cliff
-          // RECOVERED stays paper-only — that is where the farm actually ate
-          // us. Audited as live_cliffsafe_readmit so the cohort scores on its
-          // own line.
-          const [ct] = (await db.execute(sql`
-            SELECT liquidity_usd::float liq FROM candidate_ticks WHERE mint = ${mint}
-            ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
-          const poolNow = ct?.liq != null && Number.isFinite(Number(ct.liq)) ? Number(ct.liq) : null;
-          // ── DOOR CLOSED (operator 2026-08-02: "close the cliff-safe door") ──
-          // The premise above was that entry pool depth predicts survivability:
-          // fire above the cliff and the physics protect us. Live receipts say
-          // it does not. JORDAN #7110 entered through this door at pool $19,991
-          // — a quarter above the $16k bar — and the route stopped quoting it
-          // 12 SECONDS later; feed liquidity reached $0 within two minutes.
-          // Depth at entry was a quarter-million dollars of reassurance that
-          // bought twelve seconds.
-          //
-          // The tier's own record, per the comment at the RECOVERED flag above:
-          // 10 of 14 live_unsellable write-offs (−$33.82/48h) came through here.
-          // JORDAN makes it 11 of 15.
-          //
-          // An explicit branch rather than gating the `if` below: that `else`
-          // reports "below the cliff", which would be a false reason for a
-          // candidate refused while sitting ABOVE it.
-          if (!cfg.LIVE_CLIFFSAFE_DOOR) {
-            await audit("live_buy_skipped", {
-              mint,
-              poolUsd: poolNow == null ? null : Math.round(poolNow),
-              walletWinnerHits: wh ?? null,
-              walletRugHits: rh ?? null,
-              reason: `cliff-safe door CLOSED — RECOVERED tier is paper-only regardless of entry pool (${poolNow == null ? "unknown" : "$" + Math.round(poolNow).toLocaleString()}); entry depth did not predict survivability (11 of 15 unsellable write-offs entered here)`,
-            });
-            return;
-          }
-          if (poolNow != null && poolNow >= cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD) {
-            subFloorTicket = true; // ticket size, never the sizer's full clip
-            await audit("live_cliffsafe_readmit", {
-              mint,
-              poolUsd: Math.round(poolNow),
-              walletWinnerHits: wh ?? null,
-              walletRugHits: rh ?? null,
-              reason: `RECOVERED tier admitted through the CLIFF-SAFE door — pool $${Math.round(poolNow).toLocaleString()} ≥ $${cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD.toLocaleString()} keeps the drain alarm above the 95%-recovery line (operator word 2026-07-29)`,
+              symbol,
+              launchOrder: lo,
+              reason: `golden window: launch #${lo} of ${symbol} — relaunch boards at ticket size (L3-4 +19.5¢/$; paper relaunch probes 75% win/24h)`,
             });
           } else {
             await audit("live_buy_skipped", {
               mint,
-              reason: `RECOVERED tier below the cliff (pool ${poolNow == null ? "unknown" : "$" + Math.round(poolNow).toLocaleString()} < $${cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD.toLocaleString()}) — paper-only where the drain farm actually wins`,
+              reason: `clone wave: ${symbol} rugged or still open on another mint <60m, launch order ${lo ?? "unknown"} — live refuses (golden window opens at L3+)`,
             });
             return;
           }
         }
       }
-      // Sub-floor MOON SHOT (operator 2026-07-25): the shot still fires, but a
-      // MEASURED inflow below the floor pays ticket money, not slot money —
-      // paper's mild band ran −$44/24h at slot scale vs +$16 at probe scale,
-      // and this door was lifting sub-floor 2★ moons to full slots unchecked.
-      if (moonShot && sig.liqGrowth != null && sig.liqGrowth < cfg.INFLOW_FLOOR) {
-        // DOOR CLOSED (operator 2026-08-01, "close the sub-floor door"). The
-        // first live attempt after arming came through here at inflow 1.198×,
-        // below the 1.2× floor and well below the 1.25× admission bar — and the
-        // door cohorts measured P&L-negative across the board in 697a8d7.
-        //
-        // It REFUSES, it does not merely drop the ticket flag: without the flag
-        // the candidate would fall through to NORMAL sizing and enter a
-        // sub-floor moon at FULL SLOT, which is strictly worse than the door we
-        // are closing. Refusals stay audited so the counterfactual is measurable.
-        if (!cfg.LIVE_SUBFLOOR_DOOR) {
-          await audit("live_buy_skipped", {
-            mint, door: "MOONSHOT", inflow: sig.liqGrowth, floor: cfg.INFLOW_FLOOR,
-            walletWinnerHits: sig.walletWinnerHits, walletRugHits: sig.walletRugHits,
-            reason: `sub-floor door CLOSED — 2★ moon inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor; refused rather than ticket-sized`,
+      // ── WALLET-GRAPH ANTI-GATE ───────────────────────────────────────────────
+      // 7d study (n=9,771 armed+labeled): holder sets whose known wallets net out
+      // NEGATIVE (more rug history than winner history) ran 9.6% win / 49.3% rug /
+      // 4.1% moon-3× — the worst measured cohort, half the tape. A MEASURED bad
+      // crowd is exactly what real capital refuses; an unknown crowd passes.
+      if (sig && sig.walletWinnerHits != null && sig.walletRugHits != null && sig.walletWinnerHits - sig.walletRugHits <= -1) {
+        await audit("live_buy_skipped", {
+          mint,
+          reason: `wallet graph: net rep ${sig.walletWinnerHits - sig.walletRugHits} — rug-history crowd (49% rug vs 10% win cohort)`,
+        });
+        return;
+      }
+      // ── FORMULA v2 GATE — F1 CROWD, ALL BANDS (ratified 2026-07-24) ─────────
+      // Canon GCE-FORMULA-001 + model run: crowd-pass (wh ≥ 1 AND wh > rh) ran
+      // $1.29/trade at 5% dead in the signature era vs crowd-fail's $0.28 at
+      // 14% — and live's ENTIRE loss history (168 trades, −$128.82, 21% dead)
+      // is the crowd-fail cohort. Live is the exploit lane: SENSOR-tier flow
+      // (crowd-fail) trades as paper probes only, never real capital. Also F3:
+      // inflow above the ceiling is the manufactured-spike envelope — the 07-23
+      // atomic wave's costume.
+      if (sig) {
+        // STRONG-ONLY BUILD-BACK (operator 2026-07-27, wallet at $109): while
+        // LIVE_INFLOW_FLOOR > INFLOW_FLOOR, live boards MEASURED strong inflow
+        // only — the 94-100%-win / 0-12%-rug band (9.4¢/$ 3d) — and every
+        // exception (sub-floor tickets, moonshots, golden-window relaunches)
+        // waits. Unmeasured inflow refuses too: strong must be measured.
+        // Exit the mode by lowering LIVE_INFLOW_FLOOR once the balance rebuilds.
+        if (cfg.LIVE_INFLOW_FLOOR > cfg.INFLOW_FLOOR && !goldenWindow) {
+          const lgBB = sig.liqGrowth != null ? Number(sig.liqGrowth) : null;
+          if (lgBB == null || !Number.isFinite(lgBB)) {
+            await audit("live_buy_skipped", {
+              mint,
+              reason: `build-back mode: inflow unmeasured — measured flow only until the balance rebuilds`,
+            });
+            return;
+          }
+          if (lgBB < cfg.LIVE_INFLOW_FLOOR && lgBB >= cfg.INFLOW_FLOOR) {
+            // BUILD-BACK TICKET (ratified 2026-07-27): the binary refusal below
+            // the strong floor skipped 68 mints at 76% would-have-won (+$21.40
+            // CF/48h at ticket size) — procyclical: losses tightened the gate
+            // that skips the winners that rebuild the balance. In-envelope
+            // measured flow now pays TICKET money instead of refusing; every
+            // downstream gate (crowd, seat, depth, mirror) still applies.
+            // Sub-envelope (<INFLOW_FLOOR) falls through to the sub-floor doors,
+            // which already ticket-or-refuse on crowd depth.
+            buildBackTicket = true;
+            await audit("live_buildback_ticket", {
+              mint,
+              inflow: lgBB,
+              reason: `build-back mode: in-envelope inflow ${lgBB.toFixed(2)}× below the strong ${cfg.LIVE_INFLOW_FLOOR}× floor — ticket size instead of refusal (68-skip/76%-win counterfactual, ratified 2026-07-27)`,
+            });
+          }
+        }
+        const wh = sig.walletWinnerHits;
+        const rh = sig.walletRugHits;
+        const crowdPass = wh != null && rh != null && wh >= 1 && wh - rh >= 1;
+        // MOON SHOT (ratified 2026-07-24: "these are the shots we should be
+        // taking... the Math outweighs a pass"): a 2★ MOON-class candidate
+        // fires in BOTH lanes at slot size even with an unproven crowd — the
+        // fingerprint + conviction is the qualification, the slot cap and exit
+        // chain bound the rug. Seat discipline below still declines >1.65.
+        const moonShot =
+          cfg.MOONSHOT_TIER_ENABLED && sig.stars === 2 &&
+          typeof sig.signature === "string" && sig.signature.startsWith("MOON") &&
+          !(sig.triggerMultiple != null && Number(sig.triggerMultiple) > cfg.CONVICTION_SEAT_MAX);
+        if (moonShot && !crowdPass) {
+          await audit("live_moonshot_tier", {
+            mint,
+            walletWinnerHits: wh ?? null,
+            walletRugHits: rh ?? null,
+            inflow: sig.liqGrowth ?? null,
+            reason: "2★ moon fingerprint — SHOT fires live at slot size (crowd unproven; alert cohort 11/20 winners)",
+          });
+        } else if (!crowdPass) {
+          await audit("entry_crowd_unknown_refused", {
+            mint,
+            lane: "live",
+            inflow: sig.liqGrowth ?? null,
+            walletWinnerHits: wh ?? null,
+            walletRugHits: rh ?? null,
+            reason: `crowd ${wh ?? "?"}W/${rh ?? "?"}R — F1 requires winners aboard and outnumbering (crowd-fail: $0.28/t, 14% dead; live fail-cohort −$128.82 all-time)`,
           });
           return;
         }
-        subFloorTicket = true;
-        await audit("live_subfloor_ticket", {
-          mint,
-          door: "MOONSHOT",
-          walletWinnerHits: sig.walletWinnerHits ?? null,
-          walletRugHits: sig.walletRugHits ?? null,
-          inflow: sig.liqGrowth,
-          reason: `2★ moon with inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — shot fires at ticket size (mild slot-scale bleed)`,
-        });
-      }
-      if (!moonShot && sig.liqGrowth != null && (sig.liqGrowth > cfg.INFLOW_CEILING || sig.liqGrowth < cfg.INFLOW_FLOOR)) {
-        // SUB-FLOOR TICKET, door 1 (ratified 2026-07-25): below the floor
-        // with a deep clean crowd aboard, live takes a ticket instead of
-        // refusing — 22 of 31 refusals in the copy-gap window were this cell.
-        // Above the ceiling (manufactured spike) still refuses outright.
-        const subfloorCrowd =
-          cfg.SUBFLOOR_TICKET_ENABLED && sig.liqGrowth < cfg.INFLOW_FLOOR &&
-          (sig.walletWinnerHits ?? 0) >= cfg.SUBFLOOR_TICKET_MIN_WH && (sig.walletRugHits ?? 0) === 0;
-        if (subfloorCrowd) {
+        // RECOVERED TIER (ratified 2026-07-24): winner hits are now net-positive
+        // wallets — a crowd with NO never-rugged winner passes F1 but at the
+        // reduced clip (inherited from paper via paperFrac). Audited so the
+        // counterfactual watch can split PRECISION vs RECOVERED cohorts.
+        if (sig.walletStrictHits === 0) {
+          recoveredTier = true;
+          // RECOVERED-TIER DEMOTION (2026-07-27/28, venue-wide) with SUPERVISED
+          // RETRIAL (operator "Re-admit and unbench", 2026-07-28 hunt window):
+          // the cohort was convicted on drains that predate the full armor
+          // stack. When RECOVERED_READMIT_TICKETS > 0, up to that many boardings
+          // per day re-enter at TICKET size under strand probe + drain guard +
+          // ws live-first + 3× flee + late-arm ladder; every boarding audited
+          // as live_recovered_readmit so the retrial scores cleanly. At 0 (the
+          // default) the demotion is fully closed.
+          if (cfg.RECOVERED_READMIT_TICKETS > 0) {
+            const [rc] = (await db.execute(sql`
+            SELECT count(*)::int n FROM audit_log
+            WHERE action = 'live_recovered_readmit' AND created_at >= date_trunc('day', now())`)) as unknown as { n: number }[];
+            if ((rc?.n ?? 0) >= cfg.RECOVERED_READMIT_TICKETS) {
+              await audit("live_buy_skipped", {
+                mint,
+                reason: `RECOVERED retrial cap reached (${cfg.RECOVERED_READMIT_TICKETS}/night) — demotion holds for the rest of the day`,
+              });
+              return;
+            }
+            subFloorTicket = true; // ticket size, never the sizer's full clip
+            await audit("live_recovered_readmit", {
+              mint,
+              walletWinnerHits: wh ?? null,
+              walletRugHits: rh ?? null,
+              reason: `RECOVERED supervised retrial ${(rc?.n ?? 0) + 1}/${cfg.RECOVERED_READMIT_TICKETS} — ticket size under full armor (operator word 2026-07-28)`,
+            });
+          } else {
+            // ── THE CLIFF-SAFE DOOR (operator 2026-07-29: "Lets open the cliff
+            // safe pools now. Live wallet needs attempts at bat.") ────────────
+            // The demotion convicted this tier on drains — but the recovery-
+            // cliff study (130 protective exits) says the drain only wins BELOW
+            // the cliff: fire with the pool over $12k and we keep 95%. So the
+            // tier reopens exactly where the physics protect us: entry pool ≥
+            // LIVE_UNLOCKED_LP_MIN_POOL_USD ($16k → the −25% drain alarm still
+            // rings above the $12k/95% line), at TICKET size, under the full
+            // armor (sniper chambered, strand probe, drain guard on chain
+            // truth, basis-first, floor_45, late-arm ladder). Sub-cliff
+            // RECOVERED stays paper-only — that is where the farm actually ate
+            // us. Audited as live_cliffsafe_readmit so the cohort scores on its
+            // own line.
+            const [ct] = (await db.execute(sql`
+            SELECT liquidity_usd::float liq FROM candidate_ticks WHERE mint = ${mint}
+            ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
+            const poolNow = ct?.liq != null && Number.isFinite(Number(ct.liq)) ? Number(ct.liq) : null;
+            // ── DOOR CLOSED (operator 2026-08-02: "close the cliff-safe door") ──
+            // The premise above was that entry pool depth predicts survivability:
+            // fire above the cliff and the physics protect us. Live receipts say
+            // it does not. JORDAN #7110 entered through this door at pool $19,991
+            // — a quarter above the $16k bar — and the route stopped quoting it
+            // 12 SECONDS later; feed liquidity reached $0 within two minutes.
+            // Depth at entry was a quarter-million dollars of reassurance that
+            // bought twelve seconds.
+            //
+            // The tier's own record, per the comment at the RECOVERED flag above:
+            // 10 of 14 live_unsellable write-offs (−$33.82/48h) came through here.
+            // JORDAN makes it 11 of 15.
+            //
+            // An explicit branch rather than gating the `if` below: that `else`
+            // reports "below the cliff", which would be a false reason for a
+            // candidate refused while sitting ABOVE it.
+            if (!cfg.LIVE_CLIFFSAFE_DOOR) {
+              await audit("live_buy_skipped", {
+                mint,
+                poolUsd: poolNow == null ? null : Math.round(poolNow),
+                walletWinnerHits: wh ?? null,
+                walletRugHits: rh ?? null,
+                reason: `cliff-safe door CLOSED — RECOVERED tier is paper-only regardless of entry pool (${poolNow == null ? "unknown" : "$" + Math.round(poolNow).toLocaleString()}); entry depth did not predict survivability (11 of 15 unsellable write-offs entered here)`,
+              });
+              return;
+            }
+            if (poolNow != null && poolNow >= cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD) {
+              subFloorTicket = true; // ticket size, never the sizer's full clip
+              await audit("live_cliffsafe_readmit", {
+                mint,
+                poolUsd: Math.round(poolNow),
+                walletWinnerHits: wh ?? null,
+                walletRugHits: rh ?? null,
+                reason: `RECOVERED tier admitted through the CLIFF-SAFE door — pool $${Math.round(poolNow).toLocaleString()} ≥ $${cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD.toLocaleString()} keeps the drain alarm above the 95%-recovery line (operator word 2026-07-29)`,
+              });
+            } else {
+              await audit("live_buy_skipped", {
+                mint,
+                reason: `RECOVERED tier below the cliff (pool ${poolNow == null ? "unknown" : "$" + Math.round(poolNow).toLocaleString()} < $${cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD.toLocaleString()}) — paper-only where the drain farm actually wins`,
+              });
+              return;
+            }
+          }
+        }
+        // Sub-floor MOON SHOT (operator 2026-07-25): the shot still fires, but a
+        // MEASURED inflow below the floor pays ticket money, not slot money —
+        // paper's mild band ran −$44/24h at slot scale vs +$16 at probe scale,
+        // and this door was lifting sub-floor 2★ moons to full slots unchecked.
+        if (moonShot && sig.liqGrowth != null && sig.liqGrowth < cfg.INFLOW_FLOOR) {
+          // DOOR CLOSED (operator 2026-08-01, "close the sub-floor door"). The
+          // first live attempt after arming came through here at inflow 1.198×,
+          // below the 1.2× floor and well below the 1.25× admission bar — and the
+          // door cohorts measured P&L-negative across the board in 697a8d7.
+          //
+          // It REFUSES, it does not merely drop the ticket flag: without the flag
+          // the candidate would fall through to NORMAL sizing and enter a
+          // sub-floor moon at FULL SLOT, which is strictly worse than the door we
+          // are closing. Refusals stay audited so the counterfactual is measurable.
+          if (!cfg.LIVE_SUBFLOOR_DOOR) {
+            await audit("live_buy_skipped", {
+              mint, door: "MOONSHOT", inflow: sig.liqGrowth, floor: cfg.INFLOW_FLOOR,
+              walletWinnerHits: sig.walletWinnerHits, walletRugHits: sig.walletRugHits,
+              reason: `sub-floor door CLOSED — 2★ moon inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor; refused rather than ticket-sized`,
+            });
+            return;
+          }
           subFloorTicket = true;
           await audit("live_subfloor_ticket", {
             mint,
-            door: "F3",
-            walletWinnerHits: sig.walletWinnerHits,
-            walletRugHits: sig.walletRugHits,
+            door: "MOONSHOT",
+            walletWinnerHits: sig.walletWinnerHits ?? null,
+            walletRugHits: sig.walletRugHits ?? null,
             inflow: sig.liqGrowth,
-            reason: `sub-floor inflow ${sig.liqGrowth.toFixed(2)}× with ${sig.walletWinnerHits}W/0R crowd — ticket-size confirmation entry`,
+            reason: `2★ moon with inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — shot fires at ticket size (mild slot-scale bleed)`,
           });
-        } else {
+        }
+        if (!moonShot && sig.liqGrowth != null && (sig.liqGrowth > cfg.INFLOW_CEILING || sig.liqGrowth < cfg.INFLOW_FLOOR)) {
+          // SUB-FLOOR TICKET, door 1 (ratified 2026-07-25): below the floor
+          // with a deep clean crowd aboard, live takes a ticket instead of
+          // refusing — 22 of 31 refusals in the copy-gap window were this cell.
+          // Above the ceiling (manufactured spike) still refuses outright.
+          const subfloorCrowd =
+            cfg.SUBFLOOR_TICKET_ENABLED && sig.liqGrowth < cfg.INFLOW_FLOOR &&
+            (sig.walletWinnerHits ?? 0) >= cfg.SUBFLOOR_TICKET_MIN_WH && (sig.walletRugHits ?? 0) === 0;
+          if (subfloorCrowd) {
+            subFloorTicket = true;
+            await audit("live_subfloor_ticket", {
+              mint,
+              door: "F3",
+              walletWinnerHits: sig.walletWinnerHits,
+              walletRugHits: sig.walletRugHits,
+              inflow: sig.liqGrowth,
+              reason: `sub-floor inflow ${sig.liqGrowth.toFixed(2)}× with ${sig.walletWinnerHits}W/0R crowd — ticket-size confirmation entry`,
+            });
+          } else {
+            await audit("live_buy_skipped", {
+              mint,
+              reason:
+                sig.liqGrowth > cfg.INFLOW_CEILING
+                  ? `inflow ${sig.liqGrowth.toFixed(2)}× above the ${cfg.INFLOW_CEILING}× envelope — manufactured-spike territory (F3)`
+                  : `inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — sub-envelope crowd-pass ran −$0.81/t at size (F3 floor, ratified; paper probes it)`,
+            });
+            return;
+          }
+        }
+        // ARM SPEC (ratified 2026-07-24): live fires the CONVICTION seat only
+        // (1.2–1.65 — 83% win / $2.51/t). The 1.65–2.05 sensor slice measured
+        // −$1.01/t at size; paper probes it, real capital declines it.
+        //
+        // STRONG-SEAT EXTENSION (ratified 2026-07-27, strong-seat-study.ts 7d):
+        // inside MEASURED-strong inflow (lg ≥ 1.30) the late trigger is not a
+        // chase — the strong pool is still filling. The 1.66–1.95 slice ran
+        // n=489 · 74% win / 13% rug · avg peak 6.19× · paper +$148.59 (5.4¢/$),
+        // the band's volume pipe (~2.9/h) live's ceiling was declining wholesale.
+        // Sub-strong keeps the 1.65 ceiling. Scoreboard: live must hold ≥4¢/$
+        // over the first 30 extended-slice fills.
+        // STRONG-SEAT EXTENSION CLOSED (operator 2026-07-27, scoreboard read at
+        // fill 1 of 30): 7 admissions in 7h → all 5 paper-winners skipped
+        // (sub-viable sizer) or buy-failed; the only FILL was a MOON_VIOLENT rug,
+        // −100% in 20s via the dbc-ticket sizing seam. Adverse execution
+        // selection: this cell fills only in the hot moments that are rugs.
+        // Paper's crowd-net read agreed (−1.6¢/$, n=166). The 1.66–1.95×@strong
+        // slice returns to DECLINE; the 1.96–2.05×@strong sensor seat below is a
+        // different, 98%-win cell and stands on its own study.
+        // REOPENED (operator "Ship both", 2026-07-30) — the CONVEXITY harness
+        // reverses the closure. Formula-qualified cohort, 10d, "ran ≥2×":
+        //   trigger ≥1.65×   n=323 · 94% ran 2×
+        //   trigger 1.4-1.65 n=430 · 70%
+        // This is the most convex cohort we own, and live was refusing it
+        // wholesale while trapped at 80% flat-band. The closure was correct on
+        // its evidence — adverse execution selection — but that evidence
+        // predates the landing fix (rebroadcast + 10× priority), the buy-share
+        // floor, the pool floor, and the chambered sniper. The execution
+        // problems that convicted this slice no longer exist; it also cost
+        // +$3.64 in last night's refusal counterfactual. Scoreboard: live must
+        // hold ≥4¢/$ over the first 30 fills, and the band mix must move off
+        // 80% flat — if neither happens, it closes again on that evidence.
+        // THE STRONG LINE FOLLOWS THE ADMISSION LINE (operator 2026-07-31: "set
+        // live entries to 1.25 ... we should also be admitting the 1.30-2.05 band
+        // as well"). This was hardcoded 1.30 in three places while the admission
+        // band lived in LIVE_MIN_INFLOW — so lowering the band alone would have
+        // let the 1.25-1.30 shoulder past the gate and then denied it a seat,
+        // silently demoting the whole cohort to ticket size. The seat definition
+        // now tracks the operator's line.
+        const strongSeat =
+          sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.LIVE_MIN_INFLOW &&
+          sig.triggerMultiple != null && sig.triggerMultiple <= 1.95;
+        // SENSOR-SLICE OPENING (ratified 2026-07-27, sensor-slice-study.ts 7d/14d):
+        // the "−$1.01/t" that closed the slice predates the F1 crowd gate — this
+        // code path only sees crowd-net flow now, and crowd-net flips the cells:
+        //   SEAT  1.96–2.05 @ strong (lg≥1.30):    n=47 · 98% win · 2% rug · 17.0c/$
+        //   TICKET 1.66–2.05 @ sub-strong (1.20–1.29): n=17 · 88% win · 6% rug —
+        //   thin sample ⇒ ticket-size only until ~30 fills prove the cell.
+        // Without crowd-net the same cells run −10.2c/$ / 35% rug — the F1 gate
+        // above is what makes this admission safe. Trigger >2.05 still declines.
+        const sensorSeat =
+          sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.LIVE_MIN_INFLOW &&
+          sig.triggerMultiple != null && sig.triggerMultiple > 1.95 && sig.triggerMultiple <= 2.05;
+        const sensorTicket =
+          sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) < cfg.LIVE_MIN_INFLOW &&
+          sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && sig.triggerMultiple <= 2.05;
+        if (sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && !strongSeat && !sensorSeat && !sensorTicket) {
           await audit("live_buy_skipped", {
             mint,
-            reason:
-              sig.liqGrowth > cfg.INFLOW_CEILING
-                ? `inflow ${sig.liqGrowth.toFixed(2)}× above the ${cfg.INFLOW_CEILING}× envelope — manufactured-spike territory (F3)`
-                : `inflow ${sig.liqGrowth.toFixed(2)}× below the ${cfg.INFLOW_FLOOR}× floor — sub-envelope crowd-pass ran −$0.81/t at size (F3 floor, ratified; paper probes it)`,
+            reason: `trigger ${sig.triggerMultiple.toFixed(2)}× declined — 1.66-1.95×@strong (extension closed 2026-07-27, rug-fill scoreboard), >2.05×, or unmeasured inflow`,
+          });
+          return;
+        }
+        if (sensorSeat) {
+          await audit("live_sensor_seat", {
+            mint,
+            trigger: sig.triggerMultiple,
+            inflow: sig.liqGrowth,
+            reason: `sensor-seat opening: trigger ${sig.triggerMultiple!.toFixed(2)}× admitted on measured-strong inflow ${Number(sig.liqGrowth).toFixed(2)}× (98%/2% crowd-net cell n=47, 14d study 2026-07-27)`,
+          });
+        }
+        if (sensorTicket) {
+          subFloorTicket = true;
+          await audit("live_subfloor_ticket", {
+            mint,
+            door: "SENSOR",
+            walletWinnerHits: sig.walletWinnerHits ?? null,
+            walletRugHits: sig.walletRugHits ?? null,
+            inflow: sig.liqGrowth,
+            reason: `sensor ticket: trigger ${sig.triggerMultiple!.toFixed(2)}× on sub-strong inflow ${Number(sig.liqGrowth).toFixed(2)}× — ticket-size until ~30 fills prove the cell (88%/6% crowd-net n=17, thin)`,
+          });
+        }
+      }
+      if (!sig) {
+        // Unrouted flow ran −$22.95 on live since routing went live. A trade
+        // without a genome has no exit profile and no evidence — paper-only.
+        await audit("live_buy_skipped", { mint, reason: "unrouted — live takes signature-routed trades only" });
+        return;
+      }
+      // ── THE BUY-SHARE FLOOR (operator RATIFIED 2026-07-29) ──────────────────
+      // "Buy Shares must be in our favor when qualifying." The strongest
+      // entry-knowable separator we own: <55% buys at the trigger tick died 30%
+      // vs 13% (n=66 / 508, 7d) at an identical 3×-run rate — deaths removed
+      // with no upside forfeited. Universal: every path (strict-winner,
+      // RECOVERED cliff-safe, L1, L3+) passes through it, and an UNMEASURED buy
+      // share refuses too — a blind read is not a favorable one.
+      {
+        const bs = sig.triggerBuyShare == null ? null : Number(sig.triggerBuyShare);
+        if (bs == null || !Number.isFinite(bs) || bs < cfg.LIVE_MIN_BUY_SHARE) {
+          await audit("live_buy_skipped", {
+            mint,
+            buyShare: bs,
+            reason: `buy share ${bs == null || !Number.isFinite(bs) ? "unmeasured" : (bs * 100).toFixed(0) + "%"} below the ${(cfg.LIVE_MIN_BUY_SHARE * 100).toFixed(0)}% floor — sellers at the trigger tick (30% death cohort vs 13%)`,
           });
           return;
         }
       }
-      // ARM SPEC (ratified 2026-07-24): live fires the CONVICTION seat only
-      // (1.2–1.65 — 83% win / $2.51/t). The 1.65–2.05 sensor slice measured
-      // −$1.01/t at size; paper probes it, real capital declines it.
-      //
-      // STRONG-SEAT EXTENSION (ratified 2026-07-27, strong-seat-study.ts 7d):
-      // inside MEASURED-strong inflow (lg ≥ 1.30) the late trigger is not a
-      // chase — the strong pool is still filling. The 1.66–1.95 slice ran
-      // n=489 · 74% win / 13% rug · avg peak 6.19× · paper +$148.59 (5.4¢/$),
-      // the band's volume pipe (~2.9/h) live's ceiling was declining wholesale.
-      // Sub-strong keeps the 1.65 ceiling. Scoreboard: live must hold ≥4¢/$
-      // over the first 30 extended-slice fills.
-      // STRONG-SEAT EXTENSION CLOSED (operator 2026-07-27, scoreboard read at
-      // fill 1 of 30): 7 admissions in 7h → all 5 paper-winners skipped
-      // (sub-viable sizer) or buy-failed; the only FILL was a MOON_VIOLENT rug,
-      // −100% in 20s via the dbc-ticket sizing seam. Adverse execution
-      // selection: this cell fills only in the hot moments that are rugs.
-      // Paper's crowd-net read agreed (−1.6¢/$, n=166). The 1.66–1.95×@strong
-      // slice returns to DECLINE; the 1.96–2.05×@strong sensor seat below is a
-      // different, 98%-win cell and stands on its own study.
-      // REOPENED (operator "Ship both", 2026-07-30) — the CONVEXITY harness
-      // reverses the closure. Formula-qualified cohort, 10d, "ran ≥2×":
-      //   trigger ≥1.65×   n=323 · 94% ran 2×
-      //   trigger 1.4-1.65 n=430 · 70%
-      // This is the most convex cohort we own, and live was refusing it
-      // wholesale while trapped at 80% flat-band. The closure was correct on
-      // its evidence — adverse execution selection — but that evidence
-      // predates the landing fix (rebroadcast + 10× priority), the buy-share
-      // floor, the pool floor, and the chambered sniper. The execution
-      // problems that convicted this slice no longer exist; it also cost
-      // +$3.64 in last night's refusal counterfactual. Scoreboard: live must
-      // hold ≥4¢/$ over the first 30 fills, and the band mix must move off
-      // 80% flat — if neither happens, it closes again on that evidence.
-      // THE STRONG LINE FOLLOWS THE ADMISSION LINE (operator 2026-07-31: "set
-      // live entries to 1.25 ... we should also be admitting the 1.30-2.05 band
-      // as well"). This was hardcoded 1.30 in three places while the admission
-      // band lived in LIVE_MIN_INFLOW — so lowering the band alone would have
-      // let the 1.25-1.30 shoulder past the gate and then denied it a seat,
-      // silently demoting the whole cohort to ticket size. The seat definition
-      // now tracks the operator's line.
-      const strongSeat =
-        sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.LIVE_MIN_INFLOW &&
-        sig.triggerMultiple != null && sig.triggerMultiple <= 1.95;
-      // SENSOR-SLICE OPENING (ratified 2026-07-27, sensor-slice-study.ts 7d/14d):
-      // the "−$1.01/t" that closed the slice predates the F1 crowd gate — this
-      // code path only sees crowd-net flow now, and crowd-net flips the cells:
-      //   SEAT  1.96–2.05 @ strong (lg≥1.30):    n=47 · 98% win · 2% rug · 17.0c/$
-      //   TICKET 1.66–2.05 @ sub-strong (1.20–1.29): n=17 · 88% win · 6% rug —
-      //   thin sample ⇒ ticket-size only until ~30 fills prove the cell.
-      // Without crowd-net the same cells run −10.2c/$ / 35% rug — the F1 gate
-      // above is what makes this admission safe. Trigger >2.05 still declines.
-      const sensorSeat =
-        sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.LIVE_MIN_INFLOW &&
-        sig.triggerMultiple != null && sig.triggerMultiple > 1.95 && sig.triggerMultiple <= 2.05;
-      const sensorTicket =
-        sig.liqGrowth != null && Number(sig.liqGrowth) >= cfg.INFLOW_FLOOR && Number(sig.liqGrowth) < cfg.LIVE_MIN_INFLOW &&
-        sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && sig.triggerMultiple <= 2.05;
-      if (sig.triggerMultiple != null && sig.triggerMultiple > cfg.CONVICTION_SEAT_MAX && !strongSeat && !sensorSeat && !sensorTicket) {
-        await audit("live_buy_skipped", {
-          mint,
-          reason: `trigger ${sig.triggerMultiple.toFixed(2)}× declined — 1.66-1.95×@strong (extension closed 2026-07-27, rug-fill scoreboard), >2.05×, or unmeasured inflow`,
-        });
-        return;
+      // SIGNATURE PLUG-IN (operator 2026-07-29): live trades only signatures
+      // whose MANAGEMENT prints. The others aren't routing problems — they're
+      // genome problems, and the paper workshop owns them until re-harnessed.
+      {
+        const allow = cfg.LIVE_SIGNATURE_ALLOWLIST.split(",").map((s) => s.trim()).filter(Boolean);
+        if (allow.length && !allow.includes(sig.signature)) {
+          await audit("live_buy_skipped", {
+            mint,
+            reason: `${sig.signature} not on the live plug-in list (${cfg.LIVE_SIGNATURE_ALLOWLIST}) — management genome unproven or drain-class; paper workshop owns it`,
+          });
+          return;
+        }
       }
-      if (sensorSeat) {
-        await audit("live_sensor_seat", {
-          mint,
-          trigger: sig.triggerMultiple,
-          inflow: sig.liqGrowth,
-          reason: `sensor-seat opening: trigger ${sig.triggerMultiple!.toFixed(2)}× admitted on measured-strong inflow ${Number(sig.liqGrowth).toFixed(2)}× (98%/2% crowd-net cell n=47, 14d study 2026-07-27)`,
-        });
-      }
-      if (sensorTicket) {
-        subFloorTicket = true;
-        await audit("live_subfloor_ticket", {
-          mint,
-          door: "SENSOR",
-          walletWinnerHits: sig.walletWinnerHits ?? null,
-          walletRugHits: sig.walletRugHits ?? null,
-          inflow: sig.liqGrowth,
-          reason: `sensor ticket: trigger ${sig.triggerMultiple!.toFixed(2)}× on sub-strong inflow ${Number(sig.liqGrowth).toFixed(2)}× — ticket-size until ~30 fills prove the cell (88%/6% crowd-net n=17, thin)`,
-        });
-      }
-    }
-    if (!sig) {
-      // Unrouted flow ran −$22.95 on live since routing went live. A trade
-      // without a genome has no exit profile and no evidence — paper-only.
-      await audit("live_buy_skipped", { mint, reason: "unrouted — live takes signature-routed trades only" });
-      return;
-    }
-    // ── THE BUY-SHARE FLOOR (operator RATIFIED 2026-07-29) ──────────────────
-    // "Buy Shares must be in our favor when qualifying." The strongest
-    // entry-knowable separator we own: <55% buys at the trigger tick died 30%
-    // vs 13% (n=66 / 508, 7d) at an identical 3×-run rate — deaths removed
-    // with no upside forfeited. Universal: every path (strict-winner,
-    // RECOVERED cliff-safe, L1, L3+) passes through it, and an UNMEASURED buy
-    // share refuses too — a blind read is not a favorable one.
-    {
-      const bs = sig.triggerBuyShare == null ? null : Number(sig.triggerBuyShare);
-      if (bs == null || !Number.isFinite(bs) || bs < cfg.LIVE_MIN_BUY_SHARE) {
-        await audit("live_buy_skipped", {
-          mint,
-          buyShare: bs,
-          reason: `buy share ${bs == null || !Number.isFinite(bs) ? "unmeasured" : (bs * 100).toFixed(0) + "%"} below the ${(cfg.LIVE_MIN_BUY_SHARE * 100).toFixed(0)}% floor — sellers at the trigger tick (30% death cohort vs 13%)`,
-        });
-        return;
-      }
-    }
-    // SIGNATURE PLUG-IN (operator 2026-07-29): live trades only signatures
-    // whose MANAGEMENT prints. The others aren't routing problems — they're
-    // genome problems, and the paper workshop owns them until re-harnessed.
-    {
-      const allow = cfg.LIVE_SIGNATURE_ALLOWLIST.split(",").map((s) => s.trim()).filter(Boolean);
-      if (allow.length && !allow.includes(sig.signature)) {
-        await audit("live_buy_skipped", {
-          mint,
-          reason: `${sig.signature} not on the live plug-in list (${cfg.LIVE_SIGNATURE_ALLOWLIST}) — management genome unproven or drain-class; paper workshop owns it`,
-        });
-        return;
-      }
-    }
-    // THE RECOVERY CLIFF (measured 2026-07-29): on unlocked-LP pools the
-    // drain alarm must ring above $12k for the exit to keep ~95%. Entry
-    // pools below LIVE_UNLOCKED_LP_MIN_POOL_USD put the −25% trigger under
-    // the cliff — refuse the seat. Locked/burned LP is exempt: no pull race.
-    {
-      const [lp] = (await db.execute(sql`
+      // THE RECOVERY CLIFF (measured 2026-07-29): on unlocked-LP pools the
+      // drain alarm must ring above $12k for the exit to keep ~95%. Entry
+      // pools below LIVE_UNLOCKED_LP_MIN_POOL_USD put the −25% trigger under
+      // the cliff — refuse the seat. Locked/burned LP is exempt: no pull race.
+      {
+        const [lp] = (await db.execute(sql`
         SELECT bool_or(evidence::text ILIKE '%LP Unlocked%') unlocked
         FROM safety_checks WHERE mint = ${mint} AND check_name = 'rugcheck'`)) as unknown as { unlocked: boolean | null }[];
-      if (lp?.unlocked) {
-        const [lt] = (await db.execute(sql`
+        if (lp?.unlocked) {
+          const [lt] = (await db.execute(sql`
           SELECT liquidity_usd::float liq FROM candidate_ticks WHERE mint = ${mint}
           ORDER BY snapped_at DESC LIMIT 1`)) as unknown as { liq: number | null }[];
-        const liqNow = lt?.liq != null && Number.isFinite(Number(lt.liq)) ? Number(lt.liq) : null;
-        if (liqNow != null && liqNow < cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD) {
-          await audit("live_buy_skipped", {
-            mint,
-            reason: `unlocked LP with pool $${Math.round(liqNow).toLocaleString()} < $${cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD.toLocaleString()} recovery-cliff floor — the −25% alarm would ring below the $12k/95% line`,
-          });
-          return;
+          const liqNow = lt?.liq != null && Number.isFinite(Number(lt.liq)) ? Number(lt.liq) : null;
+          if (liqNow != null && liqNow < cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD) {
+            await audit("live_buy_skipped", {
+              mint,
+              reason: `unlocked LP with pool $${Math.round(liqNow).toLocaleString()} < $${cfg.LIVE_UNLOCKED_LP_MIN_POOL_USD.toLocaleString()} recovery-cliff floor — the −25% alarm would ring below the $12k/95% line`,
+            });
+            return;
+          }
         }
       }
-    }
-    if ((sig.stars ?? 0) < cfg.LIVE_MIN_STARS && !winnerRepCrowd) {
-      // winner-rep exempt: the crowd's track record IS the evidence bar
-      await audit("live_buy_skipped", { mint, reason: `${sig.stars ?? 0}★ — below live evidence bar (0★ ran −55.3% on deployed)` });
-      return;
-    }
+      if ((sig.stars ?? 0) < cfg.LIVE_MIN_STARS && !winnerRepCrowd) {
+        // winner-rep exempt: the crowd's track record IS the evidence bar
+        await audit("live_buy_skipped", { mint, reason: `${sig.stars ?? 0}★ — below live evidence bar (0★ ran −55.3% on deployed)` });
+        return;
+      }
     } // ══ end strategy region 2 ═══════════════════════════════════════════════
 
     // ── SOLVENCY + EXECUTABILITY GATE — NEVER STRATEGY-GATED ─────────────────
@@ -1742,7 +1750,14 @@ export async function maybeLiveBuy(
     // wallet unproductive: each one silently removes trades from the sample that
     // paper is winning on. So a routed position is floored to a fee-viable size
     // and TAKEN, never skipped.
-    const sized = Math.min(livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult, sig, paperFrac) * dailyThrottle, affordable);
+    // OPERATOR MANUAL BUY: the operator's chosen USD size wins over the sizer's
+    // fraction (operator-as-signal), clamped to the same hard caps (fee floor,
+    // per-position fraction, exposure/affordable backstop) so convenience never
+    // overruns a rail.
+    const autoSized = livePositionUsd(cfg, bal.usd, regime, convictionMult, antiMult, sig, paperFrac) * dailyThrottle;
+    const sized = manualSizeUsd != null && manualSizeUsd > 0
+      ? Math.min(manualSizeUsd, affordable, bal.usd * cfg.LIVE_MAX_POSITION_FRAC)
+      : Math.min(autoSized, affordable);
     // SIZER-RESPONSIVE (operator, 2026-07-24: "scale using sizer"). The fee
     // floor used to round every small clip UP to a flat $4 — live paid MORE
     // than paper on exactly the trades paper trusted least, and the adaptive
@@ -2021,9 +2036,11 @@ export async function maybeLiveBuy(
         txSignature: res.signature,
         reason: "live_confirmed",
       }).returning({ id: fills.id });
-      if (lbFill) void journalFill({ fillId: lbFill.id, book: "live", side: "buy", filledAt: new Date(),
+      if (lbFill) void journalFill({
+        fillId: lbFill.id, book: "live", side: "buy", filledAt: new Date(),
         positionId: position.id, mint, qty: res.outUi, priceUsd: entryPrice, feeUsd: res.feeSol * sol,
-        entryPriceUsd: entryPrice, reason: "live_confirmed", txSignature: res.signature });
+        entryPriceUsd: entryPrice, reason: "live_confirmed", txSignature: res.signature
+      });
     }
     requeueUntil.delete(mint); // a landed fill closes any retry window
     await audit("live_open", {
@@ -2047,7 +2064,7 @@ export async function maybeLiveBuy(
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await audit("live_buy_failed", { mint, error: msg }).catch(() => {});
+    await audit("live_buy_failed", { mint, error: msg }).catch(() => { });
     console.error(`live buy failed ${short(mint)}: ${msg}`);
     // ── REQUEUE ON UNROUTABLE (BIO, ratified 2026-07-24) ────────────────────
     // Aggregators lag 1–3 minutes behind brand-new pools — exactly the age of
@@ -2060,10 +2077,10 @@ export async function maybeLiveBuy(
       requeueUntil.set(mint, until);
       if (Date.now() < until) {
         liveRequeue.set(mint, { next: Date.now() + 15_000, symbol, sig, paperFrac });
-        await audit("live_buy_requeued", { mint, retryInMs: 15_000, windowEndsMs: until - Date.now() }).catch(() => {});
+        await audit("live_buy_requeued", { mint, retryInMs: 15_000, windowEndsMs: until - Date.now() }).catch(() => { });
       } else {
         requeueUntil.delete(mint);
-        await audit("live_requeue_expired", { mint }).catch(() => {});
+        await audit("live_requeue_expired", { mint }).catch(() => { });
       }
     }
   } finally {
@@ -2508,12 +2525,12 @@ async function liveSellPosition(
       // proceeds-optimal; protective stays on the ordered walk — time-optimal.
       let quote = isProtective
         ? await swapRouter.quote(cfg, position.mint, WSOL_MINT, rawSell, slip, {
-            exclude: sellExclude.get(position.id),
-            protective: true,
-          })
+          exclude: sellExclude.get(position.id),
+          protective: true,
+        })
         : await swapRouter.quoteBestSell(cfg, position.mint, rawSell, slip, {
-            exclude: sellExclude.get(position.id),
-          });
+          exclude: sellExclude.get(position.id),
+        });
       usedProvider = quote.provider;
       tQuote = Date.now();
 
@@ -2579,8 +2596,10 @@ async function liveSellPosition(
           if (fbCount >= cfg.LIVE_SELL_MAX_FAILS) {
             const remCost = n(position.sizeUsd) * (n(position.qtyRemaining) / Math.max(n(position.qtyTokens), 1e-9));
             await db.update(positions)
-              .set({ status: "closed", closedAt: new Date(), exitReason: "live_unsellable",
-                     realizedPnlUsd: String(n(position.realizedPnlUsd) - remCost), qtyRemaining: "0" })
+              .set({
+                status: "closed", closedAt: new Date(), exitReason: "live_unsellable",
+                realizedPnlUsd: String(n(position.realizedPnlUsd) - remCost), qtyRemaining: "0"
+              })
               .where(and(eq(positions.id, position.id), eq(positions.status, "open")));
             await audit("live_unsellable_writeoff", {
               positionId: position.id, mint: position.mint, via: "cost_basis_floor",
@@ -2745,10 +2764,12 @@ async function liveSellPosition(
       txSignature: res.signature,
       reason,
     }).returning({ id: fills.id });
-    if (lsFill) void journalFill({ fillId: lsFill.id, book: "live", side: "sell", filledAt: new Date(),
+    if (lsFill) void journalFill({
+      fillId: lsFill.id, book: "live", side: "sell", filledAt: new Date(),
       positionId: position.id, mint: position.mint, qty: qtyUiSold,
       priceUsd: fillPxUsd, feeUsd,
-      entryPriceUsd: n(position.entryPriceUsd), reason, txSignature: res.signature });
+      entryPriceUsd: n(position.entryPriceUsd), reason, txSignature: res.signature
+    });
     const closePatch = {
       qtyRemaining: String(Math.max(0, remainingUi)),
       realizedPnlUsd: String(n(position.realizedPnlUsd) + pnl),
@@ -2795,7 +2816,7 @@ async function liveSellPosition(
           mint: position.mint,
           signature: res.signature,
           intended: closePatch,
-        }).catch(() => {});
+        }).catch(() => { });
       }
     }
     await audit("live_sell", {
@@ -2879,7 +2900,7 @@ async function liveSellPosition(
     sellBackoff.set(position.id, { fails, holdouts: prevEntry?.holdouts, nextAttemptMs: Date.now() + waitMs });
     // Audit only the first few failures; a stuck position must not spam the log.
     if (fails <= 3)
-      await audit("live_sell_failed", { positionId: position.id, mint: position.mint, reason, error: msg, fails, backoffMs: waitMs }).catch(() => {});
+      await audit("live_sell_failed", { positionId: position.id, mint: position.mint, reason, error: msg, fails, backoffMs: waitMs }).catch(() => { });
     console.error(`live sell failed ${short(position.mint)} (#${fails}, backoff ${Math.round(waitMs / 1000)}s): ${msg}`);
     // Stranded write-off: if EVERY route is exhausted (no exit exists) and the
     // position is old enough to rule out a transient blip, stop retrying forever
@@ -3003,6 +3024,70 @@ export async function processLiveCloseRequests(cfg: HermesConfig): Promise<void>
   console.log(`🖐 operator close ${short(pos.mint)} → ${ok ? "SOLD" : "FAILED (fire-sale escalation continues next cycles)"}`);
 }
 
+/**
+ * OPERATOR MANUAL BUY (Workstream C, SPEC-WALLET-GRAPH-VALUE §3). The dashboard
+ * writes `manual_buy_request`; this consumes it on the trader's entry poll —
+ * the trader stays the single money-mover, so a manual buy rides the same RPC
+ * pool, in-flight claim, and audit trail as an auto entry. Mirrors the
+ * `live_close_request` trust model exactly.
+ *
+ * THE OPERATOR IS THE SIGNAL: we run ONLY the hard adversarial gates (honeypot
+ * trap, mint/freeze authority, depth floor, fee viability) — NOT the score/confirm
+ * funnel. Convenience never overrides a rail: kill switch, exposure cap, and the
+ * fee-viability floor still bind. Lane-separated; live requires LIVE_TRADING_ENABLED.
+ */
+export async function processManualBuyRequests(cfg: HermesConfig): Promise<void> {
+  // Atomic claim — flip pending → claimed so a retry/overlapping tick can't double-fire.
+  const claimed = (await db.execute(sql`
+    UPDATE config SET value = value || '{"status":"claimed"}'::jsonb, updated_at = now()
+    WHERE key = 'manual_buy_request' AND value->>'status' = 'pending'
+    RETURNING value`)) as unknown as { value: { mint?: string; sizeUsd?: number; lane?: string } }[];
+  if (!claimed.length) return;
+  const { mint, sizeUsd, lane = "live" } = claimed[0]!.value;
+  const finish = async (status: "done" | "failed", note: string) => {
+    await db.execute(sql`UPDATE config SET value = value || ${JSON.stringify({ status, note })}::jsonb WHERE key = 'manual_buy_request'`);
+    await audit("manual_buy_request_done", { mint, sizeUsd, lane, status, note });
+  };
+  if (!mint || !(sizeUsd && sizeUsd > 0)) {
+    await finish("failed", "missing mint or sizeUsd");
+    return;
+  }
+  if (lane === "live" && !cfg.LIVE_TRADING_ENABLED) {
+    await finish("failed", "live lane disabled");
+    return;
+  }
+  // Hard safety gates only (operator-as-signal): reuse the pipeline's adversarial
+  // checks — a manual buy never skips the trap/mint/depth filters.
+  try {
+    const market = await fetchTokenMarket(mint).catch(() => null);
+    if (!market) { await finish("failed", "no market data for mint"); return; }
+    const safety = await runSafetyPipeline(cfg, {
+      mint,
+      chain: "solana",
+      name: market.name ?? undefined,
+      symbol: market.symbol ?? undefined,
+      dex: market.dexId,
+      poolAddress: market.pairAddress,
+      liquidityUsd: market.liquidityUsd,
+      fdvUsd: market.fdvUsd,
+    });
+    if (!safety.tradeable) {
+      const why = safety.traps.join(", ") || "safety gate";
+      await finish("failed", `safety gate: ${why}`);
+      console.log(`⛔ MANUAL BUY ${short(mint)} blocked — ${why}`);
+      return;
+    }
+  } catch (e) {
+    await finish("failed", `safety pipeline error: ${e instanceof Error ? e.message : e}`);
+    return;
+  }
+  // Execute through the same path as an auto entry — same fill, floor, audit,
+  // position — passing the operator's chosen size through to the sizing override.
+  await maybeLiveBuy(cfg, mint, null, null, null, sizeUsd);
+  console.log(`🖐 operator manual buy ${short(mint)} $${sizeUsd} [${lane}] → submitted to live entry path`);
+  await finish("done", "submitted");
+}
+
 export async function processWalletSends(cfg: HermesConfig): Promise<void> {
   const claimed = (await db.execute(sql`
     UPDATE config SET value = value || '{"status":"processing"}'::jsonb, updated_at = now()
@@ -3015,7 +3100,7 @@ export async function processWalletSends(cfg: HermesConfig): Promise<void> {
   const patch = (p: Record<string, unknown>) =>
     db
       .execute(sql`UPDATE config SET value = value || ${JSON.stringify(p)}::jsonb, updated_at = now() WHERE key = 'wallet_send_request'`)
-      .catch(() => {});
+      .catch(() => { });
   const wallet = liveWallet();
   const amt = Number(req.amountSol);
   try {
@@ -3080,7 +3165,7 @@ export async function processWalletSends(cfg: HermesConfig): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await patch({ status: "failed", error: msg, failedAt: new Date().toISOString() });
-    await audit("wallet_send_failed", { to: req.to, amountSol: amt, error: msg }).catch(() => {});
+    await audit("wallet_send_failed", { to: req.to, amountSol: amt, error: msg }).catch(() => { });
     console.error(`💸 WALLET SEND FAILED: ${msg}`);
   }
 }
@@ -3424,7 +3509,7 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
                 drawdownFromPeakPct: String(feedPeak > 0 ? ((feedPeak - feedMark) / feedPeak) * 100 : 0),
                 ageMinutes: String((Date.now() - lp.openedAt.getTime()) / 60_000),
               })
-              .catch(() => {});
+              .catch(() => { });
             tickRecorded = true;
             // ACTION only on real liquidity (≥$1k — the flicker guard): the
             // genome may manage on this mark because paper manages on the same
@@ -3538,7 +3623,7 @@ async function guardLiveBookInner(cfg: HermesConfig): Promise<void> {
             drawdownFromPeakPct: String(peakMark > 0 ? ((peakMark - markNow) / peakMark) * 100 : 0),
             ageMinutes: String((Date.now() - lp.openedAt.getTime()) / 60_000),
           })
-          .catch(() => {});
+          .catch(() => { });
       }
       if (
         cfg.LIVE_PROFIT_FLOOR_ENABLED &&
